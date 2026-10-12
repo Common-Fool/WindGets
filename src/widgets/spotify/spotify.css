@@ -1,0 +1,1106 @@
+/*
+ * Пульт Спотифая. Значений своих не изобретает: цвета, отступы, радиусы и
+ * размеры — только из tokens.css. Акцент карточки остаётся у данных и
+ * обложек, а интерактивные состояния берутся из общей UI-палитры.
+ */
+
+/*
+ * Окно — это ровно карточка, без отступа вокруг. Иначе акрил, который
+ * накрывает окно целиком, светился бы стеклянной рамкой мимо содержимого.
+ * Скругление углов даёт Windows через DWM — подробнее в hardware/widget.css.
+ */
+.spotify {
+  display: flex;
+  height: 100%;
+}
+
+/*
+ * ВАЖНО: **пульту нужен `size`, а не общий `inline-size`.**
+ *
+ * Половина порогов у него по высоте — громкость, время у полосы, нижний ряд с
+ * плейлистами, — а высота карточки задана окном, не содержимым. С общим
+ * объявлением из `GlassCard.css` эти пороги не срабатывают ни разу и молчат:
+ * ошибки нет, просто ничего не уходит. Поймано на полосе в 148 точек, где ряд
+ * «Плейлисты» стоял поверх полосы перемотки.
+ *
+ * Общему `.card` такого объявления не досталось намеренно: в витрине и в
+ * настройках карточек в окне несколько, и высоту им задаёт содержимое — `size`
+ * схлопнул бы их в ничто.
+ */
+.spotify > .card {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+  container: card / size;
+}
+
+.spotify__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100%;
+  min-height: 0;
+}
+
+/*
+ * ВАЖНО: **заметка обязана ужиматься, а не выталкивать нижний ряд.**
+ * Ряд с плейлистами прижат к низу `margin-top: auto`, и когда заметка в узкой
+ * карточке переносится на три строки, ряд уезжает под нижний край — карточка
+ * режет его пополам. Своей высоты у подсказки нет, поэтому она и уступает.
+ */
+.spotify__note {
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.spotify__note--danger {
+  color: var(--status-danger);
+}
+
+.spotify__failure {
+  color: var(--status-danger);
+}
+
+/* Нижний ряд прижимается к низу карточки, что бы ни было выше */
+.spotify__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+  /* Поле над чертой ужато: ряд прижат к низу, и каждая точка здесь — это
+     точка, которой не хватает подписи «Плейлисты» до нижнего края */
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-hairline);
+}
+
+/* Имя устройства между кнопками: длинное обрезается, ряд от него не растёт */
+.spotify__device {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spotify__link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  border-radius: var(--radius-control);
+  transition:
+    color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.spotify__link:hover {
+  color: var(--text-secondary);
+}
+
+.spotify__link--active {
+  color: var(--ui-accent);
+}
+
+.spotify__link:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* ==================== Что играет ==================== */
+
+/*
+ * Пульт стоит тремя раскладками — полосой, столбиком и квадратом. С полосой и
+ * столбиком сочетается любая из трёх обложек, у квадрата она одна, фоном.
+ * Отдельно эти сочетания не описаны: карточка тянется под окно, а что уходит
+ * первым, решают пороги и размеры в конце файла.
+ */
+.player {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+/*
+ * Вспомненный трек: ничего не играет, и это должно быть видно сразу. Кнопки
+ * при этом рабочие — «играть» само выберет устройство.
+ *
+ * Гасятся сами части, а не строки раскладки: раскладок три, обложек четыре, и
+ * в половине сочетаний ни отдельной картинки, ни подложки нет вовсе.
+ */
+.player--stale .player__cover,
+.player--stale .player__meta,
+.player--stale .player__backdrop,
+.player--stale .player__progress {
+  opacity: 0.55;
+}
+
+/*
+ * ВАЖНО: **отказ лежит ПОВЕРХ карточки, а не в её столбце.**
+ *
+ * Строкой в потоке он отнимал у пульта высоту постоянно, а живёт восемь
+ * секунд. Поверх он ничего не двигает и уходит вместе со своим состоянием.
+ *
+ * Подсказки «включите что-нибудь в Спотифае» тут больше нет вовсе: она висела
+ * не восемь секунд, а всегда, и закрывала кнопки даже поверх карточки. Что
+ * ничего не играет, видно и без слов — пульт блёклый и без громкости.
+ */
+.spotify__failure {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border-hairline);
+  background: var(--surface-scrim);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  text-align: center;
+}
+
+/*
+ * Запуск Спотифая: слой во всю карточку поверх пульта — подсказка и два
+ * значка. Всплывает на «играть», когда Спотифай нигде не открыт, и уходит
+ * вместе с мышью (`SpotifyWidget.tsx`).
+ *
+ * Поверх, а не вместо: раскладок три и размеров по четыре, и своя картинка
+ * «ничего не играет» на каждую — двенадцать раскладок ради двух кнопок. Слой
+ * одинаков везде, а пульт под ним сквозит, и карточка остаётся пультом.
+ * Затемнение то же, что под всплывающим письмом у почты: цвет самой карточки,
+ * а не чёрный.
+ *
+ * Строка отказа лежит выше (она позже в разметке при том же `z-index`): не
+ * открылось — это должно быть видно и поверх слоя.
+ */
+.spotify__launch {
+  /*
+   * Значок растёт с окном: в полосе на 66 точек ему остаётся чуть меньше
+   * половины высоты, в квадрате и столбике — крупный знак посреди карточки.
+   * Отсчёт от меньшей стороны карточки, а пол и потолок — через масштаб, как у
+   * кнопок пульта.
+   */
+  --launch-size: clamp(calc(28px * var(--scale)), 30cqmin, calc(48px * var(--scale)));
+
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-scrim);
+  text-align: center;
+  animation: spotify-launch-in var(--duration-slow) var(--ease);
+}
+
+/* В полосе — подсказка слева, значки справа: по высоте там места на одну
+   строку значков, а не на подсказку над ними */
+.spotify__launch--row {
+  flex-direction: row;
+  gap: var(--space-4);
+  padding-block: var(--space-2);
+  text-align: left;
+}
+
+@keyframes spotify-launch-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.spotify__launch-text {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  /* Не шире строки для глаза: в квадрате и большой полосе подсказка иначе
+     ложилась бы одной длинной строкой через всю карточку */
+  max-width: 22em;
+}
+
+.spotify__launch--row .spotify__launch-text {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.spotify__launch-buttons {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+/*
+ * В самой низкой полосе, 300×66, вопрос уходит целиком: подсказке с ним нужно
+ * 70 точек из 64 (замер при 100 %). Значки и так говорят, что предлагают, а
+ * обрезанная фраза читалась бы поломкой. Следующая полоса, 340×96, держит
+ * подсказку с вопросом в три строки.
+ */
+@container card (height < 5em) {
+  .spotify__launch-ask {
+    display: none;
+  }
+}
+
+/*
+ * Голый значок цветом интерфейса, без круга под ним.
+ *
+ * Круг здесь был — как у «играть» на пульте — и снят живой проверкой: серая
+ * подложка под цветным знаком на затемнении читалась лишним слоем. Поле вокруг
+ * значка — место для попадания и для кольца фокуса, а не рамка.
+ *
+ * ВАЖНО: **размер значка — целые точки, а отклик на мышь — свечение, а не
+ * `transform`.** Живая проверка нашла значки «будто пожатыми»: `cqmin` и
+ * масштаб дают дробный кегль, и края SVG ложатся между пикселями. Подрастание
+ * через `scale` мылило их ещё сильнее — такой слой растрируется в исходном
+ * размере и растягивается уже картинкой.
+ */
+.spotify__launch-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--ui-accent);
+  font-size: round(var(--launch-size), 1px);
+  cursor: pointer;
+  transition:
+    filter var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.spotify__launch-button:hover {
+  filter: drop-shadow(0 0 calc(6px * var(--scale)) color-mix(in srgb, var(--ui-accent) 55%, transparent));
+}
+
+.spotify__launch-button:active {
+  filter: drop-shadow(0 0 calc(3px * var(--scale)) color-mix(in srgb, var(--ui-accent) 35%, transparent));
+}
+
+.spotify__launch-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* ==================== Обложка картинкой ==================== */
+
+/*
+ * ВАЖНО: **обложка квадратная всегда, без исключений.**
+ *
+ * Ведёт её одна величина — высота; ширина идёт от `aspect-ratio`. Потолок тоже
+ * задан высотой, в долях ширины карточки (`cqw`), и `max-width` тут не нужен
+ * вовсе.
+ *
+ * Именно `max-width` квадрат и ломал: при `height: 100%` высота остаётся
+ * definite, ограничение режет одну ширину, и `aspect-ratio` пересчитать её уже
+ * не может — картинка сплющивается в узкий прямоугольник. Живьём это выглядит
+ * как «обложка растянулась», а не как ошибка в правиле.
+ *
+ * Единицы `cqw` доступны потому, что карточка пульта объявлена
+ * `container-type: size` — см. `.spotify > .card` в начале файла.
+ */
+.player__art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+.player__cover {
+  width: auto;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-control);
+  background: var(--surface-track);
+  object-fit: cover;
+}
+
+/* Своих размеров не назначает: они те же, что у картинки на её месте */
+.player__cover--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--accent) 50%, transparent);
+  font-size: var(--text-2xl);
+}
+
+/*
+ * Столбик: обложка сверху, всё под ней.
+ *
+ * ВАЖНО: **рамке обложки нужен потолок, иначе воздух ложится ВОКРУГ неё.**
+ * `flex: 1` отдаёт рамке весь остаток высоты, а картинка внутри упирается в
+ * свой потолок и встаёт по центру рамки — лишнее превращается в поля сверху и
+ * снизу разом. На вспомненном треке, где нет громкости, это два десятка точек
+ * над обложкой и столько же между ней и названием.
+ *
+ * С потолком у рамки остаток уходит туда, куда его отправляет
+ * `justify-content`, то есть вниз — под кнопки, где он не мешает.
+ */
+.player--column {
+  justify-content: flex-start;
+}
+
+.player--column .player__art {
+  flex: 1;
+  max-height: calc(100cqw - 2 * var(--space-4));
+}
+
+.player--column .player__art--big {
+  max-height: 100cqw;
+}
+
+/*
+ * Обложка фоном: подписи с кнопками прижаты к низу.
+ *
+ * Верх карточки отдан самой картинке — по центру содержимое делило её пополам
+ * и закрывало собой то место, ради которого фон и выбирают.
+ */
+.player--column.player--art {
+  justify-content: flex-end;
+}
+
+/*
+ * Квадрат — столбик поверх обложки. Отдельной картинки тут нет ни на одном
+ * размере: обложка бывает только фоном, и делить сторону пополам не на что.
+ *
+ * Два блока «обложка слева, подписи справа» тут стояли и живую проверку не
+ * прошли трижды: квадрат берут ради картинки, а она в них съёживалась до
+ * значка, оставляя подписям половину стороны, которая им не нужна.
+ *
+ * По умолчанию столбик стоит ПОСЕРЕДИНЕ — так стоит «Маленький», у которого
+ * строк три. Вверху они читались бы заголовком над пустотой, внизу — прилипали
+ * бы к краю; посередине же обложка остаётся видна и сверху, и снизу.
+ */
+.player--square {
+  justify-content: center;
+}
+
+/*
+ * Большой и средний: подписи вверху, кластер управления ПО ЦЕНТРУ, нижний ряд
+ * с плейлистами внизу. Между ними — обложка, ради которой квадрат и берут.
+ *
+ * ВАЖНО: **центрирует кластер пара авто-полей, а не `justify-content`.**
+ * Свободная высота делится между всеми авто-полями поровну, поэтому воздух над
+ * управлением и под ним выходит одинаковым, а подписи при этом остаются
+ * прижатыми к верху. `justify-content` так не умеет: он двигает столбик
+ * целиком, и подписи уезжали бы к середине вместе с кнопками.
+ *
+ * Снято замером с макета: там ровно та же тройка — подписи, кластер с
+ * авто-полями по 44 точки, нижний ряд.
+ */
+.spotify[data-size="0"] .player--square .player__controls,
+.spotify[data-size="1"] .player--square .player__controls {
+  margin-top: auto;
+}
+
+.spotify[data-size="0"] .player--square > :last-child,
+.spotify[data-size="1"] .player--square > :last-child {
+  margin-bottom: auto;
+}
+
+/*
+ * Самый тесный квадрат: строк всего три, и разложить их по стороне красивее,
+ * чем сбить в кучу у любого из краёв. Подписи вверху, кнопки посередине,
+ * полоса ниткой по краю — обложке достаётся вся середина карточки.
+ *
+ * Кнопки центрируются двумя авто-полями: свободная высота делится вокруг них
+ * поровну, и число строк над ними на это не влияет.
+ */
+.spotify[data-size="3"] .player--square {
+  justify-content: flex-start;
+}
+
+.spotify[data-size="3"] .player--square .player__controls {
+  margin-block: auto;
+}
+
+/*
+ * Времени у самого тесного квадрата нет: подписи, кнопки и полоса делят
+ * сторону в 210 точек, и четвёртая строка отняла бы у обложки ровно ту
+ * середину, ради которой этот размер и разложен по краям.
+ */
+.spotify[data-size="3"] .player--square .player__times {
+  display: none;
+}
+
+/*
+ * ВАЖНО: **затемнение идёт за содержимым, а не всегда книзу.**
+ *
+ * Общий градиент густеет к нижнему краю — там у столбика и у полосы лежат
+ * подписи. У большого квадрата они стоят наверху, где картинка светлее всего,
+ * и белые буквы на светлом кадре перестают читаться. Здесь тень плотная
+ * сверху, отпускает середину — ту самую, ради которой квадрат и берут, — и
+ * снова густеет у нижнего ряда.
+ */
+.spotify[data-size="0"] .player--square .player__backdrop::after,
+.spotify[data-size="1"] .player--square .player__backdrop::after {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-scrim) 88%, transparent),
+    color-mix(in srgb, var(--surface-scrim) 55%, transparent) 55%,
+    color-mix(in srgb, var(--surface-scrim) 30%, transparent) 75%,
+    color-mix(in srgb, var(--surface-scrim) 72%, transparent)
+  );
+}
+
+/*
+ * Столбик: обложка во всю ширину карточки.
+ *
+ * Обычная упирается в поля карточки, крупная гасит их отрицательным отступом и
+ * встаёт от края до края — то есть её сторона равна ширине окна. Полутонов тут
+ * нет намеренно: столбик и заводят ради обложки, и воздух вокруг неё был
+ * первым, что не понравилось живьём.
+ */
+.player--column .player__cover {
+  max-height: calc(100cqw - 2 * var(--space-4));
+}
+
+/*
+ * Крупная обложка гасит поля карточки со всех сторон, кроме нижней: сверху и
+ * с боков она встаёт вплотную к краю окна. Половинчатое «без боковых, но с
+ * верхним» читается как промах вёрстки, а не как замысел.
+ */
+.player--column .player__art--big {
+  margin-inline: calc(var(--space-4) * -1);
+  margin-top: calc(var(--card-pad-block) * -1);
+}
+
+.player--column .player__art--big .player__cover {
+  max-height: 100cqw;
+  border-radius: 0;
+}
+
+/*
+ * Полоса перемотки ниткой по нижнему краю карточки, поверх обложки.
+ *
+ * Высоты она так не занимает вовсе — ради этого самые тесные окна и стали на
+ * строку ниже. Без обложки такой нитки нет: поверх обычной карточки она
+ * читалась бы как случайная черта у нижнего ребра.
+ *
+ * ВАЖНО: **отмеряется от карточки, а не от дорожки.** Обложка фоном делает
+ * `position: relative` каждому прямому ребёнку пульта, и нитка, стоявшая
+ * внутри `.player__lane`, считала свой `bottom` от неё — то есть ложилась
+ * ровно на ряд кнопок посреди карточки. Поэтому она вынесена ребёнком самого
+ * пульта и исключена из того правила поимённо.
+ */
+.player__progress--edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+}
+
+.player__progress--edge .player__track-bar {
+  height: calc(4px * var(--scale));
+}
+
+/* Времени у нитки нет: строка под ней ушла бы за нижний край карточки */
+.player__progress--edge .player__times {
+  display: none;
+}
+
+/*
+ * Полоса: обложка слева, подписи с прогрессом посередине, кнопки справа.
+ * Высоту тут задаёт окно, а не столбик блоков.
+ */
+.player--row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.player--row .player__art {
+  flex: none;
+  align-self: stretch;
+}
+
+.player--row .player__cover {
+  max-height: 100%;
+}
+
+/*
+ * ВАЖНО: **крупная обложка в полосе выходит за поля карточки.**
+ *
+ * По-другому крупной её в баре не сделать: обычная и так во всю высоту ряда,
+ * и «крупнее» тут значит только «до самого края». Поля гасятся отрицательным
+ * отступом, а по углам картинку обрезает сама карточка — у неё `overflow:
+ * hidden` и своё скругление.
+ */
+.player--row .player__art--big {
+  margin-block: calc(var(--card-pad-block) * -1);
+  margin-left: calc(var(--space-4) * -1);
+}
+
+.player--row .player__art--big .player__cover {
+  border-radius: 0;
+  /*
+   * ВАЖНО: потолок берётся от карточки (`cqh`), а не от своей рамки.
+   *
+   * Отрицательный отступ делает рамку выше ряда на оба поля, и `max-height:
+   * 100%` считался от неё — обложка вырастала выше самой карточки и вылезала
+   * за нижний край. Видно это только замером: за краем ничего не рисуется.
+   */
+  max-height: 100cqh;
+}
+
+/* ==================== Обложка фоном ==================== */
+
+/*
+ * Кладётся от самой `.card`, а не от её тела: `inset: 0` считается от
+ * ближайшего предка с `position`, а тело карточки таким не является — зато у
+ * него есть поля, и обложка с ними осталась бы картинкой в рамке.
+ *
+ * ВАЖНО: **сам `.player` позиционировать нельзя.** Стань он `relative`, фон
+ * сжался бы до содержимого — то есть перестал бы быть фоном.
+ */
+.player__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/*
+ * Размывает `filter`, а не `backdrop-filter`.
+ *
+ * Разница принципиальная:
+ * `backdrop-filter` в прозрачном окне сэмплировать нечего, за окном ничего
+ * нет. Здесь размывается своя же картинка, и прозрачность окна её не касается.
+ *
+ * Увеличение обязательно: размытие съедает края, и без `scale` по периметру
+ * карточки шла бы полоса полупрозрачной каши.
+ */
+.player__backdrop img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(calc(2px * var(--scale)));
+  transform: scale(1.04);
+}
+
+/*
+ * Затемнение под текстом.
+ *
+ * Плотный `--surface-scrim` (72 %) вместе с сильным размытием превращал
+ * обложку в тёмное пятно — по живой проверке «крайне плохо видно». Теперь
+ * размытие почти снято, а затемнение стоит градиентом: сверху картинку почти
+ * не трогает, к низу густеет ровно там, где лежат подписи и кнопки.
+ */
+.player__backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-scrim) 30%, transparent),
+    color-mix(in srgb, var(--surface-scrim) 55%, transparent) 45%,
+    color-mix(in srgb, var(--surface-scrim) 88%, transparent)
+  );
+}
+
+/* Содержимое поверх обложки: поднимается всё, кроме самой подложки */
+.player--art > *:not(.player__backdrop, .player__progress--edge) {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * Светлая грань карточки поднимается над обложкой.
+ *
+ * Она рисуется псевдоэлементом `.card::before`, то есть стоит в разметке
+ * раньше подложки, — а позиционированные элементы без своего `z-index`
+ * ложатся в порядке разметки. Обложка накрывала бы грань целиком, и карточка
+ * теряла бы верхнее ребро. Выше и слоя запуска со строкой отказа: те лежат
+ * на третьем этаже и накрыли бы его точно так же.
+ */
+.spotify .card::before {
+  z-index: 4;
+}
+
+/* ==================== Подписи ==================== */
+
+.player__meta {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: calc(2px * var(--scale));
+  min-width: 0;
+}
+
+/*
+ * ВАЖНО: **центрируем текстом, а не `align-items`.**
+ *
+ * `align-items: center` в колоночном флексе сжимает детей до содержимого — и
+ * бегущая строка раздувалась до полной длины названия, вылезая за карточку на
+ * полсотни точек. Растянутая на всю ширину рамка с центрированным текстом
+ * выглядит так же, а ужимается как надо.
+ */
+.player__meta--centered {
+  text-align: center;
+}
+
+/*
+ * Название и исполнитель бегут, когда не помещаются: оба приходят извне, длину
+ * их не выбирают, и эллипсис режет ровно то слово, ради которого на карточку и
+ * смотрят. Механика — в `Marquee.tsx`; здесь только кегль и цвет.
+ */
+.player__track {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.player__artists {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* Середина полосы: подписи с прогрессом между обложкой и кнопками */
+.player__lane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* ==================== Полоса перемотки ==================== */
+
+.player__progress {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/*
+ * Сама полоса тонкая, но попадать в неё мышью надо без прицеливания —
+ * отсюда высота области нажатия и трек фоном через ::before.
+ */
+.player__track-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: calc(14px * var(--scale));
+  cursor: pointer;
+}
+
+.player__track-bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--surface-track);
+}
+
+.player__track-fill {
+  position: relative;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--accent);
+}
+
+.player__times {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+/* ==================== Кнопки ==================== */
+
+.player__controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+}
+
+/* В полосе ряд стоит теснее: там ширина дороже воздуха */
+.player--row .player__controls {
+  gap: var(--space-2);
+}
+
+.player__button {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(28px * var(--scale));
+  height: calc(28px * var(--scale));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.player__button:hover {
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
+}
+
+.player__button:active {
+  background: var(--surface-control-pressed);
+}
+
+.player__button--active {
+  background: var(--surface-control-selected);
+  color: var(--ui-accent);
+}
+
+.player__button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Точка под кнопкой — включённый режим виден, даже когда иконка та же */
+.player__button--active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: calc(3px * var(--scale));
+  height: calc(3px * var(--scale));
+  border-radius: var(--radius-pill);
+  background: var(--ui-accent);
+  transform: translateX(-50%);
+}
+
+.player__play {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(40px * var(--scale));
+  height: calc(40px * var(--scale));
+  border: 1px solid var(--border-control-hover);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control-selected);
+  color: var(--ui-accent);
+  font-size: var(--text-xl);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.player__play:hover {
+  background: var(--surface-control-hover);
+  border-color: var(--ui-accent);
+}
+
+.player__play:active {
+  background: var(--surface-control-pressed);
+}
+
+.player__play:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* ==================== Громкость ==================== */
+
+.player__volume {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.player__volume-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+}
+
+.player__volume .slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.player__volume-value {
+  width: calc(34px * var(--scale));
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  text-align: right;
+}
+
+/* ==================== Пороги ==================== */
+
+/*
+ * Ряд из пяти кнопок с зазором в 16 точек требует своих 216 и переполняется
+ * раньше всего остального в карточке. Сперва ужимается зазор, потом уходят
+ * перемешивание с повтором — то, без чего пультом всё ещё пользуются.
+ */
+@container card (width < 15em) {
+  .player__controls {
+    gap: var(--space-2);
+  }
+}
+
+/*
+ * ВАЖНО: **перемешивание, повтор и нижний ряд привязаны к размеру, а не к
+ * порогу в точках.**
+ *
+ * У трёх раскладок размеры разной формы: «Большой» квадрат в 360 точек уже
+ * «Среднего» бара в 460, но просторнее его по площади. Один порог по ширине
+ * врал бы в двух раскладках из трёх — а «Большой» и «Средний» человек выбирает
+ * сам, и это прямое указание, сколько он готов отдать под пульт.
+ *
+ * Номер размера приезжает в разметку атрибутом из `SpotifyWidget.tsx`.
+ */
+.spotify[data-size="2"] .player__button--extra,
+.spotify[data-size="3"] .player__button--extra,
+.spotify[data-size="2"] .spotify__actions,
+.spotify[data-size="3"] .spotify__actions {
+  display: none;
+}
+
+/*
+ * ВАЖНО: **обложка не исчезает ни на одном размере.**
+ *
+ * Такой порог тут был и оказался ошибкой: «размер» — это размер виджета, а не
+ * обложки, и уменьшение окна не должно отменять то, ради чего на пульт
+ * смотрят. Вместо порога ширины теперь хватает самим размерам: полоса нигде не
+ * уже трёхсот точек, и обложке с подписями места хватает на всех четырёх.
+ */
+
+/*
+ * ВАЖНО: **громкость уходит по размеру окна, а не по порогу в точках.**
+ *
+ * Порог по высоте тут врал: столбик высок по замыслу — даже самый тесный выше
+ * трёхсот точек, — и по общей мерке громкость оставалась бы на всех четырёх
+ * размерах. А просят её убрать ровно на двух нижних: её меняют и в самом
+ * Спотике, а стоит она отдельной строкой с ползунком.
+ *
+ * Квадрата это правило не касается вовсе: там громкость и не рисуется на двух
+ * нижних размерах — у них своя раскладка, а не та же с погашенной строкой.
+ *
+ * В полосе громкости нет ни на одном размере: рисуется она только в столбике и
+ * квадрате.
+ */
+.spotify[data-size="2"] .player--column .player__volume,
+.spotify[data-size="3"] .player--column .player__volume {
+  display: none;
+}
+
+/*
+ * ВАЖНО: **время у полосы уходит только в полосе, и порог у него свой.**
+ *
+ * Общий порог по высоте тут врёт: горизонтальный пульт низкий по замыслу — сто
+ * двадцать точек, — и по общей мерке время исчезало бы у него всегда, начиная
+ * с самого большого размера. В столбике же время стоит отдельной строкой и
+ * уходит вместе со всей раскладкой, отдельного порога ему не нужно.
+ *
+ * Число снято по содержимому полосы: подписи 36, полоса 14, время 13 и зазоры
+ * 8 — это 71 точка при 78 доступных на среднем размере и 66 на маленьком.
+ */
+@container card (height < 6.5em) {
+  .player--row .player__times {
+    display: none;
+  }
+}
+
+/*
+ * Порога «время в квадрате» тут больше нет.
+ *
+ * Он гасил время на стороне в 210 точек, где оно стоило обложке трети роста, —
+ * а на этом размере полоса теперь и так лежит ниткой по краю и времени не
+ * показывает вовсе (`.player__progress--edge`). Порог остался бы правилом,
+ * которое никогда не срабатывает.
+ */
+
+/* ==================== Подключение ==================== */
+
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.setup__lead {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.setup__input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.setup__input::placeholder {
+  color: var(--text-muted);
+}
+
+.setup__input:focus {
+  outline: none;
+  border-color: var(--border-control-hover);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Кнопка и ссылка на объяснение стоят одной строкой: подпись под кнопкой
+ * добавила бы карточке высоты ровно там, где её и не хватало.
+ */
+.setup__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* Ссылка, а не вторая кнопка: рядом с «Подключить» две кнопки читались бы как
+   выбор из двух действий */
+.setup__more {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.setup__more:hover {
+  color: var(--text-secondary);
+}
+
+.setup__more:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* ==================== Плейлисты ==================== */
+
+/*
+ * ВАЖНО: **высоту панели задаёт `SpotifyWidget.tsx`, а не `flex: 1`.**
+ *
+ * Растяжимой она делила прибавку с пультом: тот сжимался под новую панель, а
+ * потом отыгрывал часть обратно, когда окно дорастало. Раскладка дёргалась
+ * дважды, и обложка при раскрытых плейлистах выходила другого размера.
+ */
+.playlists {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.playlists__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.playlists__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.playlists__item:active {
+  background: var(--surface-control-pressed);
+}
+
+.playlists__item:focus-visible {
+  outline: none;
+  background: var(--surface-control-selected);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.playlists__cover {
+  flex: none;
+  width: calc(32px * var(--scale));
+  height: calc(32px * var(--scale));
+  border-radius: var(--radius-bar);
+  background: var(--surface-track);
+  object-fit: cover;
+}
+
+.playlists__cover--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--accent) 50%, transparent);
+  font-size: var(--text-md);
+}
+
+.playlists__name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playlists__count {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.playlists__note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.playlists__note--danger {
+  color: var(--status-danger);
+}

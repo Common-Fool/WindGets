@@ -1,0 +1,358 @@
+/*
+ * Сброс и общие правила документа. Значений здесь нет — всё из tokens.css.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* Фон рисует карточка, а не документ: окно виджета прозрачное */
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  /* Виджет не веб-страница: выделять и перетаскивать текст незачем */
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-track);
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-highlight);
+}
+
+/*
+ * Окно виджета — это ровно одна карточка, во всю его площадь.
+ *
+ * Отступа вокруг нет намеренно: системная подложка накрывает окно целиком
+ * прямоугольником, и любой зазор светился бы стеклом мимо содержимого — та
+ * самая светлая рамка по краю. Скругление углов даёт Windows через DWM,
+ * поэтому у карточки его нет: два разных радиуса оставляли бы уголки мимо
+ * друг друга.
+ */
+.widget {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.widget > .card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 0;
+  /*
+   * Только здесь карточка меряется и по высоте: она одна на окно, и высоту ей
+   * задаёт окно, а не содержимое. Это и открывает пороги вида «низкое окно».
+   */
+  container: card / size;
+}
+
+/*
+ * Колонки итогов: сейчас это загрузка, отдача и пинг спидтеста. Раскладка
+ * общая и лежит здесь со времён, когда ею жили и сеть, и пинг, и парная
+ * загрузка процессора с памятью; сеть теперь держит свою сетку, а пинг и
+ * загрузка удалены (этап 59).
+ */
+.duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+/* Итоги спидтеста: загрузка, отдача и пинг в один ряд */
+.duo--three {
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
+.duo__side {
+  min-width: 0;
+}
+
+.duo__side + .duo__side {
+  border-left: 1px solid var(--border-hairline);
+  padding-left: var(--space-5);
+}
+
+.duo__label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  /* Клипается, а не распирает колонку: «ИНТЕРНЕТ» капсом с разрядкой шире
+     собственной цифры, и без этого он раздвигал бы карточку изнутри */
+  min-width: 0;
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+/* Узкая карточка: колонки сходятся теснее */
+@container card (width < 14em) {
+  .duo {
+    gap: var(--space-3);
+  }
+
+  .duo__side + .duo__side {
+    padding-left: var(--space-3);
+  }
+}
+
+/*
+ * Самое узкое: уходит слово, но не точка. Слово капсом с разрядкой шире своей
+ * же цифры, а глиф места не просит и колонки различает: стрелки у приёма и
+ * отдачи, точка у пинга.
+ */
+@container card (width < 12em) {
+  .duo__label-text {
+    display: none;
+  }
+}
+
+/*
+ * Низкая карточка: уходит ряд с названием. Число снято замером: ряд подписи
+ * занимает 22 точки, цифра с единицей 47 — при ужатых полях это карточка в 83
+ * точки, то есть 5,5em.
+ *
+ * Подписей под цифрой у колонок больше нет — их носили сеть и пинг, — и
+ * порог 7em, на котором они уходили, снят вместе с ними (этап 59).
+ */
+@container card (height < 5.5em) {
+  .duo__label {
+    display: none;
+  }
+}
+
+/* Числа всегда табличные, иначе значения дёргаются при каждом обновлении */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Заголовок капсом: без разрядки капс читается плохо */
+.caps {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+
+.fallback {
+  padding: var(--space-7);
+  color: var(--text-secondary);
+}
+
+/*
+ * Кнопка обновления — значок без подложки.
+ *
+ * Одна на погоду и почту: обе карточки ходят в чужой сервис и обе дают сходить
+ * туда сейчас же. Двум копиям этих правил разойтись было бы вопросом времени, а
+ * разнобой между виджетами — ровно то, против чего затевался проект.
+ *
+ * Выглядит значком, а не кнопкой: рамка вокруг него была бы самой заметной
+ * вещью в верхней строке карточки. Приглушён до наведения по той же причине.
+ */
+.refresh {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-control);
+  transition:
+    color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.refresh:hover {
+  color: var(--ui-accent-hover);
+}
+
+.refresh:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.refresh > svg {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+ * Пока ждём ответ, значок крутится.
+ *
+ * Вращение честное: кончается оно не по времени, а с приходом ответа.
+ * Крутящийся значок, который остановился сам по себе, обещал бы свежие данные,
+ * которых нет.
+ */
+.refresh[data-spinning="true"] {
+  color: var(--text-secondary);
+  animation: refresh-spin 1s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Кружок ожидания: работа идёт, ответа ещё нет.
+ *
+ * Крутится тем же оборотом, что и значок обновления, — это одно и то же
+ * обещание, и выглядеть оно обязано одинаково. Останавливается не по времени, а
+ * с приходом ответа: остановившийся сам по себе кружок соврал бы о сделанном.
+ */
+.spinner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  line-height: 1;
+  animation: refresh-spin 1s linear infinite;
+}
+
+.spinner > svg {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+ * Поле ввода и список найденных городов.
+ *
+ * Стояли в `settings.css` и переехали сюда, когда поиск города появился и в
+ * самой карточке погоды: две копии одних и тех же правил — это две карточки,
+ * которые однажды перестанут выглядеть одинаково. Файл общий на все окна,
+ * поэтому виджету ничего доимпортировать не приходится.
+ */
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  /* Поле для того и стоит, чтобы в нём выделяли и правили */
+  user-select: text;
+  cursor: text;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+  background: var(--surface-control);
+}
+
+.input:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.places {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.places__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.places__item + .places__item {
+  border-top: 1px solid var(--border-hairline);
+}
+
+.places__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.places__item:active,
+.places__item[aria-selected="true"] {
+  background: var(--surface-control-pressed);
+}
+
+.places__item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.places__name {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+/* Уточнение прижато вправо: оно длиннее имени и различает одноимённые города */
+.places__where {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: right;
+}

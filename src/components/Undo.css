@@ -1,0 +1,51 @@
+/*
+ * Возврат последнего разрушительного действия. Общий на заметки и на дела.
+ *
+ * Стоит посреди карточки, а не строкой внизу: там он был бы ещё одной подписью
+ * среди подписей, а тут его видно сразу — на месте того, что только что
+ * исчезло.
+ *
+ * Обёртка накрывает карточку целиком и мышь не ловит: ловит её одна кнопка,
+ * иначе содержимое под возвратом перестало бы нажиматься на все восемь секунд.
+ */
+.undo {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/*
+ * Кнопка словом, а не значком: значок пришлось бы объяснять, а слово и есть
+ * объяснение. Подложка плотная — она лежит поверх строк, и сквозь неё не должно
+ * читаться то, что под ней.
+ */
+.undo__button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  background: rgba(var(--surface-base), 0.92);
+  box-shadow: var(--shadow-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.undo__button:hover {
+  border-color: var(--border-control-hover);
+  background: color-mix(in srgb, var(--surface-control-hover) 70%, rgba(var(--surface-base), 0.94));
+}
+
+.undo__button:focus-visible {
+  outline: none;
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}

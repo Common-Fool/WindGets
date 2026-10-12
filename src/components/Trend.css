@@ -1,0 +1,155 @@
+/*
+ * График с сеткой. Занимает всё место родителя и тянется вместе с окном:
+ * своей высоты не назначает, её решает тот, кто график ставит.
+ */
+
+.trend {
+  /* Колонка справа под подписи шкалы: в ней стоят числа, мерка типографская.
+     Тесно по числу: под «593» хватает и этого, а пустует она во всю высоту */
+  --trend-gutter: calc(34px * var(--scale));
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  /* Чтобы в контейнере без высоты компонент не схлопнулся в ноль */
+  min-height: calc(80px * var(--scale));
+}
+
+/*
+ * Узкая карточка: подписи шкалы уходят вместе со своей колонкой. Четверть
+ * ширины под числа справа — слишком дорого, когда всей ширины полторы сотни,
+ * а сами числа стоят ещё и в колонках итогов под графиком.
+ */
+@container card (width < 14em) {
+  .trend {
+    --trend-gutter: 0px;
+  }
+
+  .trend__scale {
+    display: none;
+  }
+}
+
+.trend__plot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.trend__grid {
+  position: absolute;
+  inset: 0 var(--trend-gutter) 0 0;
+}
+
+/*
+ * ВАЖНО: размеры картинке задаются числами, а не отступами со всех сторон.
+ * У `svg` с `viewBox` есть своё соотношение сторон, и абсолютно поставленный
+ * элемент с `auto` размерами берёт его вместо коробки — график остаётся
+ * квадратным при любом окне и вылезает за края карточки.
+ */
+.trend__canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: calc(100% - var(--trend-gutter));
+  height: 100%;
+}
+
+/* Сетка лёгкая и пунктирная: она подсказывает уровень, а не расчерчивает лист */
+.trend__row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--border-hairline);
+}
+
+.trend__column {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--border-hairline);
+}
+
+/*
+ * Цвет заливке даёт градиент из самой картинки, поэтому здесь его нет: правило
+ * `fill` перебило бы атрибут со ссылкой на градиент.
+ */
+.trend__area {
+  stroke: none;
+}
+
+/* Цвет остаётся ярким на линии; большая площадь под ней — только подсказка. */
+.trend__fade--near {
+  stop-color: var(--accent);
+  stop-opacity: 0.16;
+}
+
+.trend__fade--far {
+  stop-color: var(--accent);
+  stop-opacity: 0;
+}
+
+.trend__line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: var(--stroke-line);
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.trend__line--dashed {
+  stroke-dasharray: 5 4;
+}
+
+.trend__scale {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: var(--trend-gutter);
+}
+
+/*
+ * Подпись стоит на своём значении, а не на делении сетки: смысл в том, чтобы
+ * увидеть «сколько сейчас» и «сколько бывало», а ровные сотни видны и так.
+ *
+ * Цвета ряда у неё нет намеренно: линии и легенда уже покрашены, и цифры
+ * справа спорили бы с ними за внимание.
+ */
+.trend__mark {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  color: color-mix(in srgb, var(--text-muted) 75%, transparent);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.trend__legend {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+}
+
+.trend__key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.trend__sample {
+  width: var(--space-4);
+  border-top: var(--stroke-line) solid var(--accent);
+}
+
+.trend__sample--dashed {
+  border-top-style: dashed;
+}

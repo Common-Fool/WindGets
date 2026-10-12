@@ -1,0 +1,58 @@
+/* Значки — часть интерфейса, а не привилегия отдельной цветовой темы. */
+.metric-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+.metric-label__icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1em;
+  width: 1em;
+  height: 1em;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.metric-label__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-label--badge {
+  gap: 0.65em;
+  /* Рамка выступает на .18em: резервируем место внутри обрезаемой подписи. */
+  padding-inline-start: 0.2em;
+}
+
+/* Обрамление выступает за глиф, но не увеличивает высоту строки. */
+.metric-label--badge .metric-label__icon::before {
+  content: "";
+  position: absolute;
+  inset: -0.18em;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  border-radius: 0.32em;
+  background: var(--surface-control);
+  pointer-events: none;
+}
+
+.metric-label__icon > svg {
+  position: relative;
+  flex: none;
+}
+
+.metric-label__compact {
+  display: none;
+  text-decoration: none;
+}
+
+/* В кольце подпись и значок должны помещаться внутри дуги во всех темах. */
+.arc .metric-label {
+  gap: 0.25em;
+}

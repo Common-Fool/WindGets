@@ -1,0 +1,102 @@
+/* GPT: те же поле, ссылки и откат; перестраиваются только органы управления. */
+.widget--notes-reference .card { border-radius: var(--radius-card); }
+.widget--notes-reference .card__body {
+  padding: calc(10px * var(--scale));
+  container: notes-size / size;
+}
+.notes--reference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) calc(24px * var(--scale));
+  gap: calc(8px * var(--scale));
+}
+.notes--reference .notes__box { grid-area: 1 / 1 / 2 / 3; }
+.notes--reference .dots { grid-area: 2 / 1; gap: calc(4px * var(--scale)); }
+.notes--reference .notes__foot {
+  grid-area: 2 / 2;
+  gap: calc(6px * var(--scale));
+}
+/* Поле держит 4 px под полосу и 4 px до текста; подложка держит те же 8. */
+.notes--reference .notes__field,
+.notes--reference .notes__ghost {
+  font-size: calc(14px * var(--scale));
+  line-height: calc(20px * var(--scale));
+}
+.notes--reference .notes__field {
+  padding-right: calc(4px * var(--scale));
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+.notes--reference .notes__ghost { padding-right: calc(8px * var(--scale)); }
+.notes--reference .notes__field::-webkit-scrollbar { width: calc(4px * var(--scale)); }
+.notes--reference .notes__field::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.notes--reference .notes__field::-webkit-scrollbar-track { background: transparent; }
+.notes--reference .notes__field::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: calc(8px * var(--scale)); }
+.notes--reference .dots__dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(14px * var(--scale));
+  height: calc(24px * var(--scale));
+  border-radius: calc(5px * var(--scale));
+  background: none;
+  opacity: 1;
+}
+.notes--reference .dots__dot::after {
+  content: "";
+  width: calc(6px * var(--scale));
+  height: calc(6px * var(--scale));
+  border-radius: 50%;
+  background: var(--page-dot);
+}
+.notes--reference .dots__dot[data-active="true"]::after { background: var(--ui-accent); }
+.notes--reference .notes__act,
+.notes--reference .dots__add,
+.notes--reference .notes__mode {
+  width: calc(24px * var(--scale));
+  height: calc(24px * var(--scale));
+  padding: calc(4px * var(--scale));
+  border-radius: calc(5px * var(--scale));
+  color: var(--text-muted);
+  font-size: calc(16px * var(--scale));
+}
+.notes--reference .notes__mode { display: flex; align-items: center; justify-content: center; }
+.notes--reference[data-writing="true"] .notes__mode { color: var(--ui-accent); }
+.notes--reference .notes__act:hover:not(:disabled),
+.notes--reference .dots__add:hover:not(:disabled),
+.notes--reference .dots__dot:hover:not(:disabled) { background: var(--surface-control); color: var(--text-primary); }
+.notes--reference button:disabled { opacity: .35; cursor: default; }
+.notes--reference .notes__trouble {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(32px * var(--scale));
+  font-size: calc(11px * var(--scale));
+  line-height: calc(16px * var(--scale));
+}
+.notes--reference[data-alarm="true"] .notes__box { margin-bottom: calc(16px * var(--scale)); }
+/* B остаётся слева: страницы прокручиваются над закреплёнными действиями. */
+.notes--reference[data-layout="1"] {
+  grid-template-columns: calc(24px * var(--scale)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: calc(4px * var(--scale));
+}
+.notes--reference[data-layout="1"] .notes__box { grid-area: 1 / 2 / -1 / 3; }
+.notes--reference[data-layout="1"] .dots {
+  grid-area: 1 / 1; flex-direction: column; align-self: stretch;
+  min-height: 0; max-width: none; overflow-x: hidden; overflow-y: auto; gap: 0;
+}
+.notes--reference[data-layout="1"] .dots__dot,
+.notes--reference[data-layout="1"] .dots__add { width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); }
+.notes--reference[data-layout="1"] .notes__foot { grid-area: 2 / 1; flex-direction: column; align-self: end; gap: calc(2px * var(--scale)); }
+.notes--reference[data-layout="1"] .notes__act,
+.notes--reference[data-layout="1"] .notes__mode { height: calc(20px * var(--scale)); padding: calc(2px * var(--scale)); }
+.notes--reference[data-layout="1"] .notes__trouble { left: calc(32px * var(--scale)); bottom: 0; }
+.notes--reference .dots { min-width: 0; min-height: 0; overflow-x: auto; overflow-y: hidden; }
+.notes--reference .dots::-webkit-scrollbar { width: calc(4px * var(--scale)); height: calc(4px * var(--scale)); }
+.notes--reference .dots::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-control); }
+.notes--reference .dots::-webkit-scrollbar-button { display: none; }
+/* Низкое окно меняет плотность, но сохраняет выбранную сторону управления. */
+@container notes-size (height <= 7em) {
+  .notes--reference { gap: calc(4px * var(--scale)); }
+}

@@ -1,0 +1,73 @@
+/*
+ * Общие правила окна-карточки живут в styles/base.css: они нужны каждому
+ * виджету, а не только тем, что читают LibreHardwareMonitor. Здесь остаётся
+ * только то, что бывает у железа.
+ */
+
+/*
+ * Понятное состояние вместо молчания: без LHM все значения покажут прочерки,
+ * а причину объясняет только эта полоса.
+ */
+.widget__banner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 14%, var(--surface-card));
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+}
+
+.widget__banner--waiting {
+  border-bottom-color: var(--border-hairline);
+  background: var(--surface-card);
+  color: var(--text-muted);
+}
+
+/*
+ * Карточка процессора без драйвера PawnIO: прочерки под слоем с предложением
+ * поставить драйвер. Содержимое остаётся на месте и в полный рост — по нему
+ * меряется высота окна, а слой встаёт поверх всей карточки.
+ */
+.hardware-body--blocked {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.driver-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: inherit;
+  text-align: center;
+}
+
+.driver-gate .gate__line {
+  line-height: var(--leading-tight);
+}
+
+/* Ссылка — текстом цвета интерфейса: это выбор, а не главное действие */
+.gate__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-accent);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.gate__link:hover {
+  color: var(--text-primary);
+}

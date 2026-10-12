@@ -1,0 +1,515 @@
+/*
+ * Утверждённые A/B только для GPT. Исходная .speed и её пороги остаются
+ * в speedtest.css без изменений. Нейтральные поверхности и контролы берут
+ * общие токены GPT; данные — прежние net-down/net-up/neutral.
+ */
+.speedtest-reference-widget > .card > .card__body {
+  --card-pad-block: var(--space-4);
+  flex: none;
+  padding: var(--space-4);
+}
+
+.speed-reference {
+  --speed-reference-number: calc(29px * var(--scale));
+  --speed-reference-dial-number: calc(29px * var(--scale));
+  --speed-reference-base-height: calc(240px * var(--scale));
+  --speed-reference-chart-height: calc(95px * var(--scale));
+  display: grid;
+  grid-template-columns: calc(118px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "results results" "action message" "history history";
+  grid-template-rows: auto auto minmax(0, 1fr);
+  column-gap: calc(18px * var(--scale));
+  row-gap: calc(10px * var(--scale));
+  min-width: 0;
+  min-height: var(--speed-reference-base-height);
+  color: var(--text-primary);
+}
+
+.speed-reference[data-size="1"] {
+  --speed-reference-base-height: calc(292px * var(--scale));
+  --speed-reference-chart-height: calc(123px * var(--scale));
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "results" "action" "message" "history";
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  column-gap: 0;
+}
+
+.speed-reference__results {
+  grid-area: results;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: calc(10px * var(--scale));
+  min-width: 0;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.speed-reference__metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.speed-reference__metric-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: calc(14px * var(--scale));
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.speed-reference__metric-label > svg {
+  flex: none;
+  width: calc(14px * var(--scale));
+  height: calc(14px * var(--scale));
+  color: var(--accent);
+}
+
+.speed-reference__metric-label .dot,
+.speed-reference__ping .dot {
+  width: calc(5px * var(--scale));
+  height: calc(5px * var(--scale));
+  margin-inline: calc(4.5px * var(--scale));
+}
+
+.speed-reference__metric .stat__main {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(2px * var(--scale));
+}
+
+.speed-reference__metric .stat__value {
+  font-size: var(--speed-reference-number);
+  line-height: 1;
+}
+
+.speed-reference__metric .stat__unit {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.speed-reference[data-layout="a"][data-size="1"] .speed-reference__metric .stat__value {
+  font-size: calc(var(--speed-reference-number) * 5 / var(--speed-reference-digits));
+}
+
+.speed-reference__action {
+  grid-area: action;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.speed-reference__action > .btn {
+  width: 100%;
+  min-width: 0;
+  min-height: calc(30px * var(--scale));
+  padding-block: calc(5px * var(--scale));
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.speed-reference__action .btn:disabled {
+  border-color: var(--border-card);
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.speed-reference__message {
+  grid-area: message;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.speed-reference__message[data-failed="true"] {
+  color: var(--status-danger);
+}
+
+.speed-reference[data-size="1"] .speed-reference__message {
+  text-align: center;
+}
+
+.speed-reference__history {
+  grid-area: history;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.speed-reference__history-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: calc(14px * var(--scale));
+  overflow-wrap: anywhere;
+}
+
+.speed-reference__chart {
+  flex: none;
+  height: var(--speed-reference-chart-height);
+  min-width: 0;
+  min-height: 0;
+  background: none;
+}
+
+.speed-reference__chart > .trend {
+  min-height: 0;
+  background: none;
+}
+
+/* В утверждённом узком GPT легенда и подписи шкалы остаются. Пороги
+ * исходной .speed не распространяются на эту независимую разметку. */
+.speed-reference .trend__legend,
+.speed-reference__legend {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1.1;
+}
+
+.speed-reference .trend__mark {
+  color: var(--text-muted);
+}
+
+.speed-reference__chart--columns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.speed-reference__chart--columns > .speed__columns {
+  flex: 1;
+  min-height: 0;
+}
+
+.speed-reference__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.speed-reference__sample {
+  width: calc(14px * var(--scale));
+  border-top: var(--stroke-line) solid var(--accent);
+}
+
+.speed-reference__sample--dashed {
+  border-top-style: dashed;
+}
+
+/* B: абсолютные результаты слева, история и сообщение справа; действие
+ * отдельной строкой снизу. Контейнер имеет собственную минимальную высоту,
+ * поэтому подгонка окна не замыкает высоту графика на высоту окна. */
+.speed-reference[data-layout="b"] {
+  --speed-reference-base-height: calc(252px * var(--scale));
+  --speed-reference-chart-height: calc(148px * var(--scale));
+  grid-template-columns: calc(112px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "results history" "results message" "action action";
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  column-gap: var(--space-4);
+  row-gap: var(--space-3);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) 0 0;
+  border-bottom: 0;
+  border-right: 1px solid var(--border-hairline);
+}
+
+.speed-reference[data-layout="b"][data-size="1"] {
+  --speed-reference-number: calc(22px * var(--scale));
+  --speed-reference-base-height: calc(214px * var(--scale));
+  --speed-reference-chart-height: calc(160px * var(--scale));
+  grid-template-columns: calc(78px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "results history" "results message" "action action";
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  column-gap: calc(8px * var(--scale));
+  row-gap: calc(6px * var(--scale));
+}
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__results { gap: calc(10px * var(--scale)); padding-right: calc(6px * var(--scale)); }
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__metric .stat__value { font-size: calc(var(--speed-reference-number) * 5 / var(--speed-reference-digits)); }
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__metric-label { font-size: calc(10px * var(--scale)); gap: calc(2px * var(--scale)); }
+.speed-reference[data-layout="b"][data-size="1"] .trend { --trend-gutter: 0px; }
+.speed-reference[data-layout="b"][data-size="1"] .trend__mark { display: none; }
+.speed-reference[data-layout="b"][data-size="1"] :is(.trend__legend, .speed-reference__legend) { gap: calc(8px * var(--scale)); }
+.speed-reference[data-layout="b"][data-size="1"] :is(.trend__key, .speed-reference__key) { gap: calc(3px * var(--scale)); }
+/* Во всех GPT размерах Download 3px, Upload 1px: остаток идёт в зазоры.
+ * Тридцать пар занимают минимум 120px и помещаются даже в узком B при 90%. */
+.speed-reference .speed__columns[data-fit] { display: grid; grid-template-columns: repeat(var(--speed-count), minmax(4px, 1fr)); column-gap: 0; }
+.speed-reference .speed__columns[data-fit] .speed__pair { gap: 0; }
+.speed-reference .speed__columns[data-fit] .speed__bar { flex: none; width: var(--speed-bar); min-width: var(--speed-bar); }
+.speed-reference .speed__columns[data-fit] .speed__bar[data-accent="net-up"] { width: var(--speed-bar-up); min-width: var(--speed-bar-up); }
+
+/* Вид «Только замер»: та же дуга и шкала, истории и её заголовка нет. */
+.speed-reference__history[data-gauge="true"] {
+  align-items: center;
+  justify-content: center;
+}
+
+.speed-reference__gauge {
+  --arc-size: calc(96px * var(--scale));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.speed-reference__gauge .arc {
+  margin-bottom: calc(var(--arc-size) * -0.12);
+}
+
+.speed-reference__gauge .arc__track {
+  stroke: var(--border-hairline);
+}
+
+.speed-reference__gauge .stat__value {
+  font-size: calc(var(--speed-reference-dial-number) * 5 / var(--speed-reference-digits));
+  line-height: 1;
+}
+
+.speed-reference__gauge-unit {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
+.speed-reference__gauge-unit svg {
+  flex: none;
+  width: calc(13px * var(--scale));
+  height: calc(13px * var(--scale));
+  color: var(--accent);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__history .speed-reference__gauge {
+  --arc-size: calc(132px * var(--scale));
+  --speed-reference-dial-number: calc(34px * var(--scale));
+}
+
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__history .speed-reference__gauge {
+  --arc-size: calc(102px * var(--scale));
+  --speed-reference-dial-number: calc(28px * var(--scale));
+}
+
+/* Измерение: история и итоговые колонки скрыты в JSX. Видна текущая
+ * скорость соответствующего направления, этап, город и измеренный Ping. */
+.speed-reference[data-running="true"][data-size] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "run" "action" "message";
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: var(--space-4);
+}
+
+.speed-reference__run {
+  grid-area: run;
+  display: grid;
+  grid-template-columns: calc(132px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "phases phases" "server server" "gauge context";
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: var(--space-3) var(--space-6);
+  min-width: 0;
+}
+
+.speed-reference__phases {
+  grid-area: phases;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.speed-reference__phase {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.2;
+}
+
+.speed-reference__phase[data-phase="active"] {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.speed-reference__phase-mark {
+  display: block;
+  flex: none;
+  width: calc(5px * var(--scale));
+  height: calc(5px * var(--scale));
+  border-radius: var(--radius-pill);
+  background: var(--border-hairline);
+}
+
+.speed-reference__phase[data-phase="active"] .speed-reference__phase-mark,
+.speed-reference__phase[data-phase="done"] .speed-reference__phase-mark {
+  background: var(--ui-accent);
+}
+
+.speed-reference__server {
+  grid-area: server;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.speed-reference__server > span:last-child {
+  min-width: 0;
+}
+
+.speed-reference__run > .speed-reference__gauge {
+  --arc-size: calc(120px * var(--scale));
+  grid-area: gauge;
+  align-self: center;
+}
+
+.speed-reference__current-context {
+  grid-area: context;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.speed-reference__current-phase {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.speed-reference__ping {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+}
+
+.speed-reference[data-layout="a"][data-size="1"] .speed-reference__run {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "phases" "server" "gauge" "context";
+  grid-template-rows: auto auto minmax(calc(126px * var(--scale)), 1fr) auto;
+}
+
+.speed-reference[data-layout="a"][data-size="1"] .speed-reference__run > .speed-reference__gauge {
+  --arc-size: calc(144px * var(--scale));
+  --speed-reference-dial-number: calc(34px * var(--scale));
+}
+
+.speed-reference[data-layout="a"][data-size="1"] .speed-reference__current-context {
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__run {
+  grid-template-columns: calc(100px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "phases server" "phases gauge" "phases context";
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-3) var(--space-4);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__phases {
+  display: flex;
+  flex-direction: column;
+  gap: calc(30px * var(--scale));
+  justify-content: center;
+  padding-right: var(--space-4);
+  border-right: 1px solid var(--border-hairline);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__phase:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(2px * var(--scale));
+  top: calc(15px * var(--scale));
+  height: calc(22px * var(--scale));
+  border-left: 1px solid var(--border-hairline);
+}
+
+.speed-reference[data-layout="b"] .speed-reference__server {
+  justify-content: flex-start;
+}
+
+.speed-reference[data-layout="b"] .speed-reference__run > .speed-reference__gauge {
+  --arc-size: calc(132px * var(--scale));
+  --speed-reference-dial-number: calc(34px * var(--scale));
+}
+
+.speed-reference[data-layout="b"] .speed-reference__current-context {
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__run {
+  grid-template-columns: calc(82px * var(--scale)) minmax(0, 1fr);
+  grid-template-areas: "server server" "phases gauge" "phases context";
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__server {
+  justify-content: center;
+}
+
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__run > .speed-reference__gauge {
+  --arc-size: calc(112px * var(--scale));
+  --speed-reference-dial-number: calc(26px * var(--scale));
+}
+
+/* «Только замер» одинаково читается в A/B: дуга, Upload/Ping, запуск. */
+.speed-reference[data-gauge="true"][data-layout][data-size] {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto;
+  grid-template-areas: "dial" "secondary" "message" "action";
+  gap: calc(8px * var(--scale));
+}
+.speed-reference__dial { grid-area: dial; display: flex; flex-direction: column; align-items: center; gap: calc(6px * var(--scale)); }
+.speed-reference__dial > .speed-reference__current-phase { margin: 0; text-align: center; }
+.speed-reference__dial .speed-reference__gauge { --arc-size: calc(136px * var(--scale)); --speed-reference-dial-number: calc(32px * var(--scale)); }
+.speed-reference[data-size="1"] .speed-reference__dial .speed-reference__gauge { --arc-size: calc(116px * var(--scale)); --speed-reference-dial-number: calc(28px * var(--scale)); }
+.speed-reference__secondary { grid-area: secondary; display: flex; justify-content: center; gap: calc(16px * var(--scale)); font-size: calc(11px * var(--scale)); color: var(--text-secondary); white-space: nowrap; }
+.speed-reference__secondary > span { display: inline-flex; align-items: center; gap: calc(4px * var(--scale)); }
+.speed-reference__secondary strong { font-weight: 400; color: var(--text-primary); }
+.speed-reference__secondary small { font-size: calc(10px * var(--scale)); color: var(--text-muted); }
+.speed-reference__secondary svg { width: calc(12px * var(--scale)); height: calc(12px * var(--scale)); color: var(--accent); }
+.speed-reference__secondary .dot { width: calc(4px * var(--scale)); height: calc(4px * var(--scale)); }
+.speed-reference[data-size="1"] .speed-reference__secondary { gap: calc(8px * var(--scale)); font-size: calc(10px * var(--scale)); }
+.speed-reference[data-size="1"] .speed-reference__secondary > span { gap: calc(3px * var(--scale)); }

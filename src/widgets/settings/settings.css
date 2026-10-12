@@ -1,0 +1,1283 @@
+/*
+ * Окно настроек. Своих цветов и размеров не заводит — всё из tokens.css.
+ *
+ * Единственное отступление от общего вида: фон тут сплошной при любой
+ * плотности. Стекло нужно тому, что живёт на обоях, а настройки живут поверх
+ * работы — и заодно ползунок плотности не должен растворять окно, в котором
+ * его же и двигают.
+ */
+
+.settings {
+  /*
+   * Фон сплошной всегда. Задаём готовым цветом, а не плотностью: собранную из
+   * другой переменной `--surface-card` вычисляет `:root`, и потомку её
+   * множитель уже не перебить — он наследует готовое значение. Кегль по той же
+   * причине держит `look.ts`, а не CSS: он просто не применяет переменные вида
+   * в этом окне.
+   */
+  --surface-card: rgb(var(--surface-base));
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: var(--text-md);
+}
+
+/* ==================== Шапка ==================== */
+
+.settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.settings__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.settings__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--text-2xl);
+  height: var(--text-2xl);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.settings__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings__close svg {
+  width: 45%;
+  height: 45%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+/* ==================== Колонка разделов ==================== */
+
+.settings__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * Колонка со значками и деревом виджетов (этап 52, по образцу Themia).
+ *
+ * Прокручивается сама: двадцать виджетов под «Виджетами» в высоту окна не
+ * влезают. Ширину держит самое длинное имя виджета, снятое замером на пяти
+ * языках, — испанское «Generador de contraseñas», 198 точек листа с полями
+ * колонки и рамкой дают 216. Ширина окна (`WIDTH` в `settings_window.rs`)
+ * выросла вместе с ней.
+ */
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  width: 216px;
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--border-hairline);
+  overflow-y: auto;
+}
+
+.settings__branch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings__row {
+  display: flex;
+  align-items: center;
+}
+
+.settings__row > .settings__tab {
+  flex: 1;
+}
+
+.settings__tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.settings__tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings__tab[aria-current="true"] {
+  background: var(--surface-control-selected);
+  color: var(--text-primary);
+}
+
+.settings__tab[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  left: var(--space-1);
+  width: 2px;
+  border-radius: 999px;
+  background: var(--ui-accent);
+}
+
+.settings__icon {
+  display: inline-flex;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  color: var(--text-muted);
+}
+
+.settings__tab[aria-current="true"] .settings__icon,
+.settings__tab:hover .settings__icon {
+  color: var(--text-secondary);
+}
+
+/* Длинное имя уступает эллипсису, а целиком стоит в подсказке у пункта */
+.settings__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Лист дерева: отступ под ветку и кегль на ступень мельче раздела */
+.settings__tab--leaf {
+  padding-left: calc(var(--space-3) + var(--space-4));
+  font-size: var(--text-sm);
+}
+
+.settings__leaves {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * Второй уровень — ящики под «Почтой» (этап 53): ещё ступень отступа, кегль
+ * тот же, что у листа. Адрес длиннее имени виджета и режется эллипсисом,
+ * целиком он в подсказке у пункта.
+ */
+.settings__tab--sub {
+  padding-left: calc(var(--space-3) + var(--space-4) + var(--space-5));
+  font-size: var(--text-sm);
+}
+
+/* «Добавить ящик» при пяти ящиках: пункт стоит, но не нажимается */
+.settings__tab:disabled {
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ==================== Ящики почты на её странице ==================== */
+
+.mail-boxes {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+}
+
+.mail-boxes__row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.mail-boxes__row:first-child {
+  border-top: none;
+}
+
+.mail-boxes__row:hover {
+  background: var(--surface-hover);
+}
+
+.mail-boxes__row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.mail-boxes__address {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-boxes__state {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/*
+ * Ответ проверки подключения: заголовок цветом состояния, строка «что делать»
+ * и ответ системы или сервера моноширинным — в нём коды, по которым ищут
+ * решение, и его выделяют мышью, чтобы скопировать. Цвет только у заголовка и
+ * грани слева: большие площади цветом не заливаются.
+ */
+.mail-check {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-card);
+  border-left: 2px solid var(--status-danger);
+  border-radius: var(--radius-control);
+}
+
+.mail-check[data-outcome="passed"] {
+  border-left-color: var(--status-ok);
+}
+
+.mail-check__title {
+  color: var(--status-danger);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.mail-check[data-outcome="passed"] .mail-check__title {
+  color: var(--status-ok);
+}
+
+.mail-check__hint {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.mail-check__detail {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
+/* Стрелка ветки: вниз — развёрнута, вправо — свёрнута */
+.settings__fold {
+  display: inline-flex;
+  flex: none;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.settings__fold:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings__fold svg {
+  transition: transform var(--duration-fast) var(--ease);
+}
+
+.settings__fold[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+/* ==================== Содержимое ==================== */
+
+.settings__panel {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+.settings__heading {
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* Заголовок группы внутри раздела: группы лицензий */
+.settings__subheading {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+/*
+ * Черта между своим разделом виджета — подключением, городом, записями — и
+ * общими настройками карточки. К промежутку `.rows` добавлен свой отступ:
+ * черта отделяет разное, и воздуха у неё больше, чем между соседними полями.
+ */
+.divider {
+  width: 100%;
+  height: 0;
+  margin: var(--space-2) 0;
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+}
+
+/* ==================== Лицензия ==================== */
+
+.license-text > summary {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.license-text > pre {
+  max-height: 240px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/*
+ * Строка компонента: имя, лицензия, ссылка; ниже — пояснение, если оно есть.
+ * Сеткой, чтобы лицензии встали столбцом при любой длине имени.
+ */
+.credit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.credit:first-child {
+  border-top: none;
+}
+
+.credit__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit__license,
+.credit__note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.credit__note {
+  grid-column: 1 / -1;
+  line-height: var(--leading-normal);
+}
+
+.credit__link {
+  display: inline-flex;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.credit__link:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* ==================== Поддержать ==================== */
+
+.support__thanks {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+
+/* Способы — один блок строк с тонкими разделителями, а не отдельные
+   кнопки: три одинаковые рамки подряд читались как форма, а не как список */
+.support__ways {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface-control);
+}
+
+/* Строка нажимается целиком: имя с подписью слева, справа стрелка или QR,
+   всё по середине строки */
+.support__way {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.support__way:first-child {
+  border-top: none;
+}
+
+.support__way:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.support__way:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.support__way:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.support__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.support__name {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.support__about {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.support__go {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.support__way:hover:not(:disabled) .support__go {
+  color: var(--text-primary);
+}
+
+/* Белая плашка — часть кода, а не оформление: тёмное на белом читают камеры
+   любых банковских приложений */
+.support__qr {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-control);
+}
+
+.support__address {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+  user-select: text;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Пояснение под настройкой: почему так и чем это отзовётся */
+.note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+/*
+ * Отказ вместо подсказки: не сохранилось, не подключилось.
+ *
+ * Цветом, а не значком: строка стоит среди таких же приглушённых подсказок, и
+ * приглушённой она читалась бы как ещё одно пояснение, а не как «не вышло».
+ */
+.note--error {
+  color: var(--status-danger);
+}
+
+/*
+ * Подсказка к настройке — `Hints.tsx`. Пояснение, которое раньше стояло абзацем
+ * под настройкой: тем же кеглем и цветом, что `.note`, только на своей
+ * подложке поверх окна. Мышь сквозь неё проходит: подсказка не должна ловить
+ * наведение, из-за которого всплыла.
+ */
+.hint {
+  position: fixed;
+  z-index: 10;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: linear-gradient(var(--surface-control), var(--surface-control)), var(--surface-card);
+  box-shadow: var(--shadow-card);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  /* Подсказка из двух пояснений — двумя абзацами */
+  white-space: pre-line;
+  pointer-events: none;
+  animation: hint-in var(--duration-fast) var(--ease);
+}
+
+@keyframes hint-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ==================== Список виджетов ==================== */
+
+.grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.grid__head,
+.grid__row {
+  display: grid;
+  /* Четыре столбца галочек постоянной ширины, имя занимает остаток. Подписи
+     в шапке сокращены до одного слова: с полными столбцы съедали имя виджета,
+     а перенесённая на две строки подпись уводила галочки от своих столбцов.
+     Что значит столбец, договаривает строка под таблицей и подсказка у
+     самой галочки */
+  /* Ширина столбца снята замером, а не подобрана. Держит её самая длинная
+     подпись на всех пяти языках: английское «THROUGH» — 58 точек, испанские
+     «MOSTRAR» и «BLOQUEO» — 57 и 56, украинское «НАСКРІЗЬ» — 57. Масштаб на
+     окно настроек не действует (`look.ts`), так что мерка при 100 % —
+     единственная. Прежние 84 были меркой при трёх столбцах; четвёртый
+     столбец такой ширины съел бы у имени виджета целую строку списка */
+  /* Последний столбец — шестерёнка настроек виджета, шириной ровно под неё */
+  grid-template-columns: 1fr repeat(4, 66px) var(--text-xl);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grid__head {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.grid__label {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.grid__row {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.grid__row:last-child {
+  border-bottom: none;
+}
+
+.grid__row--all {
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.grid__row:hover {
+  background: var(--surface-hover);
+}
+
+.grid__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Настройки нет вовсе — не выключена, а неприменима */
+.grid__none {
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.grid__row > .check,
+.grid__head > .grid__label {
+  justify-self: center;
+}
+
+/*
+ * Шестерёнка: открывает настройки этого виджета. Приглушена, пока на строку
+ * не навели, — иначе полтора десятка одинаковых значков в столбик забивают
+ * список сильнее, чем сами галочки.
+ */
+.grid__gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--text-xl);
+  height: var(--text-xl);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.45;
+  transition:
+    opacity var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.grid__row:hover .grid__gear {
+  opacity: 1;
+}
+
+.grid__gear:hover {
+  color: var(--text-primary);
+}
+
+/* Шестерня залита, а не обведена: обводкой в шестнадцать точек зубцы
+   слипаются в кашу, а тонкая — в паутину */
+.grid__gear svg {
+  width: 78%;
+  height: 78%;
+  fill: currentColor;
+}
+
+/* ==================== Выбор из готовых ==================== */
+
+/*
+ * Виды и размеры: ряд кнопок, а не список. Их два-четыре, названия короткие,
+ * и выбранное должно быть видно, не открывая ничего.
+ */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.choice {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.choice:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.choice[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  background: var(--surface-control-selected);
+  color: var(--text-primary);
+}
+
+/* Клавиатурный фокус один во всём окне и не заимствует цвет метрики. */
+:where(
+  .settings__close,
+  .settings__tab,
+  .settings__fold,
+  .credit__link,
+  .grid__gear,
+  .choice
+):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ==================== Поля и рубильники ==================== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.field__name {
+  font-size: var(--text-md);
+}
+
+.field__value {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* Подписи по краям ползунка: без них непонятно, куда он ведёт */
+.field__scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+}
+
+.switch {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+
+.switch__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.switch__name {
+  line-height: var(--leading-tight);
+}
+
+.switch__hint {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.uris {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.uris__item {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  user-select: text;
+  cursor: text;
+}
+
+/* ==================== Темы и независимое стекло ==================== */
+
+/*
+ * Темы — один постоянный список тонких строк: образец, имя, галочка у выбранной.
+ * Описание всплывает подсказкой (`data-hint`). `data-theme-preview` подменяет
+ * цветовые токены внутри строки, так что все образцы видны разом, каждый
+ * своими цветами, а значения тут не дублируются. Фон образца — выбранное
+ * стекло: оно от темы не зависит.
+ */
+.theme-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+}
+
+.theme-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px var(--space-3);
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.theme-row:first-child {
+  border-top: none;
+}
+
+.theme-row:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Выбранная строка подкрашена своим же акцентом — как прежде карточка темы */
+.theme-row[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--ui-accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+/* Внутри списка со срезанными углами обводка фокуса встаёт внутрь строки */
+.theme-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/*
+ * Образец — четыре столбика цветами процессора, видеокарты, памяти и отдачи:
+ * в режимах это ровно четыре базы, в темах — их назначения. Высоты разные,
+ * чтобы образец читался диаграммой, а не полосатым флажком. Поле темнее окна
+ * настроек, как прежде у карточки: так образец не сливается со строкой.
+ */
+.theme-row__preview {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: 3px;
+  width: 40px;
+  height: 18px;
+  padding: 3px 5px 0;
+  border: 1px solid var(--border-card);
+  border-radius: 4px;
+  background: color-mix(in srgb, rgb(var(--surface-base)) 60%, #000);
+}
+
+.theme-row__bar {
+  display: block;
+  flex: 1;
+  border-radius: 1px 1px 0 0;
+}
+
+.theme-row__bar--cpu {
+  height: 62%;
+  background: var(--metric-cpu);
+}
+
+.theme-row__bar--gpu {
+  height: 100%;
+  background: var(--metric-gpu);
+}
+
+.theme-row__bar--ram {
+  height: 78%;
+  background: var(--metric-ram);
+}
+
+.theme-row__bar--up {
+  height: 44%;
+  background: var(--metric-net-up);
+}
+
+.theme-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-row__mark {
+  flex: none;
+  color: var(--ui-accent);
+  opacity: 0;
+}
+
+.theme-row[aria-pressed="true"] .theme-row__mark {
+  opacity: 1;
+}
+
+.color-legend {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.color-legend--reference {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.color-legend > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.color-legend i {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+}
+
+/*
+ * Стекло — одна строка образцов с именем внутри, всегда шесть в ряд. Образец
+ * закрашен основой своего стекла (`data-glass-preview`), выбранный обведён
+ * акцентом интерфейса.
+ *
+ * ВАЖНО: **строка не переносится ни на какой ширине** (этап 53, слово
+ * пользователя). Прежде образцы переносились, и прежний замер «на 728 точках
+ * держит все шесть» был неверен: снимок пользователя показал пять в ряд и
+ * «Сливу» ниже: 72 точки на образец и строка прокрутки окна (8) в 728 точек
+ * не влезали. Теперь образец просто уже и чуть выше; не влезшее имя режется
+ * эллипсисом, целиком оно в `title`.
+ */
+.glass-choices {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.glass-choice {
+  display: flex;
+  min-width: 0;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: rgb(var(--surface-base));
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.glass-choice:hover {
+  border-color: var(--border-control-hover);
+  color: var(--text-primary);
+}
+
+.glass-choice[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+  color: var(--text-primary);
+}
+
+.glass-choice__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Узкое окно настроек: у образца остаётся 55 точек. Замер на пяти языках —
+ * самое длинное имя там русское «Обсидиан», 55 точек мелким кеглем 50; зазор
+ * вдвое уже отдаёт каждому образцу ещё по три. Испанская «Medianoche» (66)
+ * не влезала и на 728 точках со строкой прокрутки, поэтому в каталоге она
+ * «Noche».
+ */
+@media (max-width: 700px) {
+  .glass-choices {
+    gap: var(--space-1);
+  }
+
+  .glass-choice {
+    font-size: var(--text-2xs);
+  }
+}
+
+/*
+ * Раскрывающийся список — родной `<select>`: стрелку рисуем свою, остальное
+ * от движка. `color-scheme: dark` красит и раскрытый список — иначе WebView2
+ * раскрыл бы его белым поверх тёмного окна.
+ */
+.field__head--center {
+  align-items: center;
+}
+
+.select {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.select__control {
+  min-width: 220px;
+  max-width: 100%;
+  padding: var(--space-2) calc(var(--space-3) + 20px) var(--space-2) var(--space-3);
+  appearance: none;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  color-scheme: dark;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.select__control:hover {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+}
+
+.select__control:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+}
+
+.select__control:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.select__control option {
+  background: rgb(var(--surface-base));
+  color: var(--text-primary);
+}
+
+.select__chevron {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  display: flex;
+  color: var(--text-muted);
+  font-size: 16px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.color-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.color-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.color-field__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.color-field__label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.color-field__inputs {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+
+.color-field__picker {
+  width: 32px;
+  height: 32px;
+  padding: 3px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  cursor: pointer;
+}
+
+.color-field__picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-field__picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.color-field__hex {
+  width: 84px;
+  min-width: 0;
+  height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.color-reset {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.accent-choices {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.accent-choice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 5px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: transparent;
+  cursor: pointer;
+}
+
+.accent-choice > span {
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--choice-color);
+}
+
+.accent-choice:hover,
+.accent-choice[aria-pressed="true"] {
+  border-color: var(--text-primary);
+}
+
+:where(.glass-choice, .accent-choice, .color-field__picker, .color-field__hex):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 580px) {
+  .color-field__row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .accent-choices {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* ==================== Список с переносимым порядком ==================== */
+/*
+ * Записи, у которых порядок значит что-то снаружи: коды 2FA стоят на карточке
+ * ровно в этом порядке. Меняют его перетаскиванием, а не парой кнопок «выше» и
+ * «ниже»: на десятке записей те превращаются в два десятка нажатий.
+ */
+
+.order__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--surface-hover);
+}
+
+/* Та, которую держат: приглушена, чтобы было видно, что она «в руке» */
+.order__row[data-dragging="true"] {
+  opacity: 0.45;
+}
+
+/* Та, на которую опустят: подсвечена гранью сверху — туда она и встанет */
+.order__row[data-over="true"] {
+  border-color: var(--ui-accent);
+}
+
+/* Ручка переноса. Курсор — единственное, что говорит «меня можно тянуть» */
+.order__grip {
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.order__row[data-dragging="true"] .order__grip {
+  cursor: grabbing;
+}
+
+.order__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

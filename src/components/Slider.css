@@ -1,0 +1,72 @@
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  /* Длинная полоса нейтральна; акцент обозначает взаимодействие с бегунком. */
+  background: linear-gradient(
+    to right,
+    var(--text-secondary) var(--slider-fill),
+    var(--surface-track) var(--slider-fill)
+  );
+  accent-color: var(--ui-accent);
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: calc(14px * var(--scale));
+  height: calc(14px * var(--scale));
+  border: 2px solid rgb(var(--surface-base));
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.slider:hover::-webkit-slider-thumb {
+  background: var(--ui-accent-hover);
+}
+
+/*
+ * Плоский вид: полоса без бегунка.
+ *
+ * Сам элемент выше своей полосы намеренно — иначе в три точки не попасть
+ * мышью. Поэтому заливка рисуется фоном заданного размера по центру коробки,
+ * а не растягивается на неё целиком.
+ */
+.slider--flat {
+  height: var(--space-4);
+  border-radius: 0;
+  background-size: 100% var(--bar-thin);
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.slider--flat::-webkit-slider-thumb {
+  /* Полосу тянут в любом её месте, отдельная точка тут не нужна */
+  width: 0;
+  height: 0;
+  border: none;
+}
+
+.slider:focus-visible {
+  outline: none;
+}
+
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.slider:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.slider:disabled::-webkit-slider-thumb {
+  cursor: default;
+}

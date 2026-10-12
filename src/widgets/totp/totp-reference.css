@@ -1,0 +1,279 @@
+/* R14 GPT Design A/B. Исходный totp.css и все его селекторы остаются Claude. */
+.totp-widget--reference .card__body {
+  display: flex;
+}
+
+.totp-ref {
+  --totp-row: calc(40px * var(--scale));
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.totp-ref[data-layout="b"] {
+  --totp-row: calc(48px * var(--scale));
+}
+
+.totp-ref__viewport {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.totp-ref__list {
+  min-width: 0;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.totp-ref__list::-webkit-scrollbar { width: 6px; }
+.totp-ref__list::-webkit-scrollbar-track { background: var(--surface-track); border-radius: var(--radius-pill); }
+.totp-ref__list::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-pill); }
+.totp-ref__list::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+/* У sample нет рамки и padding: contentRect равен полному шагу строки. */
+.totp-ref__item {
+  height: var(--totp-row);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.totp-ref__item:hover { background: var(--surface-control-hover); }
+.totp-ref__item[data-current="true"] { background: var(--surface-control-selected); }
+
+.totp-ref__row {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content var(--text-2xl);
+  align-items: center;
+  gap: var(--space-3);
+  height: 100%;
+  min-width: 0;
+  padding: calc(5px * var(--scale)) var(--space-2);
+  border-bottom: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.totp-ref__item:last-child .totp-ref__row { border-bottom-color: transparent; }
+
+.totp-ref__identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.totp-ref__issuer,
+.totp-ref__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.totp-ref__issuer { color: var(--text-secondary); font-size: var(--text-md); }
+.totp-ref__label { color: var(--text-muted); font-size: var(--text-xs); }
+
+.totp-ref__code {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  line-height: 1.15;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+}
+
+.totp-ref__code[data-open="true"] { color: var(--text-primary); }
+.totp-ref__code[data-unavailable="true"] { color: var(--status-danger); font-size: var(--text-xs); letter-spacing: 0; }
+.totp-ref__item[data-current="true"] .totp-ref__issuer,
+.totp-ref__item[data-current="true"] .totp-ref__label,
+.totp-ref__item[data-current="true"] .totp-ref__code { color: var(--ui-accent); }
+
+.totp-ref__code-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.totp-ref__feedback,
+.totp-ref__feedback-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--ui-accent);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.totp-ref__feedback-text { overflow: hidden; text-overflow: ellipsis; }
+.totp-ref__feedback svg,
+.totp-ref__feedback-mini svg { flex-shrink: 0; width: var(--text-xs); height: var(--text-xs); }
+.totp-ref__feedback[data-failed="true"],
+.totp-ref__feedback-mini[data-failed="true"] { color: var(--status-danger); }
+.totp-ref__feedback-mini { display: none; }
+
+.totp-ref__ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--text-2xl);
+  height: var(--text-2xl);
+  border-radius: 50%;
+  background: conic-gradient(var(--ui-accent) calc(var(--left) * 360deg), var(--border-hairline) 0);
+}
+
+.totp-ref__seconds {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80%;
+  height: 80%;
+  border-radius: 50%;
+  background: var(--surface-card);
+  color: var(--ui-accent);
+  font-size: var(--text-2xs);
+}
+
+.totp-ref[data-layout="b"] .totp-ref__row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: calc(3px * var(--scale));
+  padding-block: calc(3px * var(--scale));
+}
+
+.totp-ref[data-layout="b"] .totp-ref__identity {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: var(--space-3);
+}
+
+.totp-ref[data-layout="b"] .totp-ref__issuer { flex-shrink: 0; max-width: 52%; }
+.totp-ref[data-layout="b"] .totp-ref__identity[data-label="false"] .totp-ref__issuer { max-width: 100%; }
+.totp-ref[data-layout="b"] .totp-ref__label { flex: 1; }
+
+.totp-ref__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.totp-ref[data-layout="b"] .totp-ref__code { font-size: var(--text-xl); line-height: 1; letter-spacing: 0.025em; }
+.totp-ref[data-layout="b"] .totp-ref__code[data-unavailable="true"] { font-size: var(--text-md); letter-spacing: 0; }
+.totp-ref[data-layout="b"] .totp-ref__feedback { max-width: calc(96px * var(--scale)); }
+
+.totp-ref__meter {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  width: calc(76px * var(--scale));
+}
+
+.totp-ref__track {
+  flex: 1;
+  height: var(--bar-thin);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border-hairline);
+}
+
+.totp-ref__track > span { display: block; width: calc(var(--left) * 100%); height: 100%; border-radius: inherit; background: var(--ui-accent); }
+.totp-ref__count { min-width: var(--text-xl); text-align: right; font-size: var(--text-2xs); line-height: 1; color: var(--ui-accent); }
+
+.totp-ref__clock {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  height: calc(22px * var(--scale));
+  margin: 0;
+  padding-top: calc(7px * var(--scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--status-warn);
+  font-size: var(--text-2xs);
+  line-height: 1.1;
+}
+
+.totp-ref__empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: center;
+  cursor: pointer;
+}
+
+.totp-ref__empty-hint { color: var(--ui-accent); font-size: var(--text-xs); }
+
+/* Пороги прежних индексов размеров: ярлык, затем весь таймер. */
+@container card (width < 19em) {
+  .totp-ref__label { display: none; }
+  .totp-ref[data-layout="b"] .totp-ref__issuer { max-width: 100%; }
+}
+
+@container card (width < 15em) {
+  .totp-ref[data-layout="a"] .totp-ref__row { grid-template-columns: minmax(0, 1fr) max-content; }
+  .totp-ref__ring,
+  .totp-ref__meter { display: none; }
+  .totp-ref[data-layout="b"] .totp-ref__feedback-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+/* Ручной предел 140: A перестраивает строку; B сохраняет восемь цифр целиком. */
+@container card (width < 12em) {
+  .totp-ref[data-layout="a"] { --totp-row: calc(48px * var(--scale)); }
+  .totp-ref[data-layout="a"] .totp-ref__row { grid-template-columns: 1fr; align-content: center; gap: calc(2px * var(--scale)); }
+  .totp-ref[data-layout="a"] .totp-ref__identity { flex-direction: row; justify-content: flex-start; }
+  .totp-ref[data-layout="a"] .totp-ref__feedback {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .totp-ref[data-layout="a"] .totp-ref__feedback-mini { display: inline-flex; }
+  .totp-ref[data-layout="b"] .totp-ref__bottom { gap: calc(3px * var(--scale)); }
+  .totp-ref[data-layout="b"] .totp-ref__code { font-size: calc(20px * var(--scale)); }
+  .totp-ref[data-layout="b"] .totp-ref__code[data-digits="8"] { font-size: var(--text-lg); }
+  .totp-ref[data-layout="b"] .totp-ref__code[data-unavailable="true"] { font-size: var(--text-md); }
+}
+
+@container card (height < 6em) {
+  .totp-ref__clock { height: var(--text-xs); padding-top: calc(1px * var(--scale)); line-height: 1; }
+}

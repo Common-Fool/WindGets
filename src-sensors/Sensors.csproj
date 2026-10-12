@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    net472, а не net8: .NET Framework 4.8 стоит в Windows 11 из коробки, и
+    сайдкар весит около мегабайта. На net8 пришлось бы либо требовать установки
+    рантайма, либо публиковать self-contained — семь десятков мегабайт при
+    нынешнем установщике в 2,7.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>windgets-sensors</AssemblyName>
+    <RootNamespace>HwSensors</RootNamespace>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+  </ItemGroup>
+
+  <!--
+    Зависимые сборки вшиваем внутрь exe, чтобы наружу выходил один файл: в
+    сборку Tauri сайдкар едет ресурсом, и три «случайных» dll рядом с ним
+    пришлось бы перечислять поимённо и не забывать при обновлении пакета.
+    ILRepack и Costura ради этого не берём — правило «каждую библиотеку
+    обосновать» тут не проходит, а хватает пятнадцати строк с AssemblyResolve.
+
+    AfterTargets="ResolveReferences" не случайно: к этому моменту список
+    зависимостей уже известен, а до сбора ресурсов (PrepareResources) ещё не
+    дошло. LogicalName задаём сами — иначе имя ресурса соберут из пути.
+  -->
+  <Target Name="EmbedReferencedAssemblies" AfterTargets="ResolveReferences">
+    <ItemGroup>
+      <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'">
+        <LogicalName>%(Filename)%(Extension)</LogicalName>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
+
+</Project>

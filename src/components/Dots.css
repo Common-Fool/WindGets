@@ -1,0 +1,77 @@
+/*
+ * Строка страниц. Точки слева, «ещё одна» сразу за ними — читается как
+ * продолжение ряда, а не как отдельная кнопка у правого края.
+ *
+ * Своей высоты строка почти не занимает: точка мельче строчной буквы, а место
+ * под неё в карточке отнято у содержимого.
+ */
+
+.dots {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * Точка. Приглушённая — открытая страница, наоборот, светится: разницу между
+ * ними видно с одного взгляда и без подписи.
+ *
+ * Поле вокруг точки вдвое больше её самой: попасть мышью в шесть точек иначе
+ * не выходит вовсе.
+ */
+.dots__dot {
+  flex: none;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  opacity: 0.5;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.dots__dot:hover {
+  background: var(--text-secondary);
+  opacity: 1;
+}
+
+.dots__dot[data-active="true"] {
+  background: var(--ui-accent);
+  opacity: 1;
+}
+
+.dots__dot:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Значок вместо подложки — тот же приём, что у кнопок в подвале карточек */
+.dots__add {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.dots__add:hover {
+  color: var(--ui-accent-hover);
+}
+
+.dots__add:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--focus-ring) 55%, transparent));
+}

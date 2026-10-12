@@ -1,0 +1,48 @@
+/*
+ * Столбики растут от нижнего края, поэтому ряд выровнен по низу, а высота
+ * заливки задана в процентах: так диаграмма тянется вместе с окном сама.
+ */
+.columns {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--columns-gap);
+  min-width: 0;
+  /* Умолчание на случай, когда рядом нет кольца, задающего высоту строки */
+  height: var(--columns-height, calc(56px * var(--scale)));
+}
+
+/*
+ * Место под столбик. Подложки на всю высоту у него нет.
+ *
+ * ВАЖНО: **трек был и убран по живой проверке.** Заводился он ради того, чтобы
+ * ряд при малой загрузке не выглядел пустым местом, — а на обоях дал обратное:
+ * два десятка бледных прямоугольников читаются как рамки таблицы и спорят с
+ * самими столбиками. Столбик у нуля честнее пустого трека.
+ */
+.columns__bar {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  min-width: 0;
+  height: 100%;
+}
+
+/*
+ * Яркая грань показывает высоту, лёгкая заливка связывает её с нулём.
+ * Сплошной насыщенный столбик отдавал одному цвету всю площадь истории.
+ */
+.columns__fill {
+  width: 100%;
+  border-radius: var(--radius-bar);
+  background:
+    linear-gradient(
+      to bottom,
+      var(--accent) var(--bar-thin),
+      transparent var(--bar-thin)
+    ),
+    linear-gradient(
+      to top,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      color-mix(in srgb, var(--accent) 48%, transparent)
+    );
+}

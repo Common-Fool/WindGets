@@ -1,0 +1,128 @@
+/* Утверждён только GPT A. Claude продолжает использовать converter.css без правок. */
+.widget--converter-reference .card { border-radius: var(--radius-card); }
+.widget--converter-reference .card__body { padding: calc(10px * var(--scale)); container: converter-size / size; }
+.conv--reference { gap: calc(6px * var(--scale)); }
+
+.conv--reference .conv-ref__head {
+  display: flex; flex: none; align-items: center; gap: calc(3px * var(--scale));
+  min-width: 0; height: calc(24px * var(--scale));
+}
+.conv--reference .conv-ref__summary {
+  flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--text-muted); font-size: calc(11px * var(--scale)); line-height: calc(16px * var(--scale));
+}
+.conv--reference .btn { min-height: 0; height: calc(24px * var(--scale)); padding: 0 calc(7px * var(--scale)); font-size: calc(12px * var(--scale)); border-radius: calc(5px * var(--scale)); }
+.conv--reference .btn__icon { font-size: calc(16px * var(--scale)); }
+.conv--reference .btn__icon svg { width: calc(16px * var(--scale)); height: calc(16px * var(--scale)); }
+.conv--reference .conv-ref__head .btn { width: calc(24px * var(--scale)); padding: 0; border-color: transparent; background: transparent; color: var(--text-secondary); }
+.conv--reference .conv-ref__head .btn:hover:not(:disabled) { border-color: var(--border-card); background: var(--surface-control); }
+
+/* Короткие чипы уже существуют в Toggle. Подписи групп остаются у accessibility. */
+.conv--reference .conv__options {
+  flex-direction: row; flex-wrap: wrap; align-items: center;
+  min-height: 0;
+  column-gap: calc(10px * var(--scale)); row-gap: calc(4px * var(--scale));
+  padding: 0 calc(8px * var(--scale)) calc(6px * var(--scale)) 0;
+  border-top: 0; border-bottom: 1px solid var(--border-hairline);
+  max-height: calc(100% - 98px * var(--scale)); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+}
+.conv--reference .conv__choice { flex: none; flex-wrap: nowrap; gap: calc(4px * var(--scale)); max-width: 100%; }
+.conv--reference .conv__label {
+  display: block; position: absolute; width: 1px; height: 1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.conv--reference .conv__chips { flex-wrap: wrap; gap: calc(3px * var(--scale)); min-width: 0; }
+.conv--reference .toggle {
+  min-height: calc(24px * var(--scale)); padding: calc(2px * var(--scale)) calc(5px * var(--scale));
+  border-color: transparent; border-radius: calc(5px * var(--scale)); font-size: calc(11px * var(--scale)); line-height: calc(16px * var(--scale));
+}
+.conv--reference .toggle[aria-pressed="true"] { border-color: var(--ui-accent); color: var(--ui-accent); }
+.conv--reference .toggle__dot,
+.conv--reference .toggle__long { display: none; }
+.conv--reference .toggle__short { display: inline; }
+.conv--reference .conv-ref__next {
+  flex-basis: 100%; margin: 0; color: var(--text-muted); font-size: calc(10px * var(--scale)); line-height: calc(14px * var(--scale));
+}
+
+/* Отдельный зазор и стабильное место для скролла не перекрывают данные. */
+.conv--reference .conv__list {
+  gap: 0; padding-right: calc(8px * var(--scale)); min-height: calc(34px * var(--scale));
+  scrollbar-gutter: stable; overflow-x: hidden;
+}
+.conv--reference .conv__list,
+.conv--reference .conv__options,
+.conv--reference .conv__empty { scrollbar-width: auto; scrollbar-color: auto; }
+.conv--reference .conv__list::-webkit-scrollbar,
+.conv--reference .conv__options::-webkit-scrollbar,
+.conv--reference .conv__empty::-webkit-scrollbar { width: calc(4px * var(--scale)); }
+.conv--reference .conv__list::-webkit-scrollbar-button,
+.conv--reference .conv__options::-webkit-scrollbar-button,
+.conv--reference .conv__empty::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.conv--reference .conv__list::-webkit-scrollbar-track,
+.conv--reference .conv__options::-webkit-scrollbar-track,
+.conv--reference .conv__empty::-webkit-scrollbar-track { background: transparent; }
+.conv--reference .conv__list::-webkit-scrollbar-thumb,
+.conv--reference .conv__options::-webkit-scrollbar-thumb,
+.conv--reference .conv__empty::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: calc(8px * var(--scale)); }
+.conv--reference .conv__item {
+  grid-template-columns: minmax(0, 1fr) auto calc(20px * var(--scale));
+  padding: calc(5px * var(--scale)) 0; column-gap: calc(5px * var(--scale)); row-gap: calc(3px * var(--scale));
+  border-bottom: 1px solid var(--border-hairline); border-radius: 0;
+}
+.conv--reference .conv__name { color: var(--text-primary); font-size: calc(13px * var(--scale)); line-height: calc(17px * var(--scale)); }
+.conv--reference .conv__state { font-size: calc(11px * var(--scale)); line-height: calc(14px * var(--scale)); }
+.conv--reference .conv__item[data-status="done"] .conv__state { color: var(--status-ok); }
+.conv--reference .conv__action {
+  width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); padding: 0;
+  font-size: calc(16px * var(--scale));
+}
+.conv--reference .conv__action svg { width: calc(16px * var(--scale)); height: calc(16px * var(--scale)); }
+.conv--reference .conv-ref__reason {
+  grid-column: 1 / -1; margin: 0; min-width: 0; color: var(--status-danger);
+  font-size: calc(11px * var(--scale)); line-height: 1.35; overflow-wrap: anywhere; user-select: text;
+}
+
+/* Те же поля, волна и ручки; изменяется только раскладка и размер. */
+.conv--reference .conv__cut { display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; min-width: 0; gap: calc(4px * var(--scale)); }
+.conv--reference .conv__cut .conv__choice,
+.conv--reference .conv__cut .conv__chips { display: contents; }
+.conv--reference.conv .conv__time {
+  flex: none; width: calc(65px * var(--scale)); height: calc(24px * var(--scale)); min-height: 0;
+  padding: calc(2px * var(--scale)) calc(5px * var(--scale)); border-color: var(--border-card);
+  border-radius: calc(5px * var(--scale)); background: var(--surface-inset); font-size: calc(11px * var(--scale));
+}
+.conv--reference .conv__cut .conv__trim { flex: 1; min-width: calc(70px * var(--scale)); margin: 0 calc(5px * var(--scale)); --trim-handle: calc(10px * var(--scale)); height: calc(28px * var(--scale)); }
+.conv--reference .conv__trim-handle { height: calc(18px * var(--scale)); border: 1px solid var(--surface-card); border-radius: calc(3px * var(--scale)); background: var(--text-primary); }
+.conv--reference .conv__trim-handle:hover { background: var(--ui-accent); }
+.conv--reference .conv__trim--wave .conv__trim-handle { width: calc(5px * var(--scale)); height: 100%; border-radius: calc(2px * var(--scale)); }
+.conv--reference .conv__wave { gap: calc(1px * var(--scale)); }
+.conv--reference .conv__wave > span { background: var(--text-muted); }
+.conv--reference .conv__wave--kept > span { background: var(--text-secondary); }
+.conv--reference .conv__error { order: 1; flex-basis: 100%; font-size: calc(11px * var(--scale)); line-height: 1.35; overflow-wrap: anywhere; }
+
+.conv--reference .conv-ref__foot {
+  display: flex; flex: none; align-items: center; gap: calc(6px * var(--scale)); min-width: 0;
+  min-height: calc(30px * var(--scale)); padding-top: calc(5px * var(--scale)); border-top: 1px solid var(--border-hairline);
+}
+.conv--reference .conv-ref__path { flex: 1; min-width: 0; color: var(--text-muted); font-size: calc(10px * var(--scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv--reference .conv-ref__percent { flex: none; color: var(--text-secondary); font-size: calc(11px * var(--scale)); }
+.conv--reference .conv__empty { align-items: flex-start; text-align: left; gap: calc(9px * var(--scale)); overflow-y: auto; scrollbar-gutter: stable; padding-right: calc(8px * var(--scale)); }
+.conv--reference .conv__lead { color: var(--text-primary); font-size: calc(15px * var(--scale)); font-weight: 600; }
+.conv--reference .conv-ref__formats { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: calc(5px * var(--scale)) calc(10px * var(--scale)); color: var(--text-secondary); font-size: calc(12px * var(--scale)); }
+.conv--reference .conv-ref__formats > span:nth-child(odd) { color: var(--text-muted); }
+.conv--reference .conv__drop { inset: calc(5px * var(--scale)); border-radius: calc(8px * var(--scale)); }
+
+@container converter-size (width < 26em) {
+  .conv--reference .conv__item { grid-template-columns: minmax(0, 1fr) calc(20px * var(--scale)); row-gap: calc(2px * var(--scale)); padding: calc(4px * var(--scale)) 0; }
+  .conv--reference .conv__name { grid-column: 1; grid-row: 1; }
+  .conv--reference .conv__state { grid-column: 1; grid-row: 2; }
+  .conv--reference .conv__action { grid-column: 2; grid-row: 1 / 3; }
+  .conv--reference .conv-ref__foot .btn { font-size: calc(11px * var(--scale)); }
+}
+/* Плотность следует реальной высоте свободно растягиваемого окна. */
+@container converter-size (height < 18.5em) {
+  .conv--reference .conv__options { max-height: calc(64px * var(--scale)); }
+  .conv--reference .conv__item { padding-block: calc(2px * var(--scale)); row-gap: calc(1px * var(--scale)); }
+  .conv--reference .conv__name { font-size: calc(12px * var(--scale)); line-height: calc(15px * var(--scale)); }
+  .conv--reference .conv__state { line-height: calc(12px * var(--scale)); }
+}

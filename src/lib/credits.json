@@ -1,0 +1,79 @@
+{
+  "inputs": {
+    "src-tauri/Cargo.lock": "7d923b6079b786953ffa9726c96c09211f31e4e571070cf1a22a2e3982e3253c",
+    "package-lock.json": "6b0596cfbd868b2abf4ebfc98d94804ce38afba2304520690c3d0f7e77580986",
+    "src-sensors/Sensors.csproj": "eb924b57fb049e9834bb18ce718e00b1bf977f7132cecb146cab97e2fd89efd1"
+  },
+  "parts": [
+    {
+      "id": "sidecar",
+      "lead": "LibreHardwareMonitor",
+      "count": 17
+    },
+    {
+      "id": "rust",
+      "lead": "Tauri",
+      "count": 316
+    },
+    {
+      "id": "web",
+      "lead": "React",
+      "count": 6
+    }
+  ],
+  "licenses": [
+    "MIT",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "LGPL-2.1",
+    "Zlib"
+  ],
+  "programs": [
+    {
+      "id": "ffmpeg",
+      "name": "FFmpeg",
+      "license": "GPL-3.0",
+      "url": "https://ffmpeg.org/"
+    },
+    {
+      "id": "ytdlp",
+      "name": "yt-dlp",
+      "license": "Unlicense",
+      "url": "https://github.com/yt-dlp/yt-dlp"
+    },
+    {
+      "id": "quickjs",
+      "name": "QuickJS-NG",
+      "license": "MIT",
+      "url": "https://github.com/quickjs-ng/quickjs"
+    },
+    {
+      "id": "pawnio",
+      "name": "PawnIO",
+      "license": "GPL-2.0+",
+      "url": "https://github.com/namazso/PawnIO"
+    }
+  ],
+  "services": [
+    {
+      "id": "openmeteo",
+      "name": "Open-Meteo",
+      "license": "CC BY 4.0",
+      "url": "https://open-meteo.com/"
+    },
+    {
+      "id": "mlab",
+      "name": "M-Lab",
+      "license": "",
+      "url": "https://www.measurementlab.net/"
+    },
+    {
+      "id": "spotify",
+      "name": "Spotify Web API",
+      "license": "",
+      "url": "https://developer.spotify.com/terms"
+    }
+  ]
+}

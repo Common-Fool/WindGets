@@ -1,0 +1,17 @@
+.segments {
+  display: flex;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.segments__item {
+  flex: 1;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--surface-track);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.segments__item--filled {
+  background: var(--accent);
+}

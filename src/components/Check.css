@@ -1,0 +1,57 @@
+.check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Размер в кеглях: галочка стоит в строке текста и едет вместе с ней */
+  width: calc(var(--text-lg) + var(--space-1));
+  height: calc(var(--text-lg) + var(--space-1));
+  padding: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-bar);
+  background: var(--surface-control);
+  color: transparent;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.check:hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+}
+
+.check[aria-checked="true"],
+.check[aria-checked="mixed"] {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: var(--ui-accent-foreground);
+}
+
+.check[aria-checked="true"]:hover:not(:disabled),
+.check[aria-checked="mixed"]:hover:not(:disabled) {
+  border-color: var(--ui-accent-hover);
+  background: var(--ui-accent-hover);
+}
+
+/* Настройка есть, но применять её сейчас не к чему */
+.check:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.check:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.check__mark {
+  width: 72%;
+  height: 72%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

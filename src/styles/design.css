@@ -1,0 +1,56 @@
+/* GPT Design: общие поверхности и контролы только у готового окна.
+ * Цвета данных продолжают брать роли общей палитры. */
+:root[data-design="reference"] {
+  --surface-card: rgba(var(--surface-base), var(--surface-card-alpha));
+  --surface-inset: #1b2025;
+  --surface-control: #292f35;
+  --surface-control-hover: #343b42;
+  --surface-control-pressed: #1b2329;
+  --surface-control-selected: color-mix(in srgb, var(--ui-accent) 12%, var(--surface-control));
+  --surface-track: #292f35;
+  --border-card: #454d55;
+  --border-hairline: #3e464e;
+  --border-highlight: #ffffff08;
+  --border-control: #59666b;
+  --text-primary: #f2f4f7;
+  --text-secondary: #bec5d0;
+  --text-muted: #98a2af;
+  --ui-accent: var(--color-accent);
+  --ui-accent-hover: color-mix(in srgb, var(--ui-accent) 75%, white);
+  --ui-accent-soft: color-mix(in srgb, var(--ui-accent) 12%, var(--surface-control));
+  --ui-accent-foreground: #1b2025;
+  --focus-ring: var(--ui-accent);
+  --surface-hover: var(--surface-control-hover);
+  --border-control-hover: #697581;
+  --scrollbar-thumb: #68747e;
+  --scrollbar-thumb-hover: #88939d;
+  --page-dot: #63717b;
+  --control-thumb: #f6f8fa;
+  --shadow-card: inset 0 1px 0 #ffffff08;
+  --radius-card: calc(10px * var(--scale));
+  --radius-control: calc(6px * var(--scale));
+}
+:root[data-design="reference"] .card { box-shadow: var(--shadow-card); }
+:root[data-design="reference"] .card::before { display: none; }
+/* Геометрия GPT Design; Claude берёт прежнюю шкалу из tokens.css. */
+:root[data-design="reference"] {
+  --hardware-padding: calc(10px * var(--scale));
+  --hardware-ring: calc(80px * var(--scale));
+  --hardware-value: calc(14px * var(--scale));
+  --hardware-hint: calc(11px * var(--scale));
+  --hardware-label: calc(11px * var(--scale));
+  --hardware-main: calc(20px * var(--scale));
+  --hardware-memory: calc(16px * var(--scale));
+  --hardware-row: calc(36px * var(--scale));
+}
+
+/* Управляющие шкалы следуют палитре; бегунок остаётся светлым. Звук
+ * задаёт направление своей дорожки, используя те же роли. */
+:root[data-design="reference"] .slider:not(.sound .slider) {
+  background-image: linear-gradient(to right, var(--ui-accent) var(--slider-fill), var(--surface-track) var(--slider-fill));
+}
+:root[data-design="reference"] .slider::-webkit-slider-thumb,
+:root[data-design="reference"] .slider:hover::-webkit-slider-thumb { background: var(--control-thumb); }
+
+/* Общий hover бегунков, включая списки без собственного hover-правила. */
+:root[data-design="reference"] ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }

@@ -1,0 +1,57 @@
+/* Только GPT. Размеры едут за масштабом, пары R/W/life не растягиваются внутри. */
+:root[data-design="reference"] .card:has(.disks-ref) .card__body {
+  padding: calc(12px * var(--scale));
+}
+:root[data-design="reference"] .disks-ref {
+  width: 100%;
+  min-width: 0;
+  font-size: calc(13px * var(--scale));
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.disks-ref__disk { width: 100%; min-width: 0; }
+.disks-ref__disk + .disks-ref__disk {
+  margin-top: calc(6px * var(--scale));
+  padding-top: calc(6px * var(--scale));
+  border-top: 1px solid var(--border-hairline);
+}
+.disks-ref__head { display: flex; align-items: center; gap: calc(6px * var(--scale)); min-width: 0; }
+.disks-ref__head > svg { width: calc(16px * var(--scale)); height: calc(16px * var(--scale)); flex: none; color: var(--text-secondary); }
+.disks-ref__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(14px * var(--scale)); }
+.disks-ref__capacity { flex: none; margin-left: auto; font-size: calc(11px * var(--scale)); color: var(--text-muted); }
+.disks-ref__space { flex: none; display: inline-flex; align-items: baseline; gap: 0; white-space: nowrap; }
+.disks-ref:not(.disks-ref--ring) .disks-ref__quantity { font-size: calc(14px * var(--scale)); }
+.disks-ref:not(.disks-ref--ring) .disks-ref__quantity small { font-size: calc(11px * var(--scale)); margin-left: calc(3px * var(--scale)); }
+.disks-ref:not(.disks-ref--ring) .bar { margin-top: calc(6px * var(--scale)); }
+.disks-ref__free-label { color: var(--text-muted); font-size: calc(11px * var(--scale)); }
+.disks-ref__quantity { font-size: calc(20px * var(--scale)); font-weight: 400; white-space: nowrap; line-height: 1.1; }
+.disks-ref__quantity small { font-size: calc(12px * var(--scale)); margin-left: calc(4px * var(--scale)); color: var(--text-secondary); }
+.disks-ref__total { color: var(--text-secondary); font-size: calc(12px * var(--scale)); white-space: nowrap; }
+.disks-ref__rates { display: flex; width: 100%; min-width: 0; align-items: center; gap: calc(10px * var(--scale)); margin-top: calc(7px * var(--scale)); }
+.disks-ref__pair { display: inline-flex; align-items: baseline; gap: calc(4px * var(--scale)); white-space: nowrap; line-height: 1.25; }
+.disks-ref__pair > span { color: var(--text-muted); font-size: calc(11px * var(--scale)); }
+.disks-ref__pair > strong { font-size: calc(12px * var(--scale)); font-weight: 400; }
+.disks-ref--narrow .disks-ref__name { font-size: calc(13px * var(--scale)); }
+.disks-ref--narrow .disks-ref__quantity { font-size: calc(18px * var(--scale)); }
+.disks-ref--narrow .disks-ref__rates { gap: calc(10px * var(--scale)); }
+.disks-ref--narrow .disks-ref__pair { gap: calc(3px * var(--scale)); }
+.disks-ref--narrow .disks-ref__pair > strong { font-size: calc(11px * var(--scale)); }
+.disks-ref__ring-row { display: flex; align-items: center; gap: calc(20px * var(--scale)); margin-top: calc(10px * var(--scale)); }
+.disks-ref__ring-row .arc { --arc-size: calc(60px * var(--scale)); }
+.disks-ref__ring-row .arc__center { gap: calc(2px * var(--scale)); padding: 0 calc(5px * var(--scale)); }
+.disks-ref__ring-row .disks-ref__quantity { font-size: calc(16px * var(--scale)); display: flex; flex-direction: column; align-items: center; }
+.disks-ref__ring-row .disks-ref__quantity small { margin: calc(2px * var(--scale)) 0 0; font-size: calc(10px * var(--scale)); }
+.disks-ref__ring-values { min-width: 0; display: flex; flex-direction: column; gap: calc(5px * var(--scale)); }
+.disks-ref__ring-values .disks-ref__pair { gap: calc(5px * var(--scale)); }
+
+:root[data-design="reference"] .card:has(.disks-ref) { border-radius: var(--radius-card); }
+.disks-ref .bar { height: calc(4px * var(--scale)); }
+
+/* Строка занимает всю ширину карточки: R/W слева, Temp в свободном
+ * участке, life прижат к правому полю и без датчиков температуры. */
+.disks-ref__rates > [data-field="R"],
+.disks-ref__rates > [data-field="W"] { flex: none; }
+.disks-ref__rates > [data-field="Temp"] { flex: 1; min-width: 0; justify-content: center; overflow: hidden; }
+.disks-ref__rates > [data-field="Temp"] > span { flex: none; }
+.disks-ref__rates > [data-field="Temp"] > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.disks-ref__rates > [data-field="life"] { flex: none; margin-left: auto; justify-content: flex-end; }

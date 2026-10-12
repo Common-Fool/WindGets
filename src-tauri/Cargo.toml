@@ -1,0 +1,209 @@
+[package]
+name = "windgets"
+version = "0.1.0"
+edition = "2021"
+description = "Виджеты мониторинга железа"
+authors = ["CommonFool"]
+license = "MIT"
+
+[lib]
+name = "windgets_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Тестовой обёртки у бинаря нет, и это не лень: своих тестов в main.rs ноль, а
+# манифест требует прав администратора — cargo, запущенный обычным
+# пользователем, не смог бы даже поднять пустую обёртку и валил бы `cargo test`
+# целиком с «требуется повышение». Все тесты живут в библиотеке.
+[[bin]]
+name = "windgets"
+path = "src/main.rs"
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+# Взят ради `clear_blur`, а не ради размытия: настоящей подложки под виджетом
+# добиться не удалось (подробности в `window_effects.rs`) — системная либо не
+# рисует под прозрачным окном ничего, либо чернит его, поэтому её снимают всегда.
+window-vibrancy = "0.6.0"
+# Позиции и размеры окон между запусками. Виджеты стоят на втором мониторе
+# с отрицательными координатами — писать это руками значит повторить плагин.
+#
+# Плагина автозапуска тут нет намеренно: он писал в ветку Run, а приложение
+# требует прав манифестом — из Run оно спрашивало бы UAC на каждом входе в
+# систему. Автозапуск делает задача планировщика в `autostart.rs`.
+#
+# Плагина opener нет тоже (этап 60): ссылки, папки и вход в Спотифай
+# открывает `links.rs` в своём потоке — opener шёл в `ShellExecute` прямо из
+# потока вызова, а это COM, на котором держится WebView2.
+tauri-plugin-window-state = "2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# TLS нужен ради api.spotify.com, погоды у Open-Meteo и подбора сервера у
+# M-Lab. Датчики по HTTP больше не ходят вовсе: свой сайдкар разговаривает
+# через stdin/stdout.
+# Взят native-tls: на Windows это schannel, то есть системное хранилище
+# сертификатов и никакого C-тулчейна сверх MSVC. У rustls зависимость
+# собирается через cmake и nasm — лишний риск сборки на пустой машине.
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "json",
+    # Обмен и обновление токенов Spotify идёт формой, а не JSON
+    "form",
+    "native-tls",
+] }
+# Асинхронный рантайм даёт Tauri, отсюда нужны таймер опроса и сокет
+# для приёма колбэка авторизации
+tokio = { version = "1.53.1", features = ["time", "net", "io-util", "sync"] }
+# WebSocket ради спидтеста: протокол NDT7 у M-Lab работает только по нему, а
+# reqwest WebSocket не умеет вовсе. TLS берём тот же native-tls, что уже стоит
+# у reqwest, — второго стека сертификатов в сборке не появляется.
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
+    "connect",
+    "native-tls",
+] }
+# Потоки и приёмники для того же сокета. Уже собирается как зависимость
+# reqwest, отдельной цены не имеет.
+futures-util = { version = "0.3.33", default-features = false, features = ["sink"] }
+# PKCE — это SHA-256 от verifier и base64url без набивки. Ради двух строк
+# тянуть библиотеку OAuth незачем; обе крейта и так уже в дереве сборки.
+sha2 = "0.10.9"
+base64 = "0.22.1"
+# Криптостойкая случайность для verifier и параметра state
+getrandom = "0.3.4"
+# HMAC-SHA1 ради кодов TOTP (RFC 6238) в виджете 2FA. Руками его не пишем:
+# ошибка в набивке ключа или в усечении не падает, а молча отдаёт код, который
+# не подойдёт, — и чинить после этого будут сервис, а не виджет. Ветка «ключ
+# длиннее блока» вдобавок не срабатывает на обычном двадцатибайтовом секрете
+# вовсе и ждёт первого длинного.
+hmac = "0.12.1"
+# Тот же SHA-1, но линии `digest` 0.10 — той, на которой стоит наш `sha2`.
+# Лежащий в дереве `sha1` 0.11 (его тянет tungstenite) из линии 0.11, и ради
+# него пришлось бы брать `hmac` предрелизом. Цена обеих строк посчитана по
+# Cargo.lock: три листа (`hmac`, `sha1`, `subtle`) и ни одного нового поддерева
+# — `digest`, `block-buffer`, `crypto-common` и `cpufeatures` уже стоят под
+# `sha2`. SHA-256 и SHA-512 для тех же кодов берутся у него же.
+sha1 = "0.10.6"
+# Асинхронный клиент IMAP ради виджета почты. Работает поверх сокетов Tokio
+async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
+# Разбор MIME, кодировок RFC 2047 и частей тела писем для карточки почты
+mail-parser = "0.11.8"
+# Мост между Tokio и futures-io ради async-imap: транспорт держит Tokio,
+# а клиент IMAP принимает AsyncRead/AsyncWrite из futures-io. Уже в Cargo.lock
+tokio-util = { version = "0.7.19", features = ["compat"] }
+# TLS-обёртка над сокетом Tokio для IMAPS на системном schannel через native-tls
+tokio-native-tls = "0.3.1"
+# Список процессов ради своего виджета. Своими руками это снимок Toolhelp32,
+# OpenProcess на каждый процесс, GetProcessTimes с GetSystemTimes и своя
+# таблица прошлых времён — ровно то, что здесь уже отлажено. Возможности по
+# умолчанию сняты, оставлена одна: диски, сеть и датчики оттуда не нужны, они
+# уже есть от LHM. Плата — второй `windows` в дереве сборки, 0.62 рядом с
+# нашим 0.61.
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+
+[target.'cfg(windows)'.dependencies]
+# Скругление углов окна средствами DWM (`DWMWA_WINDOW_CORNER_PREFERENCE`):
+# у окна без рамки углы прямые, и они торчали бы из-под скруглённой карточки.
+#
+# IpHelper и WinSock — ради пинга. ICMP шлём через IcmpSendEcho, а не сырым
+# сокетом: сырой ICMP на Windows требует прав администратора, а помощник
+# работает от обычного пользователя. Отдельной библиотеки пинга не берём,
+# нужное уже здесь.
+#
+# Shell и Gdi — ради прилипания окон: подкласс окна и границы рабочей области
+# монитора.
+# Media_Audio и System_Com — ради виджета звука: перечисление устройств,
+# громкость и молчание идут через COM (MMDevice и IAudioEndpointVolume).
+# DataExchange и Memory — ради виджета буфера обмена: сам буфер живёт в
+# user32, а его содержимое приходит блоком GlobalAlloc, который надо запереть
+# и прочитать. Возможность Win32_System_Ole при этом не берём, хотя
+# CF_UNICODETEXT лежит именно там: мегабайт сгенерированного кода ради одного
+# числа, закреплённого за форматом с самого начала Win32.
+# FunctionDiscovery и Shell_PropertiesSystem нужны там же за именем устройства
+# и его типом: оба лежат в хранилище свойств, а не в самом интерфейсе.
+# Media_Control, Foundation и Storage_Streams — ради медиа-виджета: медиасессии
+# Windows (GlobalSystemMediaTransportControls) есть только в WinRT, и это первые
+# WinRT-ветки в приложении. Foundation даёт время и длительность трека,
+# Storage_Streams — байты обложки. Имя источника берётся у оболочки (Shell уже
+# есть), а не у ApplicationModel: тот знает только пакетные приложения, и Zen
+# выходил в нём ключом-хешем. Новой сборки не добавляют: это
+# сгенерированный код того же крейта, а `windows-future` и
+# `windows-collections`, на которых стоят асинхронные вызовы и списки, уже
+# лежат в дереве под ним.
+# Тот же крейт, что реэкспортирует `windows::core`, но нужен по имени:
+# макрос `#[interface]` разворачивается в абсолютные пути `::windows_core::`,
+# и без прямой записи в зависимостях объявление IPolicyConfig не собирается.
+# Своей сборки не добавляет — он и так лежит в дереве под `windows`.
+windows-core = "0.61.2"
+windows = { version = "0.61.3", features = [
+    "Foundation",
+    "Media_Control",
+    "Storage_Streams",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    # Язык интерфейса по умолчанию — язык Windows: GetUserDefaultUILanguage.
+    # Крейт вроде sys-locale ради одного вызова не нужен. Сборки не добавляет:
+    # сгенерированный код того же крейта
+    "Win32_Globalization",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    # DPAPI ради секретов, которые лежат на диске, — пароля почты и ключей 2FA:
+    # CryptProtectData и CryptUnprotectData
+    "Win32_Security_Cryptography",
+    # Ради значка программы в микшере звука: `SHGetFileInfoW` объявлен только
+    # при этой возможности. До этапа 60 её молча включал плагин opener через
+    # объединение возможностей Cargo; плагин ушёл — сборка упала. Сборки не
+    # добавляет: сгенерированный код того же крейта
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    # Журнал ошибок (`journal.rs`): `SetStdHandle` подменяет stderr трубой в
+    # файл, и все `eprintln!` приложения попадают туда без переписывания.
+    # Сборки не добавляет: сгенерированный код того же крейта
+    "Win32_System_Console",
+    "Win32_System_DataExchange",
+    # Объект задания — ради конвертера и загрузчика: `yt-dlp.exe` одним файлом
+    # сам порождает второй процесс, а тот — ffmpeg. `Child::kill` гасит только
+    # первый, и отмена оставляла бы качать и кодировать их потомков. Задание с
+    # KILL_ON_JOB_CLOSE гасит всё дерево разом — и при отмене, и при падении
+    # самого приложения. Сборки не добавляет: сгенерированный код того же крейта
+    "Win32_System_JobObjects",
+    "Win32_System_Memory",
+    # ProcessStatus и Threading — ради виджета процессов: sysinfo отдаёт
+    # рабочий набор целиком, вместе с общими страницами, а диспетчер задач
+    # показывает частный. Частный лежит в PROCESS_MEMORY_COUNTERS_EX2, и за
+    # ним нужен хендл процесса.
+    "Win32_System_ProcessStatus",
+    # Драйвер PawnIO (`pawnio.rs`): версия и путь удаления лежат в записи его
+    # установщика в HKLM\…\Uninstall, а `RegGetValueW` есть только здесь.
+    # Сборки не добавляет: сгенерированный код того же крейта
+    "Win32_System_Registry",
+    # Там же: `GetLocalTime` — время у строки журнала по часам человека, без
+    # крейта времени ради одного вызова. Сборки не добавляет
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    # Не ради самих вариантов: без него `IMMDevice::Activate` не собирается
+    # вовсе — у него в сигнатуре PROPVARIANT
+    "Win32_System_Variant",
+    # GetDpiForWindow — ради прилипания при растягивании: нижний предел окна
+    # записан в логических точках, а оконная процедура считает в физических, и
+    # масштаб у второго монитора свой. Спросить его у Tauri изнутри модального
+    # цикла нельзя — событийный цикл стоит. Сборки не добавляет:
+    # сгенерированный код того же крейта
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+# Рантайм для проверки разбора на живом выхлопе LHM
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
+
+[profile.dev]
+incremental = true

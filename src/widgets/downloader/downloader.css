@@ -1,0 +1,336 @@
+/*
+ * Загрузчик: поле ссылки, режим, строка состояния, кнопки и история.
+ *
+ * Карточка нейтральная, как у конвертера и буфера обмена: цвет — только у
+ * действия и выбора.
+ *
+ * Раскладок две, а разметка одна — сетка с поимённо назначенными местами, как
+ * у генератора паролей. Кнопки стоят в сетке каждая своей клеткой, поэтому в
+ * виде «В две строки» они переезжают к полю ссылки, не меняя разметки.
+ */
+
+.dl {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "url url url url"
+    "opts opts opts opts"
+    "status status status status"
+    "folder toggle . go"
+    "list list list list";
+  align-content: start;
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+/* Блок согласия и скачивания программ — во всю ширину, у него своя раскладка */
+.dl > .gate {
+  grid-column: 1 / -1;
+}
+
+.dl__url {
+  grid-area: url;
+  min-width: 0;
+}
+
+.dl__options {
+  display: flex;
+  grid-area: opts;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dl__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.dl__folder {
+  grid-area: folder;
+}
+
+.dl__toggle {
+  grid-area: toggle;
+}
+
+.dl__go {
+  grid-area: go;
+  justify-self: end;
+}
+
+/*
+ * Строка состояния — всегда одна строка: что слева, ход или действие справа.
+ * Полоса хода — в зазоре под строкой, а не своей строкой: так высота карточки
+ * одна при любом состоянии, и под короткими состояниями не остаётся пустоты.
+ */
+.dl__status {
+  position: relative;
+  display: flex;
+  grid-area: status;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.dl__status[data-phase="idle"],
+.dl__status[data-phase="cancelled"] {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.dl__status[data-phase="failed"] {
+  color: var(--status-danger);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.dl__status-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl__status-side {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.dl__status-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Посередине зазора до кнопок */
+  bottom: calc(var(--space-3) / -2 - var(--bar-thin) / 2);
+}
+
+.dl__show {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ui-accent);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.dl__show:hover {
+  color: var(--ui-accent-hover);
+  text-decoration: underline;
+}
+
+.dl__show:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-radius: var(--radius-control);
+}
+
+.dl__history {
+  grid-area: list;
+}
+
+/*
+ * Вид «В две строки»: ссылка с кнопкой скачивания сверху, выбор с кнопками
+ * папки и истории снизу. Кнопка скачивания занимает над ними обе их клетки —
+ * так выбору остаётся вся ширина до них.
+ *
+ * Своей строки состояния тут нет: работа и отказ ложатся поверх поля ссылки
+ * (поле при работе всё равно заперто), а готовое и тишина не показываются —
+ * готовое есть в истории. Отказ убирается нажатием, и поле снова открыто.
+ */
+.dl[data-layout="rows"] {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "url go go"
+    "opts folder toggle"
+    "list list list";
+  row-gap: var(--space-2);
+}
+
+.dl[data-layout="rows"] .dl__options {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+
+.dl[data-layout="rows"] .dl__chips {
+  flex-wrap: nowrap;
+}
+
+/* Чипы уже, без точки: выбор виден по обводке, а место тут считано */
+.dl[data-layout="rows"] .toggle {
+  padding: 2px var(--space-2);
+}
+
+.dl[data-layout="rows"] .toggle__dot {
+  display: none;
+}
+
+.dl[data-layout="rows"] .dl__status {
+  grid-area: url;
+  z-index: 1;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: rgb(var(--surface-base));
+  overflow: hidden;
+}
+
+.dl[data-layout="rows"] .dl__status[data-phase="idle"],
+.dl[data-layout="rows"] .dl__status[data-phase="done"],
+.dl[data-layout="rows"] .dl__status[data-phase="cancelled"] {
+  display: none;
+}
+
+/* Полоса хода — по нижнему краю поля, внутри его рамки */
+.dl[data-layout="rows"] .dl__status-bar {
+  bottom: 0;
+}
+
+/* ==================== История ==================== */
+
+/*
+ * Панель под нижним рядом; окно растёт ровно на её высоту и зазор `.dl`.
+ * Своих полей и рамки у панели нет: высоту меряет `ResizeObserver` по
+ * содержимому, и поле мимо замера оставило бы окно короче панели. Черта
+ * сверху — у самого списка, внутри замера.
+ */
+.dl__history {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+}
+
+.dl__saved {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--border-hairline);
+  list-style: none;
+  /*
+   * Двадцать строк окно не вместит — выше пяти список прокручивается. Замер
+   * при 100 %: строка 25,4 точки, пять строк, четыре зазора по четыре и поле
+   * в шесть — 149 точек, плюс черта, которая за масштабом не едет. Окно с
+   * пятью строками вырастает со 188 до 366 точек.
+   */
+  max-height: calc(149px * var(--scale) + 1px);
+  overflow-y: auto;
+}
+
+.dl__saved-item {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.dl__saved-item:hover {
+  background: var(--surface-control-hover);
+}
+
+.dl__saved-title {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.dl__saved-title:hover {
+  color: var(--text-primary);
+}
+
+.dl__saved-kind {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.dl__saved-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.dl__saved-action:hover {
+  color: var(--text-primary);
+}
+
+/* Крестик проступает под курсором, как у буфера обмена: место под него
+   держится всегда */
+.dl__saved-drop {
+  opacity: 0;
+}
+
+.dl__saved-item:hover .dl__saved-drop,
+.dl__saved-drop:focus-visible {
+  opacity: 1;
+}
+
+.dl__saved-drop:hover {
+  color: var(--status-danger);
+}
+
+.dl__saved-title:focus-visible,
+.dl__saved-action:focus-visible,
+.dl__clear:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-radius: var(--radius-control);
+}
+
+.dl__history-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dl__clear {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.dl__clear:hover {
+  color: var(--text-primary);
+}

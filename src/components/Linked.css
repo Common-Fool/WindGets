@@ -1,0 +1,28 @@
+/*
+ * Ссылка внутри текста, написанного человеком.
+ *
+ * Цвета своего не берёт: синий тут занят видеокардой, и ссылка в заметке,
+ * покрашенная в цвет метрики, читалась бы как показание. Отличает её
+ * подчёркивание — того же рода, что во всём вебе, и ни с чем в проекте не
+ * спорящее.
+ */
+
+.link {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.15em;
+}
+
+/*
+ * Живая ссылка ловит мышь и подсвечивается под курсором. Погашенная — просто
+ * подчёркнутый текст: так видно, что ссылка тут есть, но сейчас правят текст.
+ */
+.link[data-live="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+  transition: text-decoration-color var(--duration-fast) var(--ease);
+}
+
+.link[data-live="true"]:hover {
+  text-decoration-color: currentColor;
+}

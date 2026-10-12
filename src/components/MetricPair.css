@@ -1,0 +1,106 @@
+/*
+ * Строка с парой значений: подпись слева, два значения в столбик справа.
+ * Столбцы фиксированной ширины, поэтому у соседних строк они совпадают —
+ * температуры, обороты и частоты выстраиваются друг под друга.
+ */
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  /*
+   * Полей у строки нет вовсе, и это не жадность: строк подряд четыре, и между
+   * двумя соседними и так стоят два межстрочных просвета плюс черта. Поле
+   * добавляло к ним третий зазор — та самая полоса под каждой цифрой, где
+   * помещалась бы ещё одна строка текста.
+   */
+  padding: 0;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.pair:first-child {
+  border-top: none;
+}
+
+.pair__label {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  /* Как у значения рядом: обычный межстрочный давал подписи лишние три точки
+     высоты, и в тесной раскладке они уходили из карточки на каждой строке */
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Ширина колонки — по полному кеглю, а не по геометрии: в ней стоит число, и
+ * мерка тут типографская, а не про воздух.
+ */
+.pair__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: calc(88px * var(--scale));
+  white-space: nowrap;
+}
+
+/*
+ * Узкая карточка: пара перестаёт быть парой в строку.
+ *
+ * Две ячейки требуют 88+88 плюс зазоры, и подпись слева схлопывается в ноль
+ * раньше, чем строка переполнится. Поэтому значения переезжают под подпись и
+ * встают рядом друг с другом.
+ */
+@container card (width < 17em) {
+  .pair {
+    grid-template-columns: auto auto;
+    justify-content: space-between;
+    /* Содержимое встаёт по центру блока: остаток высоты, если он есть,
+       делится поровну сверху и снизу, а не свисает вниз одной полосой */
+    align-content: center;
+    row-gap: calc(var(--space-1) / 2);
+  }
+
+  .pair__label {
+    grid-column: 1 / -1;
+  }
+
+  .pair__cell {
+    min-width: 0;
+  }
+
+  /* Все три ребёнка — span, поэтому по соседству, а не по :first-of-type */
+  .pair__label + .pair__cell {
+    align-items: flex-start;
+  }
+}
+
+/* Ещё уже — уходят подсказки под значениями: «ядро», «память», «корпус» */
+@container card (width < 14em) {
+  .pair__hint {
+    display: none;
+  }
+}
+
+/* Плотная строка: у значения с подсказкой межстрочный интервал по умолчанию
+   давал под каждой парой полосу пустоты в треть высоты строки */
+.pair__value {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+}
+
+.pair__value--empty {
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.pair__hint {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+}

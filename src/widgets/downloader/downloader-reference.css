@@ -1,0 +1,277 @@
+/* GPT A. Исходный downloader.css остаётся визуалом Claude. */
+.downloader-reference-widget .card { border-radius: var(--radius-card); }
+.dl-a {
+  height: auto;
+  min-height: 0;
+  padding: calc(10px * var(--scale));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(92px * var(--scale));
+  grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale)) minmax(calc(38px * var(--scale)), auto);
+  grid-template-areas: "url go" "options options" "status status";
+  gap: calc(7px * var(--scale)) calc(6px * var(--scale));
+}
+.dl-a__url { grid-area: url; min-width: 0; height: calc(32px * var(--scale)); }
+.dl-a .input {
+  padding: 0 calc(8px * var(--scale));
+  border-color: var(--border-card);
+  font-size: var(--text-xs);
+  background: var(--surface-inset);
+}
+.dl-a__go { grid-area: go; display: flex; min-width: 0; }
+.dl-a .btn {
+  width: 100%;
+  height: calc(26px * var(--scale));
+  min-width: 0;
+  padding: 0 calc(4px * var(--scale));
+  gap: calc(4px * var(--scale));
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+}
+.dl-a .btn--outline { border-color: var(--border-card); }
+.dl-a .btn__icon { font-size: calc(16px * var(--scale)); }
+.dl-a__options {
+  grid-area: options;
+  display: grid;
+  grid-template-columns: calc(98px * var(--scale)) minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: calc(6px * var(--scale));
+  min-width: 0;
+}
+.dl-a__mode { display: grid; grid-template-columns: 1fr 1fr; gap: calc(4px * var(--scale)); }
+.dl-a__mode button,
+.dl-a__quality-buttons button,
+.dl-a__quality-select {
+  min-width: 0;
+  padding: 0 calc(3px * var(--scale));
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dl-a__quality { min-width: 0; }
+.dl-a__quality-buttons {
+  height: 100%;
+  max-width: calc(174px * var(--scale));
+  display: grid;
+  grid-template-columns: minmax(0, .28fr) minmax(0, .32fr) minmax(0, .4fr);
+  gap: calc(3px * var(--scale));
+}
+.dl-a__quality-buttons button { font-size: calc(11px * var(--scale)); }
+.dl-a__mode button[aria-pressed="true"],
+.dl-a__quality-buttons button[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  background: var(--surface-control-selected);
+  color: var(--ui-accent);
+}
+.dl-a__mode button:hover,
+.dl-a__quality-buttons button:hover,
+.dl-a__quality-select:hover { background: var(--surface-control-hover); }
+.dl-a__quality-select {
+  display: none;
+  width: 100%;
+  height: 100%;
+  padding-inline: calc(6px * var(--scale));
+}
+.dl-a__audio-format {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: calc(11px * var(--scale));
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.dl-a__utilities { display: flex; gap: calc(6px * var(--scale)); }
+.dl-a__folder { width: calc(28px * var(--scale)); display: flex; }
+.dl-a__history-toggle { width: calc(40px * var(--scale)); display: flex; }
+.dl-a__history-toggle .btn { padding-inline: calc(2px * var(--scale)); gap: calc(3px * var(--scale)); }
+.dl-a__history-toggle[data-open="true"] .btn { border-color: var(--ui-accent); color: var(--ui-accent); }
+
+/* Значения остаются целыми фрагментами. Если они необычно длинные, строка
+   переносится и существующий замер высоты даёт ей место. */
+.dl-a__status {
+  grid-area: status;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4px * var(--scale));
+  padding-bottom: calc(4px * var(--scale));
+}
+.dl-a__status-title {
+  min-width: 0;
+  height: calc(16px * var(--scale));
+  flex: none;
+  font-size: var(--text-xs);
+  line-height: calc(16px * var(--scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dl-a__status-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  column-gap: calc(8px * var(--scale));
+  font-size: calc(11px * var(--scale));
+  line-height: calc(14px * var(--scale));
+  color: var(--text-secondary);
+}
+.dl-a__metric-group { display: flex; flex-wrap: wrap; gap: 0 calc(5px * var(--scale)); }
+.dl-a__metric-group > span { white-space: nowrap; }
+.dl-a__metric-group > span + span::before { content: "·"; margin-right: calc(5px * var(--scale)); }
+.dl-a__metric-group--extent { color: var(--text-muted); }
+.dl-a__status-hint {
+  display: block;
+  min-width: 0;
+  height: calc(14px * var(--scale));
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  line-height: calc(14px * var(--scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dl-a__status[data-phase="idle"] .dl-a__status-title { color: var(--text-secondary); }
+.dl-a__status[data-phase="done"] .dl-a__status-title { color: var(--status-ok); }
+.dl-a__status[data-phase="cancelled"] .dl-a__status-title { color: var(--status-warn); }
+.dl-a__status-bar { position: absolute; inset: auto 0 0; }
+.dl-a__show,
+.dl-a__full-dismiss,
+.dl-a__dismiss {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dl-a__show { align-self: flex-start; color: var(--ui-accent); font-size: calc(11px * var(--scale)); line-height: calc(14px * var(--scale)); }
+.dl-a__show:hover { text-decoration: underline; }
+.dl-a__full-dismiss { min-width: 0; display: flex; flex-direction: column; gap: calc(4px * var(--scale)); }
+.dl-a__full-dismiss .dl-a__status-title { width: 100%; color: var(--status-danger); }
+.dl-a__full-dismiss .dl-a__status-hint { width: 100%; }
+
+/* Вид остаётся независим от высоты и раскрытой истории. */
+.dl-a[data-layout="rows"] {
+  padding-block: calc(9px * var(--scale));
+  grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale));
+  grid-template-areas: "url go" "options options";
+  row-gap: calc(6px * var(--scale));
+}
+.dl-a__overlay {
+  grid-area: url;
+  z-index: 1;
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+.dl-a__overlay-line {
+  min-height: calc(30px * var(--scale));
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: calc(6px * var(--scale));
+  padding: calc(4px * var(--scale)) calc(8px * var(--scale));
+  font-size: calc(11px * var(--scale));
+  line-height: calc(14px * var(--scale));
+}
+.dl-a__overlay-value { flex: none; white-space: nowrap; }
+.dl-a__overlay-value + .dl-a__overlay-value { color: var(--text-secondary); }
+.dl-a__overlay-bar { position: absolute; left: 0; right: 0; bottom: 0; }
+.dl-a__dismiss {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(6px * var(--scale));
+  padding-inline: calc(8px * var(--scale));
+  color: var(--status-danger);
+  font-size: calc(11px * var(--scale));
+}
+.dl-a__dismiss > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-a__dismiss > span + span { flex: none; }
+
+/* Общая история не перемонтируется. Черта и поля находятся внутри измерения. */
+.dl-a .dl__history { grid-area: auto; grid-column: 1 / -1; gap: calc(4px * var(--scale)); }
+.dl-a .dl__saved {
+  gap: 0;
+  padding-top: calc(8px * var(--scale));
+  border-top-color: var(--border-hairline);
+  max-height: calc(148px * var(--scale) + 1px);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.dl-a .dl__saved::-webkit-scrollbar { width: calc(7px * var(--scale)); }
+.dl-a .dl__saved::-webkit-scrollbar-track { background: transparent; }
+.dl-a .dl__saved::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+.dl-a .dl__saved::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.dl-a .dl__saved-item {
+  height: calc(28px * var(--scale));
+  padding: 0 calc(4px * var(--scale));
+  grid-template-columns: minmax(0, 1fr) calc(28px * var(--scale)) calc(24px * var(--scale)) calc(24px * var(--scale));
+  column-gap: calc(4px * var(--scale));
+}
+.dl-a .dl__saved-title { font-size: var(--text-xs); line-height: calc(16px * var(--scale)); }
+.dl-a .dl__saved-kind { font-size: calc(10px * var(--scale)); }
+.dl-a .dl__saved-action { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); font-size: calc(16px * var(--scale)); }
+.dl-a .dl__history-foot { align-items: center; justify-content: space-between; gap: calc(8px * var(--scale)); min-height: calc(16px * var(--scale)); }
+.dl-a__files-remain { color: var(--text-muted); font-size: calc(10px * var(--scale)); }
+.dl-a .dl__clear { font-size: calc(11px * var(--scale)); line-height: calc(16px * var(--scale)); white-space: nowrap; }
+
+/* Согласие временно требует не меньше 154 с рамкой окна. Его длинные
+   переводы могут увеличить основу, обязательные строки не обрезаются. */
+.dl-a[data-ready="false"] {
+  min-height: calc(152px * var(--scale));
+  display: flex;
+  align-items: stretch;
+}
+.dl-a > .gate { width: 100%; min-width: 0; gap: calc(6px * var(--scale)); }
+.dl-a .gate__title { font-size: var(--text-xs); line-height: calc(16px * var(--scale)); }
+.dl-a .gate__line, .dl-a .gate__hint, .dl-a .gate__error { font-size: calc(11px * var(--scale)); line-height: calc(14px * var(--scale)); }
+.dl-a .gate .btn { width: auto; min-height: calc(32px * var(--scale)); padding-inline: calc(10px * var(--scale)); }
+.dl-a .gate__error { overflow-wrap: anywhere; }
+
+.dl-a button:focus-visible,
+.dl-a select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-radius: var(--radius-control);
+}
+
+/* 313 < 24em, 392 > 24em на шкале проекта; видео не теряет потолок. */
+@container card (width < 24em) {
+  .dl-a__quality-buttons { display: none; }
+  .dl-a__quality-select { display: block; }
+
+  /* Новый узкий пресет Claude сохраняет прежние Toggle и все обработчики.
+     Полное название остаётся в aria-label, короткое видно только здесь. */
+  .downloader-app-widget .dl__options { flex-wrap: nowrap; gap: calc(4px * var(--scale)); }
+  .downloader-app-widget .dl__chips { flex-wrap: nowrap; gap: calc(2px * var(--scale)); }
+  .downloader-app-widget .dl .toggle {
+    min-height: calc(26px * var(--scale));
+    padding: calc(2px * var(--scale)) calc(4px * var(--scale));
+    gap: 0;
+    font-size: var(--text-2xs);
+  }
+  .downloader-app-widget .toggle__dot, .downloader-app-widget .toggle__long { display: none; }
+  .downloader-app-widget .toggle__short { display: inline; }
+  .downloader-app-widget .dl__folder .btn { padding-inline: calc(4px * var(--scale)); }
+  .downloader-app-widget .dl__toggle .btn { padding-inline: calc(4px * var(--scale)); gap: calc(4px * var(--scale)); }
+}
+
+/* Запуск и отмена не тянутся вслед за сообщением или панелью программ. */
+.dl-a__go { align-items: flex-start; }
+.dl-a__go .btn { flex: none; width: calc(92px * var(--scale)); height: calc(32px * var(--scale)); }
+.dl-a .gate .btn { flex: none; width: auto; height: calc(32px * var(--scale)); min-height: 0; padding-inline: calc(10px * var(--scale)); }

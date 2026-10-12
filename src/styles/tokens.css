@@ -1,0 +1,616 @@
+/*
+ * Единственный источник значений для всех виджетов.
+ *
+ * Правило без исключений: компоненты не пишут цвета, размеры, отступы и
+ * радиусы своими числами — только через переменные отсюда. Разнобой между
+ * виджетами недопустим, ради этого файла всё и затевалось.
+ *
+ * Цвет метрики компоненты тоже не называют: карточка выставляет --accent,
+ * а график, полоса, дуга и точка читают var(--accent) и больше ничего
+ * о цвете не знают. Контролы — кнопки, галочки, ползунки, фокус — берут
+ * `--ui-*`: цвет данных не решает, каким цветом выбран пункт списка.
+ */
+
+:root {
+  /* ==================== Поверхности ==================== */
+
+  /*
+   * Плотность фона карточки. Выбирается в настройках и переживает перезапуск,
+   * поэтому вынесена отдельной переменной: значение правит окну корень
+   * документа, а цвет и всё, что из него намешано, остаётся здесь.
+   *
+   * Сам цвет подложки, `--surface-base`, задаёт стекло — блоки в конце файла.
+   */
+  --surface-card-alpha: 0.94;
+  /* Фон карточки. Почти непрозрачный: обои видны только по краям. */
+  --surface-card: rgba(var(--surface-base), var(--surface-card-alpha));
+  /* Та же подложка без прозрачности — фон окон, которым просвечивать незачем */
+  --surface-app: rgb(var(--surface-base));
+  /* Подложка под графиком и зоной с рядами */
+  --surface-inset: rgba(255, 255, 255, 0.035);
+  /* Трек полос и дуг — то, по чему ползёт заливка */
+  --surface-track: rgba(255, 255, 255, 0.11);
+  /* Подсветка строки под курсором */
+  --surface-hover: rgba(255, 255, 255, 0.055);
+  /*
+   * Затемнение под тем, что легло поверх карточки: всплывающее письмо у почты.
+   * Берёт цвет самой карточки, а не чистый чёрный: чёрный на тёмном стекле
+   * читается как дыра, а свой же цвет — как та же карточка, только ближе.
+   */
+  --surface-scrim: rgba(var(--surface-base), 0.86);
+
+  /*
+   * Контролы: поля, кнопки, галочки, строки списков. Четыре ступени одной
+   * белой дымки — покой, наведение, выбрано, нажато, — чтобы состояние
+   * читалось одинаково в любом виджете и при любой теме.
+   */
+  --surface-control: rgba(255, 255, 255, 0.035);
+  --surface-control-hover: rgba(255, 255, 255, 0.075);
+  --surface-control-selected: rgba(255, 255, 255, 0.09);
+  --surface-control-pressed: rgba(255, 255, 255, 0.12);
+
+  --border-card: rgba(255, 255, 255, 0.14);
+  /* Светлая грань по верхнему краю — она и создаёт ощущение стекла */
+  --border-highlight: rgba(255, 255, 255, 0.24);
+  /* Разделители между рядами */
+  --border-hairline: rgba(255, 255, 255, 0.1);
+  /* Обводка полей и контролов: заметнее карточной, иначе поле тонет в карточке */
+  --border-control: rgba(255, 255, 255, 0.2);
+  --border-control-hover: rgba(255, 255, 255, 0.36);
+
+  --shadow-card: 0 10px 32px rgba(0, 0, 0, 0.48);
+
+  /* ==================== Текст ==================== */
+
+  --text-primary: #f0f0f2;
+  --text-secondary: #c1c1c8;
+  --text-muted: #999aa5;
+
+  /* ==================== Числа из настроек ==================== */
+
+  /*
+   * Яркость цветов, ползунком в разделе «Вид». Двигает светлоту и цветность
+   * всех баз темы разом — как именно, записано у блока цветов ниже. Фон и
+   * обычный текст она не трогает.
+   */
+  --vivid: 1;
+
+  /*
+   * Цвета режимов «Один акцент» и «Своя палитра». Их выбирает человек, и в окно
+   * они приезжают из настроек; числа здесь — на то время, пока настройки ещё
+   * не доехали, и совпадают с умолчаниями в `settings.rs` и `look.ts`.
+   */
+  --single-accent: #4ca5ff;
+  --custom-accent: #4ca5ff;
+  --custom-positive: #40d9a3;
+  --custom-caution: #f0b857;
+  --custom-negative: #f17882;
+
+  /* ==================== Типографика ==================== */
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  /*
+   * Масштаб карточки: буквы, отступы, толщины — всё разом. Ползунок в
+   * настройках правит его у корня документа, и размеры едут во всех окнах.
+   *
+   * ВАЖНО: своих чисел у виджетов нет и быть не должно — размер, заданный в
+   * обход этого множителя, ползунок просто не заметит.
+   *
+   * Множителей тут было два: кегль и геометрия вполовину его хода. Разошлись
+   * они потому, что ползунок назывался «размером шрифта» — при полном ходе
+   * карточка слипалась на мелком кегле и рассыпалась пустотами на крупном.
+   * Ползунок стал «масштабом», то есть полным ходом по определению, и второй
+   * множитель исчез вместе с поводом.
+   */
+  --scale: 1;
+
+  /*
+   * Шкала целиком, от подписи до крупной цифры. Мелкий конец подняли на
+   * ступень: рядом с крупными цифрами новых виджетов строки железа читались
+   * заметно хуже, а размеры у всех берутся отсюда, так что выравнивать надо
+   * ровно в одном месте.
+   */
+  --text-2xs: calc(11px * var(--scale));
+  --text-xs: calc(12px * var(--scale));
+  --text-sm: calc(13px * var(--scale));
+  --text-md: calc(15px * var(--scale));
+  --text-lg: calc(17px * var(--scale));
+  --text-xl: calc(22px * var(--scale));
+  --text-2xl: calc(28px * var(--scale));
+  --text-3xl: calc(40px * var(--scale));
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.1;
+  --leading-normal: 1.45;
+
+  /* Разрядка для заголовков капсом — без неё капс читается плохо */
+  --tracking-caps: 0.09em;
+
+  /* ==================== Отступы ==================== */
+
+  --space-1: calc(4px * var(--scale));
+  --space-2: calc(6px * var(--scale));
+  --space-3: calc(8px * var(--scale));
+  --space-4: calc(12px * var(--scale));
+  --space-5: calc(16px * var(--scale));
+  --space-6: calc(20px * var(--scale));
+  --space-7: calc(24px * var(--scale));
+
+  /* ==================== Скругления ==================== */
+  /*
+   * Единственная геометрия мимо множителя. Углы окна скругляет DWM своим
+   * числом, а у карточки в окне радиус и вовсе ноль: два разных скругления
+   * оставляли бы уголки мимо друг друга.
+   */
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-bar: 3px;
+  --radius-pill: 999px;
+
+  /*
+   * Ширина полосы прокрутки. Не геометрия карточки, а деталь окна, поэтому за
+   * кеглем не едет. Числом стоит в двух местах сразу: в самой полосе и в поле
+   * заметки, где под неё держат место, чтобы подложка со ссылками не разъехалась
+   * с текстом на пиксель.
+   */
+  --scrollbar-size: 8px;
+
+  /* ==================== Толщины ==================== */
+
+  --bar-thick: calc(8px * var(--scale));
+  --bar-thin: calc(3px * var(--scale));
+  /* Просвет между столбиками диаграммы. Своё число, а не ступень общей шкалы:
+     столбиков три десятка на две сотни точек, и --space-1 съел бы полряда. */
+  --columns-gap: calc(2px * var(--scale));
+  --stroke-line: calc(1.75px * var(--scale));
+  --dot-size: calc(7px * var(--scale));
+
+  /*
+   * Размер кольца — и высота истории столбиками рядом с ним: строка со
+   * съехавшими друг относительно друга половинами выглядит скособоченной.
+   *
+   * Идёт по полному кеглю, а не по геометрии: внутри кольца стоит цифра, и
+   * отстань кольцо вдвое, на крупном кегле она бы из него полезла.
+   */
+  --arc-size: calc(104px * var(--scale));
+
+  /* ==================== Движение ==================== */
+
+  --duration-fast: 120ms;
+  --duration-slow: 260ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==================== Цвета ==================== */
+/*
+ * Тема задаёт базы — `--seed-*`, четыре у режимов и до шести у тем, — а всё
+ * цветное в карточках ссылается на них через роли ниже. Одинаковый смысл
+ * получает одинаковый цвет: процессор, приём сети и «хорошо» в одной теме
+ * могут делить базу, и это повторение намеренное, а не нехватка цветов.
+ *
+ * ВАЖНО: **где есть градация, там обязаны быть разные цвета.** Процессор с
+ * памятью стоят в одной карточке процессов, приём с отдачей — в одной
+ * карточке сети, разряды пароля и ступени состояния идут рядом. Каждая тема
+ * разводит такие пары по разным базам, и держит это тест
+ * `pairs_differ_in_every_theme`.
+ *
+ * Яркость (`--vivid`) превращает базу в цвет: немного светлоты и множитель
+ * цветности. При 100 % база остаётся ровно своим HEX. Множитель зажат сверху
+ * на 1,2: выше яркие базы уходили бы за охват sRGB, и движок прижимал бы их
+ * молча, уводя заодно тон.
+ *
+ * ВАЖНО: **блок объявлен и на корне, и на каждом образце темы.** Переменная,
+ * собранная из другой переменной, вычисляется там, где объявлена, и потомки
+ * наследуют уже готовый цвет. Образец в окне настроек ставит свои базы и без
+ * повторного объявления показал бы цвета активной темы, а не свои.
+ */
+:root,
+[data-theme-preview] {
+  /* Пятая и шестая базы нужны только темам; у режимов они повторяют
+     имеющиеся и новых оттенков не добавляют */
+  --seed-secondary: var(--seed-positive);
+  --seed-tertiary: var(--seed-caution);
+
+  --color-accent: oklch(from var(--seed-accent) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+  --color-positive: oklch(from var(--seed-positive) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+  --color-caution: oklch(from var(--seed-caution) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+  --color-negative: oklch(from var(--seed-negative) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+  --color-secondary: oklch(from var(--seed-secondary) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+  --color-tertiary: oklch(from var(--seed-tertiary) clamp(0, calc(l + (var(--vivid) - 1) * 0.1), 0.96) calc(c * clamp(0.7, var(--vivid), 1.2)) h);
+
+  /*
+   * Интерфейс: кнопки, галочки, выбранное, фокус. Не `--accent`: тот говорит
+   * о данных карточки, и контрол, унаследовавший его, красился бы в цвет
+   * процессора в одной карточке и в цвет памяти в другой.
+   */
+  --ui-accent: var(--color-accent);
+  --ui-accent-hover: var(--color-accent);
+  /* Знак на залитом акцентом — галочка в квадратике */
+  --ui-accent-foreground: #141416;
+  --focus-ring: var(--color-accent);
+
+  /*
+   * Метрики. Цвет закреплён за сущностью: процессор одного цвета во всех
+   * виджетах. Здесь назначения режимов; темы переназначают роли у себя.
+   * Медиа и нейтральное в режимах серые.
+   */
+  --metric-cpu: var(--color-positive);
+  --metric-gpu: var(--color-accent);
+  --metric-ram: var(--color-caution);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--text-secondary);
+  --metric-neutral: var(--text-secondary);
+
+  /*
+   * Разряды символов пароля: строчные белые, чтобы цвета разрядов не спорили
+   * с самим паролем, остальные три — на трёх базах.
+   */
+  --char-lower: var(--text-primary);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-caution);
+  --char-symbol: var(--color-negative);
+
+  /*
+   * Погода: солнце, луна и молния — тёплая база, дождь, морось, снег и гололёд —
+   * акцент, у части тем — пятая база. Прежде эти цвета были закреплены и теме
+   * не подчинялись; теперь они следуют ей — так решил пользователь, приняв
+   * цену: в монохроме дождь выходит почти цветом контура тучи.
+   *
+   * Облакам своего цвета нет вовсе, и это не забывчивость: они рисуются
+   * `currentColor`, то есть цветом строки, в которой стоят. Так значок в
+   * приглушённой клетке дня приглушён целиком, а солнце и дождь в нём остаются
+   * узнаваемыми.
+   */
+  --sky-warm: var(--color-caution);
+  --sky-water: var(--color-accent);
+  /* Заливка тучи — той, из которой идут осадки */
+  --sky-cloud-fill: rgba(240, 240, 242, 0.13);
+
+  /*
+   * Состояния: хорошо, средне, плохо — три базы темы. «Тревога» делит цвет со
+   * «средне»: палитру сводили к четырём цветам, и второго тёплого в ней нет;
+   * ступени шкалы накопителя различает её длина, а не цвет. В монохроме и
+   * «Одном акценте» состояния серые, как и данные, — решено вместе с погодой.
+   */
+  --status-ok: var(--color-positive);
+  --status-warn: var(--color-caution);
+  --status-alert: var(--color-caution);
+  --status-danger: var(--color-negative);
+
+  /* Акцент по умолчанию, чтобы примитив вне карточки не остался без цвета */
+  --accent: var(--metric-neutral);
+}
+
+/* ==================== Темы ==================== */
+/*
+ * Восемь тем и три режима. Список, порядок и имена живут в
+ * `settings::PALETTES`, здесь только цвета: каждый блок объявлен на корне окна
+ * и на своём образце в настройках.
+ *
+ * ВАЖНО: **тема по умолчанию объявлена через `:root:not([data-palette])`, а не
+ * через голый `:root`.** Тема переопределяет не только базы, но и роли
+ * метрик; объявленная на `:root`, она действовала бы при любом атрибуте и
+ * протекла бы в режимы, у которых ролей своих нет. Окно, до которого настройки
+ * ещё не доехали, атрибута не имеет и рисует темой по умолчанию.
+ */
+:root:not([data-palette]),
+:root[data-palette="reference-classic"],
+[data-theme-preview="reference-classic"] {
+  --seed-accent: #43d995;
+  --seed-positive: #43d995;
+  --seed-caution: #ffaa49;
+  --seed-negative: #f86bb4;
+  --seed-secondary: #1fcce0;
+  --seed-tertiary: #58a1f8;
+  --metric-cpu: var(--color-caution);
+  --metric-gpu: var(--color-secondary);
+  --metric-ram: var(--color-tertiary);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-positive);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-tertiary);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-secondary);
+}
+
+:root[data-palette="gpt"],
+[data-theme-preview="gpt"] {
+  --seed-accent: #2de5a3;
+  --seed-positive: #43d995;
+  --seed-caution: #ffaa49;
+  --seed-negative: #f86bb4;
+  --seed-secondary: #1fcce0;
+  --seed-tertiary: #58a1f8;
+  --metric-cpu: var(--color-caution);
+  --metric-gpu: var(--color-secondary);
+  --metric-ram: var(--color-tertiary);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-positive);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-tertiary);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-secondary);
+}
+
+/* Три оттенка синего для системы; отдачу отделяет зелёный */
+:root[data-palette="reference-polar"],
+[data-theme-preview="reference-polar"] {
+  --seed-accent: #4ca5ff;
+  --seed-positive: #40d9a3;
+  --seed-caution: #f0b857;
+  --seed-negative: #f17882;
+  --seed-secondary: #91c9ff;
+  --seed-tertiary: #398de6;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-tertiary);
+  --metric-ram: var(--color-secondary);
+  --metric-storage: var(--color-accent);
+  --metric-net-down: var(--color-accent);
+  --metric-net-up: var(--color-positive);
+  --metric-media: var(--color-secondary);
+  --char-upper: var(--color-secondary);
+  --char-digit: var(--color-caution);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+:root[data-palette="reference-indigo"],
+[data-theme-preview="reference-indigo"] {
+  --seed-accent: #6295ff;
+  --seed-positive: #53d6aa;
+  --seed-caution: #efbf69;
+  --seed-negative: #ed82b5;
+  --seed-secondary: #9bb9fc;
+  --seed-tertiary: #9a93f5;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-tertiary);
+  --metric-ram: var(--color-secondary);
+  --metric-storage: var(--color-accent);
+  --metric-net-down: var(--color-accent);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-tertiary);
+  --char-upper: var(--color-secondary);
+  --char-digit: var(--color-caution);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+:root[data-palette="reference-mint"],
+[data-theme-preview="reference-mint"] {
+  --seed-accent: #3ad5ae;
+  --seed-positive: #3ad5ae;
+  --seed-caution: #eabb66;
+  --seed-negative: #ed7f94;
+  --seed-secondary: #92e0cc;
+  --seed-tertiary: #29ad96;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-tertiary);
+  --metric-ram: var(--color-secondary);
+  --metric-storage: var(--color-accent);
+  --metric-net-down: var(--color-accent);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-accent);
+  --char-upper: var(--color-secondary);
+  --char-digit: var(--color-caution);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+:root[data-palette="reference-spectrum"],
+[data-theme-preview="reference-spectrum"] {
+  --seed-accent: #58a0ff;
+  --seed-positive: #4bd995;
+  --seed-caution: #ffab56;
+  --seed-negative: #f079bc;
+  --seed-secondary: #26cbe0;
+  --seed-tertiary: #ae88f4;
+  --metric-cpu: var(--color-caution);
+  --metric-gpu: var(--color-secondary);
+  --metric-ram: var(--color-tertiary);
+  --metric-storage: var(--color-accent);
+  --metric-net-down: var(--color-secondary);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-positive);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-accent);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-secondary);
+}
+
+/* У A, B и C шестой базы нет: хватает пяти, и лишняя не объявляется */
+:root[data-palette="reference-a"],
+[data-theme-preview="reference-a"] {
+  --seed-accent: #22cae1;
+  --seed-positive: #45d891;
+  --seed-caution: #f4a957;
+  --seed-negative: #f07bac;
+  --seed-secondary: #56a1f1;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-secondary);
+  --metric-ram: var(--color-caution);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-positive);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-secondary);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+:root[data-palette="reference-b"],
+[data-theme-preview="reference-b"] {
+  --seed-accent: #5b9cf5;
+  --seed-positive: #52d4ac;
+  --seed-caution: #eab876;
+  --seed-negative: #ed80ba;
+  --seed-secondary: #a48cf1;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-secondary);
+  --metric-ram: var(--color-negative);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-secondary);
+  --char-upper: var(--color-secondary);
+  --char-digit: var(--color-caution);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+/* C обходится и без пятой: все роли разложены по четырём основным базам */
+:root[data-palette="reference-c"],
+[data-theme-preview="reference-c"] {
+  --seed-accent: #27cbe0;
+  --seed-positive: #4dd6a1;
+  --seed-caution: #f4b646;
+  --seed-negative: #ed6aad;
+  --metric-cpu: var(--color-accent);
+  --metric-gpu: var(--color-caution);
+  --metric-ram: var(--color-negative);
+  --metric-storage: var(--color-caution);
+  --metric-net-down: var(--color-positive);
+  --metric-net-up: var(--color-negative);
+  --metric-media: var(--color-caution);
+  --char-upper: var(--color-positive);
+  --char-digit: var(--color-accent);
+  --char-symbol: var(--color-negative);
+  --sky-water: var(--color-accent);
+}
+
+/* Режимы: только базы, роли общие — из блока цветов выше */
+:root[data-palette="monochrome"],
+[data-theme-preview="monochrome"] {
+  --seed-accent: #eeeeee;
+  --seed-positive: #c9c9c9;
+  --seed-caution: #a5a5a5;
+  --seed-negative: #838383;
+}
+
+:root[data-palette="single"],
+[data-theme-preview="single"] {
+  --seed-accent: var(--single-accent);
+  --seed-positive: #cacaca;
+  --seed-caution: #9c9c9c;
+  --seed-negative: #eeeeee;
+}
+
+:root[data-palette="custom"],
+[data-theme-preview="custom"] {
+  --seed-accent: var(--custom-accent);
+  --seed-positive: var(--custom-positive);
+  --seed-caution: var(--custom-caution);
+  --seed-negative: var(--custom-negative);
+}
+
+/* ==================== Стекло ==================== */
+/*
+ * Фон карточки выбирается отдельно от темы: цвет подложки заимствовать у
+ * акцента нельзя — насыщенный акцент на подложке того же оттенка перестаёт
+ * читаться. Все шесть — тёмная нейтральная основа или едва заметный оттенок;
+ * поверхности, границы и текст над ними общие.
+ *
+ * `--surface-base` задан составляющими, а не цветом: из него собирают и
+ * полупрозрачную карточку, и сплошной фон там, где просвечивать нельзя, —
+ * обводка бегунка ползунка вырезает его из полосы, и полупрозрачная обводка
+ * показала бы полосу насквозь.
+ *
+ * Первое — стекло по умолчанию, в том числе для окна без атрибута.
+ */
+:root[data-glass="graphite"],
+[data-glass-preview="graphite"] {
+  --surface-base: 24, 24, 28;
+}
+
+:root:not([data-glass]),
+:root[data-glass="obsidian"],
+[data-glass-preview="obsidian"] {
+  --surface-base: 11, 12, 14;
+}
+
+:root[data-glass="warm"],
+[data-glass-preview="warm"] {
+  --surface-base: 31, 28, 26;
+}
+
+:root[data-glass="midnight"],
+[data-glass-preview="midnight"] {
+  --surface-base: 20, 26, 34;
+}
+
+:root[data-glass="plum"],
+[data-glass-preview="plum"] {
+  --surface-base: 29, 24, 32;
+}
+
+/*
+ * Раздача акцента. Ставится на карточку или любой контейнер, всё внутри
+ * наследует. Значение метрики берётся отсюда и нигде больше не дублируется.
+ */
+[data-accent="cpu"] {
+  --accent: var(--metric-cpu);
+}
+[data-accent="gpu"] {
+  --accent: var(--metric-gpu);
+}
+[data-accent="ram"] {
+  --accent: var(--metric-ram);
+}
+[data-accent="storage"] {
+  --accent: var(--metric-storage);
+}
+[data-accent="net-down"] {
+  --accent: var(--metric-net-down);
+}
+[data-accent="net-up"] {
+  --accent: var(--metric-net-up);
+}
+[data-accent="media"] {
+  --accent: var(--metric-media);
+}
+[data-accent="neutral"] {
+  --accent: var(--metric-neutral);
+}
+[data-accent="ok"] {
+  --accent: var(--status-ok);
+}
+[data-accent="warn"] {
+  --accent: var(--status-warn);
+}
+[data-accent="alert"] {
+  --accent: var(--status-alert);
+}
+[data-accent="danger"] {
+  --accent: var(--status-danger);
+}
+
+/*
+ * Погода берёт свою пару ролей, а не железные.
+ *
+ * ВАЖНО: **роли «cpu» и «gpu» тут стояли и оказались ловушкой.** Ясно светило
+ * цветом процессора, дождь — цветом видеокарты, и держалось это на том, что у
+ * пары разные цвета; в теме, где процессор с видеокартой делят базу, свечение
+ * карточки перестало бы отличать солнце от дождя. Своя пара собирается из
+ * тёплой базы и акцента, а они разные в каждой теме — это тоже держит
+ * `pairs_differ_in_every_theme`.
+ */
+[data-accent="sky-warm"] {
+  --accent: var(--sky-warm);
+}
+[data-accent="sky-water"] {
+  --accent: var(--sky-water);
+}
+
+:root[data-glass="gpt"], [data-glass-preview="gpt"] { --surface-base: 32, 39, 44; }

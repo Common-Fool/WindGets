@@ -1,0 +1,61 @@
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease);
+}
+
+.toggle:hover {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+}
+
+.toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--ui-accent) 70%, var(--border-control));
+  background: var(--surface-control-selected);
+  color: var(--text-primary);
+}
+
+.toggle[aria-pressed="true"]:hover {
+  border-color: var(--ui-accent);
+  background: var(--surface-control-pressed);
+}
+
+.toggle:active {
+  background: var(--surface-control-pressed);
+}
+
+.toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.toggle__dot {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.toggle[aria-pressed="true"] .toggle__dot {
+  background: var(--ui-accent);
+}
+
+/* Короткая подпись спрятана, пока карточка её не попросит своим порогом */
+.toggle__short {
+  display: none;
+}

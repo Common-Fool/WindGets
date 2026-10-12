@@ -1,0 +1,121 @@
+/* Прозрачная обёртка не меняет прежнее поле Claude. */
+.todo__edit-plain { display: contents; }
+
+.widget--todo-reference .card { border-radius: var(--radius-card); }
+.widget--todo-reference .card__body {
+  padding: calc(10px * var(--scale));
+  container: todo-size / size;
+}
+.todo--reference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: calc(24px * var(--scale)) minmax(0, 1fr) calc(30px * var(--scale));
+  gap: calc(8px * var(--scale));
+}
+.todo--reference[data-alarm="true"] { grid-template-rows: calc(24px * var(--scale)) minmax(0, 1fr) calc(14px * var(--scale)) calc(30px * var(--scale)); }
+.todo--reference .dots {
+  grid-area: 1 / 1;
+  align-self: center;
+  justify-self: start;
+  gap: calc(2px * var(--scale));
+}
+.todo--reference .dots__dot {
+  display: grid;
+  place-items: center;
+  width: calc(14px * var(--scale));
+  height: calc(24px * var(--scale));
+  border-radius: 0;
+  background: none;
+  opacity: 1;
+}
+.todo--reference .dots__dot::after { content: ""; width: calc(6px * var(--scale)); height: calc(6px * var(--scale)); border-radius: 50%; background: var(--text-muted); opacity: .6; }
+.todo--reference .dots__dot[data-active="true"]::after { background: var(--ui-accent); opacity: 1; }
+.todo--reference .dots__dot:disabled, .todo--reference .dots__add:disabled { opacity: .35; cursor: default; }
+.todo--reference .dots__add { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); }
+.todo--reference .todo__summary { grid-area: 1 / 1; align-self: center; justify-self: end; color: var(--text-muted); font-size: calc(11px * var(--scale)); line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.todo--reference .todo__list, .todo--reference .todo__empty { grid-area: 2 / 1; }
+.todo--reference .todo__list {
+  gap: 0;
+  min-width: 0;
+  padding-right: calc(4px * var(--scale));
+  scrollbar-gutter: stable;
+}
+.todo--reference .todo__list::-webkit-scrollbar { width: calc(4px * var(--scale)); }
+.todo--reference .todo__list::-webkit-scrollbar-track { background: transparent; }
+.todo--reference .todo__list::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: calc(8px * var(--scale)); }
+.todo--reference .todo__list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.todo--reference .todo__item {
+  flex: none;
+  min-height: calc(30px * var(--scale));
+  padding: calc(4px * var(--scale)) 0;
+  gap: calc(6px * var(--scale));
+  border-radius: 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font-size: calc(14px * var(--scale));
+  line-height: calc(20px * var(--scale));
+  cursor: default;
+}
+.todo--reference .todo__item:last-child { border-bottom: 0; }
+.todo--reference .todo__item:hover { background: transparent; }
+.todo--reference .todo__check { width: calc(18px * var(--scale)); height: calc(20px * var(--scale)); }
+.todo--reference .todo__text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; padding: 0; white-space: normal; overflow-wrap: anywhere; }
+.todo--reference .todo__drop { width: calc(18px * var(--scale)); height: calc(24px * var(--scale)); padding: 0; border-radius: calc(4px * var(--scale)); }
+.todo--reference .todo__drop:hover { background: var(--surface-control-hover); }
+.todo--reference .todo__edit-box { flex: 1; min-width: 0; position: relative; }
+.todo--reference .todo__edit-ghost { visibility: hidden; }
+.todo--reference .input.todo__edit { position: absolute; top: 50%; left: 0; transform: translateY(-50%); width: 100%; height: calc(20px * var(--scale)); padding: 0; border-radius: calc(3px * var(--scale)); font-size: calc(14px * var(--scale)); line-height: calc(20px * var(--scale)); }
+.todo--reference .todo__foot { grid-area: -2 / 1; gap: calc(4px * var(--scale)); }
+.todo--reference .input.todo__input { height: calc(30px * var(--scale)); padding: calc(4px * var(--scale)) calc(7px * var(--scale)); font-size: calc(14px * var(--scale)); line-height: calc(20px * var(--scale)); }
+.todo--reference .todo__input::placeholder { font-size: calc(12px * var(--scale)); }
+.todo--reference .todo__act { display: grid; place-items: center; width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); padding: calc(4px * var(--scale)); border-radius: var(--radius-control); }
+.todo--reference .todo__act:hover:not(:disabled) { background: var(--surface-control-hover); }
+.todo--reference svg { width: calc(16px * var(--scale)); height: calc(16px * var(--scale)); }
+.todo--reference .todo__note { grid-area: 3 / 1; min-width: 0; line-height: calc(14px * var(--scale)); }
+.todo--reference .todo__trouble { font-size: calc(11px * var(--scale)); }
+.todo--reference .todo__empty { font-size: calc(12px * var(--scale)); }
+
+/* B сохраняет тот же DOM и поля: компоновка не сбрасывает правку и ввод. */
+.todo--reference[data-layout="1"] { grid-template-columns: calc(24px * var(--scale)) minmax(0, 1fr); grid-template-rows: calc(12px * var(--scale)) minmax(0, 1fr) calc(30px * var(--scale)); }
+.todo--reference[data-layout="1"][data-alarm="true"] { grid-template-rows: calc(12px * var(--scale)) minmax(0, 1fr) calc(14px * var(--scale)) calc(30px * var(--scale)); }
+.todo--reference[data-layout="1"] .dots { grid-area: 1 / 1 / -1 / 2; flex-direction: column; align-self: start; }
+.todo--reference[data-layout="1"] .dots__dot { height: calc(20px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__summary { grid-area: 1 / 2; }
+.todo--reference[data-layout="1"] .todo__list, .todo--reference[data-layout="1"] .todo__empty { grid-area: 2 / 2; }
+.todo--reference[data-layout="1"] .todo__foot { display: contents; }
+.todo--reference[data-layout="1"] .todo__input { grid-area: -2 / 2; }
+.todo--reference[data-layout="1"] .todo__act { position: absolute; left: 0; bottom: 0; }
+.todo--reference[data-layout="1"] .todo__act:nth-of-type(1) { bottom: calc(52px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__act:nth-of-type(2) { bottom: calc(26px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__note { grid-area: 3 / 2; }
+
+
+/* Страницы уступают место действиям прокруткой, без смены компоновки. */
+.todo--reference .dots { min-width: 0; min-height: 0; max-width: calc(100% - 5em); overflow-x: auto; overflow-y: hidden; }
+.todo--reference[data-layout="1"] .dots {
+  height: calc(100% - 68px * var(--scale)); max-width: calc(24px * var(--scale));
+  overflow-x: hidden; overflow-y: auto; gap: 0;
+}
+.todo--reference .dots::-webkit-scrollbar { width: calc(4px * var(--scale)); height: calc(4px * var(--scale)); }
+.todo--reference .dots::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-control); }
+.todo--reference .dots::-webkit-scrollbar-button { display: none; }
+.todo--reference[data-layout="1"] .dots__add { width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__act { height: calc(20px * var(--scale)); padding: calc(2px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__act:nth-of-type(1) { bottom: calc(44px * var(--scale)); }
+.todo--reference[data-layout="1"] .todo__act:nth-of-type(2) { bottom: calc(22px * var(--scale)); }
+@container todo-size (width <= 14em) {
+  .todo--reference .todo__act { width: calc(20px * var(--scale)); padding: calc(2px * var(--scale)); }
+  .todo--reference .todo__summary { font-size: calc(10px * var(--scale)); }
+  .todo--reference .input.todo__input { padding-inline: calc(4px * var(--scale)); font-size: calc(12px * var(--scale)); }
+}
+@container todo-size (height <= 14em) {
+  .todo--reference { grid-template-rows: calc(18px * var(--scale)) minmax(0, 1fr) calc(24px * var(--scale)); gap: calc(4px * var(--scale)); }
+  .todo--reference[data-alarm="true"] { grid-template-rows: calc(18px * var(--scale)) minmax(0, 1fr) calc(14px * var(--scale)) calc(24px * var(--scale)); }
+  .todo--reference[data-layout="1"] { grid-template-rows: calc(12px * var(--scale)) minmax(0, 1fr) calc(24px * var(--scale)); }
+  .todo--reference[data-layout="1"][data-alarm="true"] { grid-template-rows: calc(12px * var(--scale)) minmax(0, 1fr) calc(14px * var(--scale)) calc(24px * var(--scale)); }
+  .todo--reference .input.todo__input { height: calc(24px * var(--scale)); padding-block: calc(2px * var(--scale)); }
+  .todo--reference .dots__dot { height: calc(18px * var(--scale)); }
+}
+@container todo-size (height <= 7em) {
+  .todo--reference .todo__item { min-height: calc(24px * var(--scale)); padding-block: calc(1px * var(--scale)); }
+  .todo--reference .todo__text { -webkit-line-clamp: 1; }
+}

@@ -1,0 +1,425 @@
+/*
+ * Конвертер: список файлов, выбор цели с её настройками и нижний ряд.
+ *
+ * Карточка нейтральная: метрики у конвертера нет, и чужой цвет данных тут
+ * соврал бы. Цвет — только у действия: ход работы и выбранные чипы берут
+ * акцент интерфейса.
+ */
+
+/* Высота окна участвует в адаптации Claude, ширина — в общих порогах. */
+.widget:has(.conv) > .card { container: card / size; }
+
+.conv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+/* ==================== Пусто ==================== */
+
+.conv__empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 0;
+  text-align: center;
+}
+
+.conv__lead {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+}
+
+.conv__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* ==================== Список ==================== */
+
+.conv__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Файлов бывает сотня, а видно пять: остальные прокруткой */
+  overflow-y: auto;
+}
+
+.conv__item {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.conv__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.conv__name {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv__state {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.conv__item[data-status="done"] .conv__state {
+  color: var(--ui-accent);
+}
+
+.conv__item[data-status="failed"] .conv__state,
+.conv__item[data-status="unsupported"] .conv__state {
+  color: var(--status-danger);
+}
+
+.conv__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-1);
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.conv__action:hover {
+  color: var(--text-primary);
+}
+
+.conv__action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Крестик проступает под курсором, как у буфера обмена: сотня крестиков в
+   столбик читалась бы как список ошибок. Место под него держится всегда */
+.conv__action--remove {
+  opacity: 0;
+}
+
+.conv__item:hover .conv__action--remove,
+.conv__action--remove:focus-visible {
+  opacity: 1;
+}
+
+.conv__action--remove:hover {
+  color: var(--status-danger);
+}
+
+.conv__action:disabled {
+  visibility: hidden;
+}
+
+.conv__bar {
+  grid-column: 1 / -1;
+}
+
+/* ==================== Выбор ==================== */
+
+.conv__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.conv__options {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-hairline);
+}
+
+.conv__choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Подписи групп одной ширины — чипы встают ровным столбцом */
+.conv__label {
+  flex: none;
+  width: 5.75em;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.conv__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* Весомость поднята намеренно: общий `.input` из base.css с равной
+   весомостью растянул бы поле во всю строку, окажись он ниже по порядку, — а
+   до этапа 48 он и шёл ниже стилей виджетов */
+.conv .conv__time {
+  width: 6em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.conv__dash {
+  color: var(--text-muted);
+}
+
+.conv__error {
+  color: var(--status-danger);
+  font-size: var(--text-xs);
+}
+
+/*
+ * Полоса отрезка. Встаёт под полями времени, а не под подписью: слева отступ
+ * ровно на столбец подписей (4.5em их кегля плюс зазор) и на полручки —
+ * ручка у нуля стоит серединой на краю дорожки и иначе вылезала бы за него.
+ * Сам элемент высотой в ручку: в дорожку толщиной в три точки мышью не
+ * попасть.
+ *
+ * Цвета — как у ползунка: дорожка и оставляемое нейтральные, акцент — только
+ * у ручки под курсором.
+ */
+.conv__trim {
+  --trim-handle: calc(14px * var(--scale));
+  position: relative;
+  flex: none;
+  height: var(--trim-handle);
+  margin-left: calc(4.5 * var(--text-xs) + var(--space-2) + var(--trim-handle) / 2);
+  margin-right: calc(var(--trim-handle) / 2);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.conv__trim::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--surface-track);
+  transform: translateY(-50%);
+}
+
+.conv__trim-kept {
+  position: absolute;
+  top: 50%;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--text-secondary);
+  transform: translateY(-50%);
+}
+
+.conv__trim-handle {
+  position: absolute;
+  top: 50%;
+  width: var(--trim-handle);
+  height: var(--trim-handle);
+  box-sizing: border-box;
+  border: 2px solid rgb(var(--surface-base));
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  transform: translate(-50%, -50%);
+  transition:
+    background var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.conv__trim-handle:hover {
+  background: var(--ui-accent-hover);
+}
+
+.conv__trim-handle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Звук: дорожка — волна, вдвое выше полосы. Тусклая волна — весь файл,
+ * светлая копия поверх обрезана по оставляемому отрезку. Ручки на ней — не
+ * кружки, а узкие столбики во всю высоту: кружок посреди волны закрывал бы
+ * именно то место, где режут.
+ */
+.conv__trim--wave {
+  height: calc(28px * var(--scale));
+}
+
+.conv__trim--wave::before {
+  display: none;
+}
+
+.conv__wave {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.conv__wave > span {
+  flex: 1;
+  min-width: 0;
+  border-radius: 1px;
+  background: var(--surface-track);
+}
+
+.conv__wave--kept > span {
+  background: var(--text-secondary);
+}
+
+.conv__trim--wave .conv__trim-handle {
+  width: calc(6px * var(--scale));
+  height: 100%;
+  border-width: 1px;
+}
+
+/* Где сейчас звук: черта акцентом интерфейса, это ход действия, а не данные */
+.conv__trim-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ui-accent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.conv__listen {
+  font-size: var(--text-md);
+}
+
+/* ==================== Низ ==================== */
+
+.conv__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.conv__spacer {
+  flex: 1;
+}
+
+.conv__overall {
+  flex: 1;
+}
+
+/*
+ * Над окном несут файлы: весь конвертер — одна цель. Поверх, а не вместо:
+ * список под рамкой остаётся на месте, и после броска ничего не прыгает.
+ */
+.conv__drop {
+  position: absolute;
+  inset: var(--space-2);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--ui-accent);
+  border-radius: var(--radius-control);
+  background: var(--surface-scrim);
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  pointer-events: none;
+}
+
+/* Поля обрезки и полоса: в полной раскладке обёртки как будто нет */
+.conv__cut {
+  display: contents;
+}
+
+/*
+ * Тесная раскладка — размер «Компактный» и любое окно ниже порога. Выбор
+ * встаёт строкой без подписей групп: тип, качество и размер рядом, узкими
+ * чипами без точки, а поля обрезки и полоса — второй строкой. Там, где
+ * без подписи группы число читалось бы двусмысленно, чип несёт короткую
+ * подпись с единицей: «15 fps», «192k».
+ *
+ * Порог — там, где полной раскладке перестаёт хватать места хотя бы на одну
+ * строку списка файлов: окно 280 точек при 100 % (см. реестр).
+ */
+@container card (height < 18.5em) {
+  .conv__options {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-3);
+  }
+
+  .conv__label {
+    display: none;
+  }
+
+  .conv__choice {
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+  }
+
+  .conv__chips {
+    flex-wrap: nowrap;
+  }
+
+  .conv .toggle {
+    padding: 2px var(--space-1);
+  }
+
+  .conv .toggle__dot,
+  .conv .toggle__long {
+    display: none;
+  }
+
+  .conv .toggle__short {
+    display: inline;
+  }
+
+  .conv__cut {
+    display: flex;
+    flex-basis: 100%;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .conv__cut .conv__trim {
+    flex: 1;
+    min-width: 4em;
+    margin-left: calc(var(--trim-handle) / 2);
+  }
+}

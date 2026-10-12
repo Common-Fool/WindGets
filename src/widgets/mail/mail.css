@@ -1,0 +1,835 @@
+/*
+ * Виджет почты. Значений здесь нет — всё из tokens.css.
+ *
+ * Раскладка сверху вниз: в верхнем правом углу число непрочитанных писем
+ * и кнопка обновления, ниже — список входящих писем во всю высоту карточки.
+ * Строк показывается ровно столько, сколько помещается в окно.
+ *
+ * При отсутствии настроенной учётной записи, загрузке, пустом ящике или
+ * ошибке по центру карточки выводится статусное сообщение.
+ */
+
+.mail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+}
+
+/*
+ * Ненастроенная карточка: большая кнопка во всю карточку для открытия настроек.
+ */
+.mail__setup-btn {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: 100%;
+  height: 100%;
+  padding: var(--space-4);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.mail__setup-btn:hover {
+  background: var(--surface-control-hover);
+  border-color: var(--border-control-hover);
+}
+
+.mail__setup-btn:active {
+  background: var(--surface-control-pressed);
+}
+
+.mail__setup-btn:focus-visible {
+  outline: none;
+  border-color: var(--border-control-hover);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.mail__setup-btn:hover .mail__status-title {
+  color: var(--text-primary);
+}
+
+.mail__setup-btn:hover .mail__status-hint {
+  color: var(--text-secondary);
+}
+
+/*
+ * Верхний правый угол: число непрочитанных и кнопка обновления.
+ */
+.mail__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Между полем и значками: подпись сама и есть распорка */
+.mail__unread {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mail__unread[data-error="true"] {
+  color: var(--status-danger);
+}
+
+/*
+ * Значки действий в верхней строке: пометить все прочитанными, открыть веб-ящик.
+ * По размеру и поведению повторяют .refresh из base.css.
+ */
+.mail__head-btn {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.mail__head-btn:hover {
+  color: var(--text-secondary);
+}
+
+.mail__head-btn:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.mail__head-btn > svg {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+ * Состояния виджета: отсутствие аккаунта, загрузка, пустой ящик, отказ.
+ */
+.mail__status {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.mail__status-title {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+}
+
+.mail__status-hint {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.mail__status--error .mail__status-title,
+.mail__status-title--error {
+  color: var(--status-danger);
+}
+
+.mail__setup-btn:hover .mail__status-title--error {
+  color: var(--status-danger);
+}
+
+/*
+ * Ящик, который на вкладке «Все» не отвечает: строкой с адресом, а не кнопкой
+ * во всю карточку — письма остальных ящиков стоят в списке ниже. Отказ входа
+ * нажимается и ведёт на страницу ящика в настройках.
+ */
+.mail__box-trouble {
+  flex: none;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  background: none;
+  color: var(--status-danger);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.mail__box-trouble {
+  cursor: pointer;
+}
+
+button.mail__box-trouble:hover {
+  text-decoration: underline;
+}
+
+button.mail__box-trouble:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/*
+ * Список писем во всю высоту карточки.
+ */
+.mail__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /*
+   * Прокручивается, а не режется: писем приходит десяток, а в карточку их
+   * влезает четыре-пять. Полоса прокрутки узкая и общая на всё приложение,
+   * место под неё держится всегда — иначе строки дёргались бы вбок, стоило
+   * списку перевалить за высоту окна.
+   */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+/*
+ * Полоса прокрутки списка — тоньше общей и видна только пока крутят.
+ *
+ * Общая полоса в восемь точек рядом со строкой письма в полсотни читается как
+ * ещё один столбец содержимого, а стоит она при этом всегда, даже когда крутить
+ * нечего. Место под неё держим (`scrollbar-gutter: stable`), а саму полосу
+ * показываем на время движения: иначе строки прыгали бы вбок на каждое
+ * появление.
+ */
+.mail__list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.mail__list::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background var(--duration-slow) var(--ease);
+}
+
+.mail__list[data-scrolling="true"]::-webkit-scrollbar-thumb {
+  background: var(--surface-track);
+  transition: none;
+}
+
+.mail__list[data-scrolling="true"]:hover::-webkit-scrollbar-thumb {
+  background: var(--border-highlight);
+}
+
+/*
+ * Строка письма: слева отправитель, тема и превью, справа — время и кнопки.
+ * Строка письма строго одной высоты: тема и превью не переносятся, а место
+ * под кнопки отведено всегда, меняется только видимость при наведении.
+ */
+.mail__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.mail__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.mail__item:active {
+  background: var(--surface-control-pressed);
+}
+
+.mail__item[data-picked="true"] {
+  background: var(--surface-control-selected);
+}
+
+.mail__item-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mail__item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/*
+ * Точка непрочитанного слева (единым UI-акцентом).
+ * У прочитанного письма скрывается через visibility, чтобы не сдвигать
+ * имя отправителя и сохранять общую сетку.
+ */
+.mail__dot {
+  display: inline-block;
+  flex: none;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--ui-accent);
+}
+
+.mail__dot[data-seen="true"] {
+  visibility: hidden;
+}
+
+.mail__from {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail__item[data-seen="true"] .mail__from {
+  color: var(--text-secondary);
+  font-weight: var(--weight-regular);
+}
+
+.mail__time {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+.mail__subject {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail__item[data-seen="true"] .mail__subject {
+  color: var(--text-secondary);
+}
+
+.mail__preview {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  min-height: calc(1em * var(--leading-normal));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Правая колонка строки письма: время вверху, кнопки действий под ним.
+ */
+.mail__item-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+/*
+ * Кнопки действий письма (пометить прочитанным, удалить).
+ * Место под них отводится всегда через min-width и height, чтобы текст
+ * не прыгал вбок и высота строки не менялась при наведении.
+ */
+.mail__item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-width: calc(var(--text-sm) * 2 + var(--space-1));
+  height: calc(1em * var(--leading-tight));
+  visibility: hidden;
+}
+
+.mail__item:hover .mail__item-actions,
+.mail__item-actions:focus-within {
+  visibility: visible;
+}
+
+.mail__item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.mail__item-btn:hover {
+  color: var(--text-primary);
+}
+
+.mail__item-btn--delete:hover {
+  color: var(--status-danger);
+}
+
+.mail__item-btn:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.mail__item-btn > svg {
+  width: 1em;
+  height: 1em;
+}
+
+/*
+ * Всплывающее окно письма: ложится поверх списка внутри карточки.
+ * Высоту карточки не меняет (position: absolute), границы карточки не переступает.
+ */
+.mail__popup-overlay {
+  position: absolute;
+  inset: calc(-1 * var(--space-4));
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  background: var(--surface-scrim);
+}
+
+.mail__popup {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-highlight);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.mail__popup-head {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.mail__popup-title-group {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.mail__popup-subject {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  word-break: break-word;
+}
+
+.mail__popup-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mail__popup-from {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail__popup-time {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+.mail__popup-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.mail__popup-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease);
+}
+
+.mail__popup-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-control-hover);
+}
+
+/*
+ * Прочитанное письмо: отметка гаснет, но остаётся на месте.
+ *
+ * Курсор при этом обычный, а не «нельзя»: перечёркнутый круг говорит о запрете,
+ * а тут ничего не запрещено — дело уже сделано. Наведение не подсвечивает по
+ * той же причине.
+ */
+.mail__popup-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mail__popup-btn:disabled:hover {
+  color: var(--text-muted);
+  background: none;
+}
+
+/* Кружок стоит на месте кнопки, но кнопкой не притворяется */
+.mail__popup-btn.spinner {
+  cursor: default;
+}
+
+.mail__popup-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.mail__popup-btn > svg {
+  width: 1em;
+  height: 1em;
+}
+
+.mail__popup-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  user-select: text;
+  cursor: text;
+}
+
+.mail__popup-text {
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mail__popup-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+/*
+ * Квадратик отметки — на месте точки непрочитанного.
+ *
+ * Ровно её ширины: одновременно они не нужны, а разные отступы слева у соседних
+ * строк читались бы как сбитая раскладка. Виден при наведении на строку и пока
+ * отмечено хоть что-то — иначе, отметив письмо, пришлось бы держать над ним
+ * мышь, чтобы видеть отметку.
+ */
+/*
+ * Место под метку — одной ширины всегда.
+ *
+ * Внутри либо точка непрочитанного, либо квадратик отметки, и они разного
+ * размера: квадратик заметно крупнее, иначе в него не попасть мышью. Держит
+ * ширину сам слот, поэтому строка не дёргается при наведении.
+ */
+.mail__mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--text-lg);
+  height: var(--text-lg);
+}
+
+.mail__pick {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mail__pick > svg {
+  width: 1em;
+  height: 1em;
+}
+
+/* «Отметить все» в шапке: то же, но само по себе, без слота строки */
+.mail__pick--all {
+  display: flex;
+  width: var(--text-lg);
+  height: var(--text-lg);
+}
+
+.mail__item:hover .mail__pick,
+.mail__pick[data-shown="true"],
+.mail__pick[data-on="true"] {
+  display: flex;
+}
+
+/*
+ * Отмеченное использует общий UI-акцент: цвет данных карточки не должен
+ * определять выбор писем.
+ */
+.mail__pick[data-on="true"] {
+  color: var(--ui-accent);
+}
+
+.mail__pick:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.mail__item:hover .mail__dot,
+.mail__dot[data-hidden="true"] {
+  display: none;
+}
+
+/* Отбор включён — кнопка ярче прочих, по той же причине */
+.mail__head-btn[data-on="true"] {
+  color: var(--ui-accent);
+}
+
+/* Удаление среди отмеченных: единственная кнопка, которую жаль нажать зря */
+.mail__head-btn--danger:hover {
+  color: var(--status-danger);
+}
+
+/*
+ * Поле поиска занимает всю верхнюю строку.
+ *
+ * Двумя классами, а не одним: `.input` из base.css с той же весомостью
+ * перебивал бы наши правила, окажись он ниже по порядку следования, — а
+ * порядок файлов менялся (до этапа 48 base.css шёл последним).
+ */
+/*
+ * Половина строки, не больше.
+ *
+ * Во всю ширину оно отнимало у карточки целую строку письма, а искать тут
+ * длиннее десятка знаков всё равно не приходится. Ужимается вместе с окном:
+ * `flex-basis` в процентах, а не в точках.
+ */
+.input.mail__search {
+  flex: 0 1 50%;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: calc(1em * var(--leading-tight));
+}
+
+/*
+ * Адреса под именем отправителя: подпись слева, значение справа.
+ *
+ * Имя отправителя подделывается легко, адрес — нет, и в письме «от вашего
+ * банка» смотрят именно на него.
+ */
+.mail__popup-address {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mail__popup-label {
+  flex: none;
+  width: 3em;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.mail__popup-value {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Адрес читают глазами и переносят мышью в другое место */
+  user-select: text;
+}
+
+.mail__popup-value:hover {
+  color: var(--text-primary);
+}
+
+.mail__popup-value:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Вложения — внизу письма, за чертой.
+ *
+ * Не кнопки: содержимого вложения у виджета нет и не будет, скачивать нечего.
+ * Это сообщение о том, что в письме лежит, а не орган управления.
+ */
+.mail__files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--border-hairline);
+  list-style: none;
+}
+
+.mail__file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.mail__file-icon {
+  display: flex;
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.mail__file-icon > svg {
+  width: 1em;
+  height: 1em;
+}
+
+.mail__file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail__file-size {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/*
+ * Пороги раскладки @container.
+ * ВАЖНО: блоки @container стоят ниже базовых правил, побеждая их по весомости.
+ */
+
+/*
+ * Порог по ширине, узкое: уходит превью письма, остаются отправитель со временем и тема.
+ */
+@container card (width < 18em) {
+  .mail__preview {
+    display: none;
+  }
+}
+
+/*
+ * Порог по ширине, ещё уже: уходит время справа, освобождая место отправителю.
+ */
+@container card (width < 13em) {
+  .mail__time {
+    display: none;
+  }
+}
+
+/*
+ * Порог по высоте, низкое: уходит превью письма, чтобы уместить больше строк.
+ */
+@container card (height < 9em) {
+  .mail__preview {
+    display: none;
+  }
+
+  .mail__popup-overlay {
+    inset-block: calc(-1 * var(--space-2));
+  }
+}

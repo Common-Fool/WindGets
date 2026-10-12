@@ -1,0 +1,322 @@
+/*
+ * Медиа: обложка слева, подписи с полосой посередине, кнопки справа.
+ *
+ * Своих чисел не изобретает — всё из tokens.css. Правила списаны с
+ * горизонтального пульта Спотифая (`spotify.css`, `.player--row`), и это
+ * намеренно: два пульта на одних обоях обязаны выглядеть одним языком.
+ * Цвет данных у карточки медийный, то есть серый; кнопки — акцентом
+ * интерфейса, как у пульта.
+ */
+
+/*
+ * Ряд во всю высоту тела карточки.
+ *
+ * ВАЖНО: **высота `100%`, а не `flex: 1`.** Тело карточки — обычный блок, а
+ * не флекс, и `flex: 1` у его ребёнка не делает ничего: ряд вырос бы по
+ * содержимому, и обложка — квадрат во всю его высоту — вместе с ним.
+ */
+.media__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 100%;
+  min-height: 0;
+}
+
+/* Ничего не играет: видно сразу, но карточка остаётся на месте */
+.media__row--idle .media__art,
+.media__row--idle .media__meta {
+  opacity: 0.55;
+}
+
+/* ==================== Обложка ==================== */
+
+.media__art {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  align-items: center;
+  min-height: 0;
+}
+
+.media__cover {
+  width: auto;
+  height: 100%;
+  max-height: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-control);
+  background: var(--surface-track);
+  object-fit: cover;
+}
+
+/* Своих размеров не назначает: они те же, что у картинки на её месте */
+.media__cover--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: var(--text-2xl);
+}
+
+/* ==================== Подписи ==================== */
+
+/* Середина ряда: подписи с полосой между обложкой и кнопками */
+.media__lane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.media__meta {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: calc(2px * var(--scale));
+  min-width: 0;
+}
+
+/*
+ * Источник — приглушённо над названием, как во всплывающем окне Windows.
+ * Кнопкой он становится, только когда играют двое разом.
+ */
+.media__source {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media__source--switch {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.media__source--switch:hover {
+  color: var(--text-secondary);
+}
+
+.media__source--switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Сколько ещё источников играет: число, а не список — список не поместится */
+.media__more {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control-selected);
+  color: var(--ui-accent);
+}
+
+/*
+ * Название и исполнитель бегут, когда не помещаются: оба приходят извне, и
+ * эллипсис режет ровно то слово, ради которого на карточку смотрят. Механика
+ * — в `Marquee.tsx`; здесь только кегль и цвет.
+ */
+.media__song {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.media__artist {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* У пустой карточки подписи не бегут — это свой текст, а не пришедший */
+.media__row--idle .media__song,
+.media__row--idle .media__artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ==================== Полоса перемотки ==================== */
+
+.media__progress {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/*
+ * Сама полоса тонкая, но попадать в неё мышью надо без прицеливания — отсюда
+ * высота области нажатия и дорожка фоном через ::before.
+ */
+.media__bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: calc(14px * var(--scale));
+  cursor: pointer;
+}
+
+/* Сессия перемотку не принимает — полоса только показывает */
+.media__bar[data-seek="false"] {
+  cursor: default;
+}
+
+.media__bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--surface-track);
+}
+
+.media__fill {
+  position: relative;
+  height: var(--bar-thin);
+  border-radius: var(--radius-bar);
+  background: var(--accent);
+}
+
+.media__times {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+/*
+ * ВАЖНО: **длины нет — чисел нет, но место за ними остаётся.**
+ *
+ * Замерено на Zen с роликами YouTube Shorts: сессия почти всё время отдаёт
+ * длину 0 и позицию 0 — у одного ролика девять секунд подряд. Счёт «прошло»
+ * без длины вёлся бы тогда от случайного мгновения, когда браузер обновил
+ * сессию, то есть врал бы. Прятать ряд целиком тоже нельзя: длина там мигает
+ * между нулём и числом на каждом ролике, и карточка прыгала бы вверх-вниз.
+ */
+.media__times[data-known="false"] {
+  visibility: hidden;
+}
+
+/* ==================== Кнопки ==================== */
+
+/* Справа ряд стоит тесно: там ширина дороже воздуха */
+.media__controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* В середине, под подписями, места хватает — кнопки расступаются */
+.media__lane .media__controls {
+  gap: var(--space-4);
+}
+
+.media__button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(28px * var(--scale));
+  height: calc(28px * var(--scale));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.media__button:hover:not(:disabled) {
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
+}
+
+.media__button:active:not(:disabled) {
+  background: var(--surface-control-pressed);
+}
+
+.media__play {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(40px * var(--scale));
+  height: calc(40px * var(--scale));
+  border: 1px solid var(--border-control-hover);
+  border-radius: var(--radius-pill);
+  background: var(--surface-control-selected);
+  color: var(--ui-accent);
+  font-size: var(--text-xl);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease);
+}
+
+.media__play:hover:not(:disabled) {
+  background: var(--surface-control-hover);
+  border-color: var(--ui-accent);
+}
+
+.media__play:active:not(:disabled) {
+  background: var(--surface-control-pressed);
+}
+
+.media__button:focus-visible,
+.media__play:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Кнопку, которую сессия не принимает, видно сразу. Спрятать её нельзя: ряд
+ * прыгал бы каждый раз, когда веб-плеер уходит на рекламу.
+ */
+.media__button:disabled,
+.media__play:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ==================== Пороги ==================== */
+
+/*
+ * Числа снимаются замером в браузере, а не назначаются.
+ * Блок стоит после базовых правил намеренно:
+ * весомость у них одинаковая, побеждает тот, что ниже.
+ */
+
+/*
+ * Время у полосы уходит на низкой карточке, и порог у него по высоте, как у
+ * пульта: полоса во всю ширину середины, и по ширине ей ничто не мешает.
+ *
+ * Число снято замером при 100 %: подписи 56,7, зазор 4, полоса 14, время 16 и
+ * его зазор 4 — середине ряда со временем нужно 94,6 точки, без него 74,7.
+ * «Средний» (контейнер 107) держит время над порогом, «Маленький» (87)
+ * уходит под него. Порог едет за масштабом сам: он в `em`, а размеры окна
+ * множатся на то же число.
+ */
+@container card (height < 6.5em) {
+  .media__times {
+    display: none;
+  }
+}

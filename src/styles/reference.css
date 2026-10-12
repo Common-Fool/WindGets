@@ -1,0 +1,46 @@
+/* Оформление референсов применяется только к новым темам.
+   Все размеры, раскладки, пороги, данные и действия остаются у виджетов. */
+
+/* Цветной грани у карточки нет: акцент, подмешанный в рамку и в полоску по
+   верхнему краю, красил каждое окно в цвет его метрики, и на обоях виджеты
+   стояли в зелёных, синих и оранжевых обводках. Снята по просьбе
+   пользователя — рамка и светлая полоса сверху теперь общие, из GlassCard.css,
+   при любой теме. */
+:root[data-palette^="reference-"] .card {
+  box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+/* Фактура внутри существующих полос, без изменения их длины или шкалы. */
+:root[data-palette^="reference-"] .bar__fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 82%, #10151c), var(--accent));
+}
+
+:root[data-palette^="reference-"] .arc__value {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 20%, transparent));
+}
+
+:root[data-palette^="reference-"] .columns__fill {
+  background:
+    linear-gradient(to bottom, var(--accent) var(--bar-thin), transparent var(--bar-thin)),
+    linear-gradient(to top,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      color-mix(in srgb, var(--accent) 60%, transparent));
+}
+
+:root[data-palette^="reference-"] .net__arrow {
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 4px var(--surface-control);
+}
+
+:root[data-palette^="reference-"] .player__play {
+  border-color: var(--ui-accent);
+  background: var(--surface-control);
+}
+
+:root[data-palette^="reference-"] .player__play:hover {
+  background: var(--surface-control-hover);
+}
+
+:root[data-palette^="reference-"] .slider::-webkit-slider-thumb {
+  background: var(--ui-accent);
+}

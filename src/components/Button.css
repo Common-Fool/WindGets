@@ -1,0 +1,86 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
+    box-shadow var(--duration-fast) var(--ease),
+    transform var(--duration-fast) var(--ease);
+}
+
+/* Кнопка без подписи: отступы одинаковые со всех сторон, иначе иконка съедет */
+.btn--icon {
+  padding: var(--space-2);
+}
+
+.btn--solid {
+  border-color: var(--ui-accent);
+  background: var(--surface-control);
+  color: var(--ui-accent);
+}
+
+.btn--outline {
+  border-color: var(--border-control);
+  background: var(--surface-control);
+}
+
+.btn--solid:hover:not(:disabled) {
+  border-color: var(--ui-accent-hover);
+  background: var(--surface-control-hover);
+  color: var(--ui-accent-hover);
+}
+
+.btn--outline:hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn--outline:active:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--surface-control-pressed);
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.btn__icon {
+  display: inline-flex;
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+/* Пока идёт замер, иконка крутится — состояние «в работе» */
+.btn--busy .btn__icon {
+  animation: btn-spin 900ms linear infinite;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

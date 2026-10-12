@@ -1,0 +1,372 @@
+/*
+ * Погода. Значений здесь нет — всё из tokens.css.
+ *
+ * Раскладка сверху вниз, одним шагом отступов: строка города, основной блок,
+ * ряд из пяти дней и панель, раскрытая нажатием. Шаг один на всю карточку и
+ * равен `--space-3`; поля от краёв задаёт `.card__body`, и своих у погоды нет.
+ *
+ * Центрированного столба, каким карточка была раньше, больше нет: он держал
+ * одну крупную цифру, а держать ему теперь нечего — показателей три, дней пять,
+ * и всё это выстраивается по левому краю, как строки в любом другом виджете.
+ */
+
+.weather {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+/* Строка города и кнопка обновления: город тянется, кнопка нет */
+.weather__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.weather__place {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather__place[data-error="true"] {
+  color: var(--status-danger);
+}
+
+/*
+ * Основной блок: значок слева, показатели справа.
+ *
+ * Он же — цель нажатия, раскрывающего нынешний день по часам. Кнопкой при этом
+ * не становится: за кнопку окно не потащишь, а тянут виджеты за что угодно,
+ * кроме органов управления.
+ */
+.weather__now {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  /* Отыгрываем поле обратно, чтобы подсветка выходила за строку города, а
+     содержимое стояло по той же вертикали, что и всё остальное */
+  margin: 0 calc(var(--space-2) * -1);
+  transition: background-color 0.15s ease;
+}
+
+/*
+ * Значок задаёт кегль сам себе и растёт вместе со всей шкалой: внутри он
+ * нарисован в `em`, как у звука.
+ */
+.weather__icon {
+  display: flex;
+  flex: none;
+  font-size: var(--text-3xl);
+  line-height: 1;
+  /* Мягкое свечение цветом погоды — тот же приём, что у точки состояния. Цвет
+     тут единственное, что осталось от акцента карточки: сам значок красит свои
+     части сам */
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+.weather__icon > svg {
+  width: 1.4em;
+  height: 1.4em;
+}
+
+/*
+ * Осадки и ветер прижаты к правому краю, а не стоят под температурой.
+ *
+ * Под ней они оставляли справа половину карточки пустой — и это ровно то
+ * «лишнее пространство», от которого раскладку и переделывали. У правого края
+ * они читаются столбиком значений, как в любом списке показателей.
+ */
+.weather__figures {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Крупная цифра: та же, что в BigStat, но своей строкой и без подписи */
+.weather__degrees {
+  color: var(--text-primary);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-tight);
+}
+
+/* Осадки и ветер: мельче температуры втрое — это справка, а не показание */
+.weather__extra {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+/*
+ * Ряд из пяти дней, начиная с завтрашнего.
+ *
+ * Колонки равные: день недели не бывает важнее соседнего, и разной ширины у
+ * клеток быть не должно.
+ */
+.weather__row {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-1);
+}
+
+/*
+ * Клетка дня. Столбиком: значок, имя, макс, мин — в том же порядке, в каком их
+ * читают.
+ */
+.weather__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2) var(--space-1);
+  border-radius: var(--radius-control);
+  transition: background-color 0.15s ease;
+}
+
+/* Подсветка ведёт себя одинаково у обеих целей нажатия: наведение чуть
+   заметно, выбранное держится */
+.weather__now:hover,
+.weather__cell:hover {
+  background: var(--surface-control-hover);
+}
+
+.weather__now[data-open="true"],
+.weather__cell[data-open="true"] {
+  background: var(--surface-control-selected);
+  box-shadow: inset 0 0 0 1px var(--border-control-hover);
+}
+
+.weather__cell[data-open="true"] .weather__cell-name {
+  color: var(--ui-accent);
+}
+
+/* Крупнее строки, в которой стоит: пять значков в ряд — это то, что читают
+   первым, и на кегле подписи струи дождя от снежинок не отличить */
+.weather__cell-icon {
+  display: flex;
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.weather__cell-icon > svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.weather__cell-name {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather__cell-max {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+}
+
+.weather__cell-min {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+}
+
+/*
+ * Раскрытая панель: нынешний день по часам или выбранный день окнами.
+ *
+ * Своего заголовка у неё нет — подсвеченная клетка и есть заголовок, а строка
+ * с именем дня отняла бы у карточки высоту ровно затем, чтобы повторить уже
+ * показанное.
+ *
+ * Прокрутки тут нет намеренно, как и в панелях звука: полоса прокрутки означала
+ * бы, что окно выросло не до конца.
+ *
+ * ВАЖНО: поле снаружи — это общий шаг `.weather`, а черта и поле под ней стоят
+ * внутри панели. Высоту панели карточка берёт у неё самой (`offsetHeight`), и
+ * всё, что внутри рамки, в неё уже входит; снаружи остаётся один шаг, который и
+ * прибавляется числом (`PANEL_GAP`).
+ */
+.weather__panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  margin: 0;
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--border-hairline);
+  list-style: none;
+}
+
+/*
+ * Строка часа. Колонки заданы поимённо, а не долями: время и градусы должны
+ * стоять столбиком, иначе ряд читается лесенкой.
+ */
+.weather__hour {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.weather__hour-time {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+/* Значок мельче, чем в основном блоке, и без свечения: там он главный, тут он
+   различает строки */
+.weather__hour-icon {
+  display: flex;
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.weather__hour-icon > svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+/* Градусы прижаты влево от остатка строки: столбик цифр важнее воздуха */
+.weather__hour-degrees {
+  justify-self: start;
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.weather__hour-rain,
+.weather__hour-wind {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+/*
+ * Узкая карточка: первым уходит ветер, за ним осадки. Час, значок и градусы
+ * остаются — ради них панель и раскрывают.
+ *
+ * Пороги сняты замером: со всеми пятью колонками строка требует 208 точек,
+ * без ветра — 155. Ниже этого столбик градусов начинает жать значок.
+ */
+@container card (width < 14em) {
+  .weather__hour-wind {
+    display: none;
+  }
+}
+
+@container card (width < 11em) {
+  .weather__hour-rain {
+    display: none;
+  }
+}
+
+/*
+ * Карточка до выбора города: значок места, строка призыва, поле поиска и
+ * находки под ним.
+ *
+ * Раскладка та же, что у самой погоды, — центрированный столб, — но столб
+ * тянется во всю высоту карточки: находкам нужно место, а взять его больше
+ * неоткуда. Расти под список окно тут не пытается: панель эта живёт до первого
+ * выбора города, и подросшее окно осталось бы таким навсегда.
+ */
+.place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+/*
+ * Значок места, а не погоды, и цвет у него приглушённый: карточка в этот
+ * момент серая, потому что о небе мы ничего не знаем.
+ */
+.place__icon {
+  display: flex;
+  color: var(--text-secondary);
+  font-size: var(--text-2xl);
+  line-height: 1;
+}
+
+.place__icon > svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+.place__lead {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+}
+
+/*
+ * Находки забирают весь остаток карточки и прокручиваются: геокодер отдаёт до
+ * восьми городов, а помещается их шесть в полном размере и четыре в узком —
+ * там строка переносится на две. Обрезать список до помещающихся было бы хуже
+ * прокрутки: нужный город оказывался бы вторым «Владимиром», которого не
+ * видно.
+ */
+.place__found {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.place__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  text-align: center;
+}
+
+.place__note--danger {
+  color: var(--status-danger);
+}
+
+.place .places__item:focus-visible {
+  outline: none;
+  background: var(--surface-control-selected);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Низкая карточка: сперва уходит значок, следом строка призыва. Поле и находки
+ * остаются всегда — без них панель перестаёт быть панелью.
+ *
+ * Пороги сняты замером, а не подобраны: со значком и строкой панель с одной
+ * строкой находок требует 161 точки высоты, без значка — 108, без обоих — 78.
+ * Последнее и есть общий пол окна (80 точек минус рамка карточки), то есть
+ * ниже уходить уже некуда.
+ */
+@container card (height < 11em) {
+  .place__icon {
+    display: none;
+  }
+}
+
+@container card (height < 8em) {
+  .place__lead {
+    display: none;
+  }
+}

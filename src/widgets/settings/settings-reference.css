@@ -1,0 +1,214 @@
+/* R17: единственный утверждённый A. Исходный settings.css остаётся Claude.
+ * Формы и команды общие; порядок полей A задаёт список с постоянными ключами.
+ * Масштаб/плотность виджетов не меняют геометрию и фон этого окна. */
+.settings--reference {
+  --surface-card: rgb(var(--surface-base));
+  --radius-control: 5px;
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --settings-scrollbar-width: 6px;
+  --settings-scrollbar-reserve: 12px;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: var(--surface-card);
+  box-shadow: none;
+}
+
+.settings--reference .settings__head {
+  flex: 0 0 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+.settings--reference .settings__title { font-size: 16px; }
+.settings--reference .settings__close { width: 24px; height: 24px; }
+.settings--reference .settings__body { min-width: 0; }
+
+/* Общие пункты не уезжают вслед за длинным деревом. Меняется раскладка
+ * прежних веток, а не их порядок, ключи или обработчики. */
+.settings--reference .settings__nav {
+  flex: 0 0 216px;
+  width: 216px;
+  min-width: 216px;
+  gap: 0;
+  padding: 8px 0;
+  overflow: hidden;
+  background: var(--surface-inset);
+}
+
+.settings--reference .settings__nav > .settings__branch {
+  flex: 0 0 auto;
+  min-height: 0;
+  gap: 2px;
+}
+
+.settings--reference .settings__nav > .settings__branch[data-section="widgets"] {
+  flex: 1 1 auto;
+}
+
+.settings--reference .settings__nav > .settings__branch > .settings__row {
+  flex: 0 0 30px;
+  min-height: 30px;
+  margin: 0 6px;
+}
+
+.settings--reference .settings__nav > .settings__branch[data-section="source"] {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.settings--reference .settings__tab {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 5px 8px;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.settings--reference .settings__tab[aria-current="true"]::before {
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+}
+
+.settings--reference .settings__tab--leaf { padding-left: 20px; }
+.settings--reference .settings__tab--sub { padding-left: 38px; }
+.settings--reference .settings__fold { flex: 0 0 20px; padding: 3px; }
+
+/* WebView2 отводит стабильные 6px под полосу; ещё 6px отделяют от неё
+ * содержимое. Общий резерв 12px, одинаковый с main в принятом референсе. */
+.settings--reference .settings__nav > .settings__branch[data-section="widgets"] > .settings__leaves {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-left: 6px;
+  padding-right: calc(var(--settings-scrollbar-reserve) - var(--settings-scrollbar-width));
+}
+
+.settings--reference .settings__leaves > .settings__branch { flex: 0 0 auto; }
+.settings--reference .settings__leaves .settings__row { flex: 0 0 auto; }
+.settings--reference .settings__leaves .settings__leaves { overflow: visible; }
+
+/* 760 − 2 рамки − 216 колонка − 32 внешних поля − 12 резерв = 498px.
+ * При 628px остаётся 366px. Контролы всегда считают эту ширину формы. */
+.settings--reference .settings__panel {
+  min-width: 0;
+  padding: 16px calc(16px + var(--settings-scrollbar-reserve) - var(--settings-scrollbar-width)) 16px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.settings--reference :is(.settings__panel, .settings__leaves)::-webkit-scrollbar {
+  width: var(--settings-scrollbar-width);
+  height: var(--settings-scrollbar-width);
+}
+
+.settings--reference :is(.settings__panel, .settings__leaves)::-webkit-scrollbar-track { background: transparent; }
+.settings--reference :is(.settings__panel, .settings__leaves)::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+
+.settings--reference .settings__heading {
+  margin: 0 0 20px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-primary);
+  letter-spacing: normal;
+  text-transform: none;
+  overflow-wrap: anywhere;
+}
+
+.settings--reference .rows { gap: 16px; min-width: 0; }
+.settings--reference .rows--tight { gap: 8px; }
+.settings--reference .field { gap: 8px; min-width: 0; }
+.settings--reference .field__head { gap: 12px; min-width: 0; }
+.settings--reference .field__name { font-size: 13px; font-weight: 500; }
+.settings--reference .field__value { font-size: 12px; overflow-wrap: anywhere; }
+.settings--reference .note { font-size: 11px; overflow-wrap: anywhere; }
+.settings--reference .divider { margin: 0; }
+.settings--reference .switch { gap: 10px; }
+
+.settings--reference .settings__card-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings--reference .settings__card-caption h3 { margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.settings--reference .settings__card-caption > span { flex: none; color: var(--ui-accent); font-size: 11px; }
+
+.settings--reference .choices { gap: 6px; }
+.settings--reference .choice { flex: 1 0 auto; min-width: 0; min-height: 28px; padding: 5px 8px; background: var(--surface-control); font-size: 12px; }
+.settings--reference .choice[aria-pressed="true"] { color: var(--ui-accent); background: var(--surface-control); }
+.settings--reference .choice:disabled { opacity: 0.42; cursor: default; }
+.settings--reference .btn { min-height: 30px; padding: 6px 10px; font-size: 12px; }
+.settings--reference .input { max-width: 100%; min-height: 32px; padding: 7px 9px; font-size: 13px; }
+.settings--reference .select__control { min-width: 220px; padding: 6px 28px 6px 9px; font-size: 12px; }
+.settings--reference .check { width: 18px; height: 18px; border-radius: 4px; }
+
+.settings--reference .slider {
+  height: 18px;
+  border-radius: 0;
+  background: linear-gradient(to right, var(--ui-accent) var(--slider-fill), var(--border-card) var(--slider-fill));
+  background-size: 100% 4px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.settings--reference .slider::-webkit-slider-thumb,
+.settings--reference .slider:hover::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: var(--control-thumb);
+}
+
+/* Строки палитры нейтральны, а столбики и легенда сохраняют общие роли
+ * данных. Цвета данных, режимы single/custom и их черновики не меняются. */
+.settings--reference .theme-list { gap: 0; }
+.settings--reference .theme-row {
+  min-height: 24px;
+  padding: 3px 6px;
+  gap: 10px;
+  font-size: 12px;
+}
+.settings--reference .theme-row[aria-pressed="true"] { background: var(--surface-control); }
+.settings--reference .theme-row__preview { background: var(--surface-inset); }
+.settings--reference .glass-choices { gap: 4px; }
+.settings--reference .glass-choice { height: 40px; font-size: 11px; }
+.settings--reference .color-legend { font-size: 11px; }
+.settings--reference .color-field__hex { font-size: 12px; }
+.settings--reference .color-reset { flex: 0 0 auto; }
+
+.settings--reference [data-look-field="design-error"] { padding: 10px; border: 1px solid var(--border-card); border-left: 2px solid var(--status-danger); border-radius: 5px; background: var(--surface-inset); color: var(--status-danger); }
+
+.settings--reference :is(.grid__head, .grid__row) { grid-template-columns: minmax(0, 1fr) repeat(4, 60px) 22px; gap: 4px; }
+.settings--reference .grid__label { font-size: 10px; letter-spacing: normal; }
+.settings--reference .grid__row { min-height: 30px; padding: 5px 0; font-size: 12px; }
+.settings--reference .grid__row--all { background: var(--surface-control); font-weight: 600; }
+.settings--reference .grid__none { color: transparent; }
+.settings--reference .grid__gear { width: 22px; height: 22px; }
+.settings--reference .select__control option { background: var(--surface-control); }
+
+@media (max-width: 700px) {
+  .settings--reference .glass-choice { font-size: 10px; }
+  .settings--reference .select__control { min-width: 0; width: 100%; }
+}

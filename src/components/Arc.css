@@ -1,0 +1,50 @@
+/*
+ * Размер приходит переменной, а не числом в разметке: своих чисел у виджетов
+ * нет, а `--arc-size` умножен на кегль в токенах. Витрине число нужно, и она
+ * переопределяет переменную инлайном.
+ *
+ * Квадратность держит `aspect-ratio`: раньше её обеспечивало только то, что
+ * ширина и высота получали одно и то же число.
+ */
+.arc {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--arc-size);
+  aspect-ratio: 1;
+}
+
+.arc__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.arc__track {
+  fill: none;
+  stroke: var(--surface-track);
+  stroke-linecap: round;
+}
+
+.arc__value {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--duration-slow) var(--ease);
+}
+
+/* Содержимое кольца: подписи и цифры по центру */
+.arc__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  /* Отступ от обводки: без него длинные числа наезжают на дугу */
+  padding: 0 16%;
+  text-align: center;
+}

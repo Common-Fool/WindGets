@@ -1,0 +1,284 @@
+/*
+ * Виджет списка дел: список задач с галочками и строка добавления снизу.
+ *
+ * Акцент карточки нейтральный: список дел не привязан к железу,
+ * метрики у него нет.
+ */
+
+.todo {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+.todo__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Дел может быть много: остальные уходят в прокрутку, как у буфера обмена */
+  overflow-y: auto;
+}
+
+/*
+ * Строка дела — не кнопка: за неё окно тянется мышью.
+ * Нажатие ловится на самой строке.
+ */
+.todo__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  /* Строки ужаты: место под значки в подвале взято отсюда, а не у списка.
+     Просвет между строками при этом остался — слипшийся список не читается */
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.todo__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.todo__item:active {
+  background: var(--surface-control-pressed);
+}
+
+/* Кнопка без подложки: переключает дело только она, вся остальная строка
+   отдана правке и перетаскиванию окна */
+.todo__check {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.todo__check:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.todo__item:hover .todo__check {
+  color: var(--text-primary);
+}
+
+.todo__text {
+  flex: 1;
+  min-width: 0;
+  /* Столько же, сколько у поля правки: иначе текст прыгал бы вбок, стоило
+     открыть строку */
+  padding: 0 var(--space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+/* Сделанное дело: текст приглушён и перечёркнут */
+.todo__item[data-done="true"] .todo__text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.todo__item[data-done="true"] .todo__check {
+  color: var(--ui-accent);
+}
+
+.todo__item[data-done="true"]:hover .todo__check {
+  color: var(--ui-accent-hover);
+}
+
+/*
+ * Крестик удаления проступает только под курсором: скопировано из clipboard.css.
+ * Место под него держится всегда, чтобы текст не прыгал вбок при наведении.
+ */
+.todo__drop {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.todo__item:hover .todo__drop,
+.todo__drop:focus-visible {
+  opacity: 1;
+}
+
+.todo__drop:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.todo__drop:hover {
+  color: var(--status-danger);
+}
+
+.todo__empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/*
+ * Подвал: поле ввода и три значка одной строкой. Второй строки под значки нет
+ * намеренно — она отняла бы у списка ещё одно дело.
+ */
+.todo__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * Значок подвала: кнопка без подложки, как у заметок и у обновления погоды.
+ * Приглушён до наведения: карточка про дела, а не про кнопки.
+ */
+.todo__act {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.todo__act:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.todo__act:focus-visible {
+  outline: none;
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Нечего копировать, нечего убирать — гасим, но не прячем: исчезающие кнопки
+   читались бы как поломка */
+.todo__act:disabled {
+  color: var(--text-muted);
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * Нижняя строка: беда с диском или возврат после очистки. Появляется только
+ * тогда, когда ей есть что сказать, — постоянного места под неё нет.
+ */
+.todo__note {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+/*
+ * Поле правки стоит на месте текста дела и занимает его строку целиком.
+ * Кегль и шрифт — как у самой строки: правка не должна выглядеть иначе, чем то,
+ * что правят.
+ */
+/*
+ * Поле правки стоит на месте текста дела и занимает его строку целиком. Кегль и
+ * шрифт — как у самой строки: правка не должна выглядеть иначе, чем то, что
+ * правят.
+ *
+ * ВАЖНО: **рамки у него нет вовсе.** Рамка в одну точку добавляла строке две по
+ * высоте, и весь список подпрыгивал, стоило открыть правку. Поле обозначено
+ * заливкой, а фокус — тенью: ни то, ни другое места не занимает.
+ */
+.input.todo__edit {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-1);
+  border: none;
+  background: var(--surface-control);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+}
+
+.input.todo__edit:focus {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Поле ввода берёт общий класс `.input` из base.css и правит в нём одно:
+ * шрифт. Моноширинный там стоит ради координат и Client ID, а дело пишут
+ * словами — и в моноширинном они выглядят машинным выводом, а не списком.
+ *
+ * Второй копии рамки, подложки и радиуса тут нет намеренно: разойтись с общим
+ * полем было бы вопросом времени.
+ *
+ * ВАЖНО: два класса в селекторе, а не один. Весомость у одиночных классов
+ * одинаковая, и побеждает тот, чей файл лежит в сборке ниже, — а порядок файлов
+ * не наш: до этапа 48 ниже лежал base.css, с ленивым реестром — стили виджета.
+ * С одним классом поле однажды осталось моноширинным, и заметно это было только
+ * глазами: раскладка при этом целая.
+ */
+.input.todo__input {
+  font-family: inherit;
+  line-height: var(--leading-normal);
+}
+
+.todo__input {
+  /* Поле распирает строку, значки жмутся к правому краю */
+  flex: 1;
+  min-width: 0;
+}
+
+.todo__input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Пока список не прочитан, добавлять некуда */
+.todo__input:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.todo__trouble {
+  flex: none;
+  color: var(--status-danger);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

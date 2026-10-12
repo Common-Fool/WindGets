@@ -1,0 +1,74 @@
+/* Компоновка GPT Design. Claude сохраняет исходную разметку и sections.css. */
+:root[data-design="reference"] .card:has(.hardware-body) > .card__body { --card-pad-block: var(--hardware-padding); padding: var(--hardware-padding); }
+.hardware-body { min-width: 0; }
+.hardware-loads { display: flex; flex-direction: column; gap: calc(10px * var(--scale)); }
+.hardware-loads[data-view="bars"] { gap: calc(8px * var(--scale)); }
+.hardware-load { display: grid; grid-template-columns: var(--hardware-ring) minmax(0, 1fr); align-items: center; gap: var(--hardware-padding); }
+.hardware-loads[data-view="bars"] .hardware-load { display: block; }
+.hardware-load__dial { display: flex; justify-content: center; --arc-size: var(--hardware-ring); }
+.hardware-load__ring-value { color: var(--text-primary); font-size: calc(20px * var(--scale)); font-weight: 500; line-height: 1.1; white-space: nowrap; }
+.hardware-load__ring-value--memory { font-size: calc(18px * var(--scale)); }
+.hardware-load__percent { font-size: calc(14px * var(--scale)); }
+.hardware-load__ring-total { font-size: var(--hardware-hint); line-height: 1.2; color: var(--text-secondary); white-space: nowrap; }
+.hardware-load__content { min-width: 0; }
+.hardware-load__head { display: flex; align-items: baseline; justify-content: space-between; gap: calc(8px * var(--scale)); min-height: calc(24px * var(--scale)); }
+.hardware-load__label { color: var(--text-secondary); font-size: calc(14px * var(--scale)); font-weight: 500; }
+.hardware-load__history-label { color: var(--text-muted); font-size: var(--hardware-hint); }
+.hardware-load__current { font-size: var(--hardware-main); line-height: 1.1; font-weight: 500; white-space: nowrap; }
+.hardware-load__current--memory { font-size: var(--hardware-memory); }
+.hardware-load__unit { font-size: calc(12px * var(--scale)); font-weight: 400; color: var(--text-secondary); }
+.hardware-load .columns { --columns-height: calc(42px * var(--scale)); margin-top: calc(6px * var(--scale)); padding: 0; background: transparent; }
+.hardware-loads[data-view="bars"] .columns { --columns-height: calc(26px * var(--scale)); }
+.hardware-load .bar { height: calc(3px * var(--scale)); margin-top: calc(6px * var(--scale)); }
+.hardware-body:has(.hardware-loads) .pairs { display: flex; flex-direction: column; gap: 0; margin-top: calc(8px * var(--scale)); border-top: 1px solid var(--border-card); }
+.hardware-body:has(.hardware-loads) .pairs:empty { display: none; }
+.hardware-body:has(.hardware-loads) .pair { grid-template-columns: calc(50px * var(--scale)) repeat(2, calc(80px * var(--scale))); justify-content: start; gap: calc(8px * var(--scale)); align-items: center; min-height: var(--hardware-row); }
+.hardware-body:has(.hardware-loads) .pair__label { color: var(--text-muted); font-size: var(--hardware-label); }
+.hardware-body:has(.hardware-loads) .metric-label__icon { color: var(--text-muted); font-size: calc(12px * var(--scale)); }
+.hardware-body:has(.hardware-loads) .pair__cell { min-width: 0; align-items: flex-start; padding: calc(2px * var(--scale)) 0; }
+.hardware-body:has(.hardware-loads) .pair__value { font-size: var(--hardware-value); font-weight: 400; line-height: 1.25; }
+.hardware-body:has(.hardware-loads) .pair__hint { font-size: var(--hardware-hint); line-height: 1.25; }
+:root[data-design="reference"] .hardware-load .columns__fill { background: var(--accent); }
+:root[data-design="reference"] .hardware-load .bar__fill { background: var(--accent); }
+:root[data-design="reference"] .hardware-load .arc__value { filter: none; }
+/* Компоновку GPT определяет выбранный размер: узкий полный не становится
+ * компактным из-за прежнего порога, а компактный сохраняет подписи. */
+.hardware-body:has(.hardware-loads) .pair {
+  grid-template-columns: calc(50px * var(--scale)) calc(80px * var(--scale)) calc(76px * var(--scale));
+}
+.hardware-body[data-size="0"]:has(.hardware-loads) .pair__label { grid-column: auto; }
+.hardware-body:has(.hardware-loads) .pair__hint { display: block; }
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(10px * var(--scale));
+}
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .hardware-load {
+  display: flex; flex-direction: column; gap: calc(4px * var(--scale));
+}
+.hardware-body:not([data-size="0"]) .hardware-load__dial { --arc-size: calc(74px * var(--scale)); }
+.hardware-body:not([data-size="0"]) .hardware-load__history-label { display: none; }
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .hardware-load__content { width: 100%; }
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .columns { --columns-height: calc(26px * var(--scale)); }
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .hardware-load__head { justify-content: center; min-height: 0; }
+.hardware-body:not([data-size="0"]):has(.hardware-loads) .pair {
+  grid-template-columns: calc(80px * var(--scale)) calc(70px * var(--scale));
+  justify-content: start; row-gap: calc(2px * var(--scale)); padding: 0; min-height: calc(48px * var(--scale));
+}
+.hardware-body:not([data-size="0"]):has(.hardware-loads) .pair__label { grid-column: 1 / -1; }
+.hardware-body[data-size="2"]:has(.hardware-loads) .pair { min-height: calc(34px * var(--scale)); }
+.hardware-body[data-size="2"]:has(.hardware-loads) .pair__cell { padding: 0; }
+.hardware-body[data-size="2"]:has(.hardware-loads) .pair__hint { display: none; }
+.hardware-body:not([data-size="0"]) .hardware-loads[data-view="bars"] .hardware-load__head { gap: calc(4px * var(--scale)); }
+
+/* Полный размер: одна ступень крупнее, без возврата жирного начертания. */
+.hardware-body[data-size="0"]:has(.hardware-loads) {
+  --hardware-value: calc(15px * var(--scale));
+  --hardware-hint: calc(12px * var(--scale));
+  --hardware-label: calc(12px * var(--scale));
+  --hardware-main: calc(22px * var(--scale));
+  --hardware-memory: calc(17px * var(--scale));
+}
+.hardware-body[data-size="0"] .hardware-load__label { font-size: calc(15px * var(--scale)); }
+.hardware-body[data-size="0"] .hardware-load__ring-value { font-size: calc(22px * var(--scale)); }
+.hardware-body[data-size="0"] .hardware-load__ring-value--memory { font-size: calc(20px * var(--scale)); }
+.hardware-body[data-size="0"] .hardware-load__percent { font-size: calc(15px * var(--scale)); }
+/* Колонки рядом с зазором 8; ширина окна равна сумме колонок и полей. */

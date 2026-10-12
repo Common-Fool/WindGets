@@ -1,0 +1,25 @@
+# Node / Vite
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+
+# Сайдкар телеметрии на C#: сборка идёт в bin, промежуточное в obj
+src-sensors/bin/
+src-sensors/obj/
+# Схемы разрешений генерирует tauri-build при каждой сборке
+src-tauri/gen/schemas/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Локальные разрешения Claude Code — машинные, не общие
+.claude/settings.local.json

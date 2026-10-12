@@ -1,0 +1,229 @@
+/* Утверждённые R04 A/B. Все селекторы принадлежат только новой JSX GPT;
+ * исходный network.css и классы .net Claude не переопределяются. */
+.net-ref {
+  --net-ref-pad: calc(10px * var(--scale));
+  --net-ref-label: calc(12px * var(--scale));
+  --net-ref-hint: calc(11px * var(--scale));
+  --net-ref-value: calc(20px * var(--scale));
+  --net-ref-latency: calc(16px * var(--scale));
+  --net-ref-jitter: calc(15px * var(--scale));
+  padding: var(--net-ref-pad);
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.net-ref__flows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: calc(18px * var(--scale));
+  min-width: 0;
+}
+
+.net-ref__flow {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  row-gap: calc(1px * var(--scale));
+  align-content: start;
+}
+
+.net-ref__flow-label {
+  display: flex;
+  align-items: center;
+  gap: calc(5px * var(--scale));
+  color: var(--text-secondary);
+  font-size: var(--net-ref-label);
+  line-height: calc(14px * var(--scale));
+  white-space: nowrap;
+}
+
+.net-ref__arrow {
+  display: flex;
+  flex: none;
+  color: var(--accent);
+  font-size: calc(14px * var(--scale));
+  line-height: 1;
+}
+
+.net-ref__speed {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: calc(6px * var(--scale));
+  row-gap: 0;
+  min-width: 0;
+  line-height: calc(24px * var(--scale));
+}
+
+.net-ref__speed-value {
+  font-size: var(--net-ref-value);
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+}
+
+/* Целая единица переносится только при очень длинном числе; по / не режем.
+ * useContentHeight поднимет высоту, значение или единицу не скрываем. */
+.net-ref__unit {
+  color: var(--text-muted);
+  font-size: var(--net-ref-hint);
+  white-space: nowrap;
+}
+
+.net-ref__speed .net-ref__unit { font-size: var(--net-ref-label); }
+
+.net-ref__total {
+  display: block;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--net-ref-hint);
+  line-height: calc(14px * var(--scale));
+  white-space: nowrap;
+}
+
+.net-ref--rows .net-ref__flows {
+  border-bottom: 1px solid var(--border-hairline);
+  padding-bottom: calc(7px * var(--scale));
+  margin-bottom: calc(3px * var(--scale));
+}
+
+.net-ref__rows,
+.net-ref__matrix {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.net-ref__rows th,
+.net-ref__rows td,
+.net-ref__matrix th,
+.net-ref__matrix td {
+  padding: 0;
+  vertical-align: middle;
+  font-weight: var(--weight-regular);
+}
+
+.net-ref__rows .net-ref__latency-col { width: calc(56px * var(--scale)); }
+.net-ref__rows .net-ref__jitter-col { width: calc(67px * var(--scale)); }
+.net-ref--narrow .net-ref__rows .net-ref__latency-col { width: calc(52px * var(--scale)); }
+.net-ref--narrow .net-ref__rows .net-ref__jitter-col { width: calc(65px * var(--scale)); }
+
+.net-ref__rows thead th {
+  height: calc(14px * var(--scale));
+  color: var(--text-muted);
+  font-size: var(--net-ref-hint);
+  line-height: calc(14px * var(--scale));
+  text-align: right;
+  white-space: nowrap;
+}
+
+.net-ref__rows thead th:first-child {
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: var(--net-ref-label);
+}
+
+.net-ref__rows tbody th,
+.net-ref__rows tbody td {
+  height: calc(27px * var(--scale));
+  text-align: right;
+}
+
+.net-ref__rows tbody tr + tr th,
+.net-ref__rows tbody tr + tr td {
+  border-top: 1px solid var(--border-hairline);
+}
+
+.net-ref__target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(4px * var(--scale));
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--net-ref-label);
+  line-height: calc(15px * var(--scale));
+  text-align: left;
+  white-space: nowrap;
+}
+
+.net-ref__target-name { min-width: 0; }
+.net-ref__loss { flex: none; font-size: var(--net-ref-hint); }
+
+.net-ref__measurement {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(6px * var(--scale));
+  min-width: 0;
+  color: var(--text-primary);
+  line-height: calc(20px * var(--scale));
+  white-space: nowrap;
+}
+
+.net-ref__dot { display: flex; flex: none; }
+.net-ref__dot .dot { --dot-size: calc(5px * var(--scale)); }
+.net-ref__measurement--latency .net-ref__number { font-size: var(--net-ref-latency); }
+.net-ref__measurement--jitter .net-ref__number { font-size: var(--net-ref-jitter); }
+
+/* B: узкий столбец трафика, тонкий разделитель и матрица без центральной дыры.
+ * 96 + 6 + 228 + поля/рамка = 352 при 100 %. */
+.net-ref--matrix:not(.net-ref--narrow) {
+  display: grid;
+  grid-template-columns: calc(96px * var(--scale)) minmax(0, 1fr);
+  column-gap: calc(6px * var(--scale));
+  align-items: stretch;
+}
+
+.net-ref--matrix:not(.net-ref--narrow) .net-ref__flows {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: calc(20px * var(--scale));
+  align-content: start;
+  border-right: 1px solid var(--border-hairline);
+  padding-right: calc(6px * var(--scale));
+}
+
+.net-ref__matrix .net-ref__metric-col { width: calc(40px * var(--scale)); }
+.net-ref__matrix thead th {
+  height: calc(20px * var(--scale));
+  color: var(--text-secondary);
+  font-size: var(--net-ref-hint);
+  line-height: calc(14px * var(--scale));
+  text-align: center;
+  white-space: nowrap;
+}
+
+.net-ref__matrix thead th:first-child { text-align: left; font-size: var(--net-ref-label); }
+.net-ref__matrix tbody th,
+.net-ref__matrix tbody td {
+  height: calc(38px * var(--scale));
+  color: var(--text-secondary);
+  font-size: var(--net-ref-hint);
+  line-height: calc(13px * var(--scale));
+  text-align: center;
+}
+
+.net-ref__matrix tbody th { text-align: left; white-space: nowrap; }
+.net-ref__matrix tbody tr + tr th,
+.net-ref__matrix tbody tr + tr td { border-top: 1px solid var(--border-hairline); }
+.net-ref__metric-unit { display: block; color: var(--text-muted); }
+.net-ref__matrix .net-ref__measurement { justify-content: center; }
+.net-ref__matrix .net-ref__measurement--latency .net-ref__number { font-size: calc(18px * var(--scale)); }
+.net-ref__matrix tbody .net-ref__matrix-loss { color: var(--text-primary); font-size: calc(13px * var(--scale)); }
+
+/* Выбор размера, а не случайный порог ширины: метрики не исчезают. */
+.net-ref--matrix.net-ref--narrow .net-ref__flows {
+  padding-bottom: calc(15px * var(--scale));
+  margin-bottom: calc(12px * var(--scale));
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__metric-col { width: calc(36px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix thead th { height: calc(18px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix tbody th,
+.net-ref--matrix.net-ref--narrow .net-ref__matrix tbody td { height: calc(30px * var(--scale)); }
+
+/* В узкой паре подпись, число, единица и итог Upload держат правый край. */
+.net-ref--narrow .net-ref__flow[data-direction="up"] { text-align: right; justify-items: end; }
+.net-ref--narrow .net-ref__flow[data-direction="up"] :is(.net-ref__flow-label, .net-ref__speed) { width: 100%; justify-content: flex-end; }
+.net-ref--narrow .net-ref__flow[data-direction="up"] .net-ref__total { width: 100%; }

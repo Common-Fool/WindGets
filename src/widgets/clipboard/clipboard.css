@@ -1,0 +1,144 @@
+/*
+ * Виджет буфера обмена: список записей и подвал со счётчиком и очисткой.
+ *
+ * Акцент карточки нейтральный, и это не забывчивость: буфер обмена не железо,
+ * метрики у него нет, а брать чужой цвет — бирюзу памяти или зелень Спотифая —
+ * значит соврать. Текущая запись использует общий UI-акцент, а не цвет чужой
+ * метрики.
+ */
+
+.clip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+}
+
+.clip__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Записей двадцать, а в окне видно пять: остальные прокруткой. Колесо от
+     перетаскивания не страдает — окно берётся по mousedown */
+  overflow-y: auto;
+}
+
+.clip__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  border-radius: var(--radius-control);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.clip__item:hover {
+  background: var(--surface-control-hover);
+}
+
+/* Эта запись лежит в буфере прямо сейчас */
+.clip__item[data-current="true"] {
+  background: var(--surface-control-selected);
+}
+
+.clip__item:has(.clip__text:active) {
+  background: var(--surface-control-pressed);
+}
+
+.clip__text {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  text-align: left;
+  cursor: pointer;
+  /* Перенос сдвинул бы всё, что ниже, на каждой смене содержимого буфера */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.clip__item:hover .clip__text {
+  color: var(--text-primary);
+}
+
+.clip__item[data-current="true"] .clip__text {
+  color: var(--ui-accent);
+}
+
+.clip__text:focus-visible,
+.clip__drop:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/*
+ * Крестик проступает только под курсором: два десятка крестиков в столбик
+ * читались бы как список ошибок. Место под него держится всегда — иначе текст
+ * дёргался бы вбок на каждом наведении.
+ */
+.clip__drop {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.clip__item:hover .clip__drop,
+.clip__drop:focus-visible {
+  opacity: 1;
+}
+
+.clip__drop:hover {
+  color: var(--status-danger);
+}
+
+.clip__empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/*
+ * Подвал. Счётчик и очистка стоят в одной строке: шапки у карточки нет, а
+ * кнопка, висящая над списком, отбирала бы у него строку.
+ */
+.clip__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-hairline);
+}
+
+.clip__count {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}

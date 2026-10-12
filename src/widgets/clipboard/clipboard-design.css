@@ -1,0 +1,320 @@
+/* R09: утверждённые читаемые строки A только для GPT Design.
+ * Окно остаётся растягиваемым; размер списка определяет окно, а не история. */
+.clip-ref {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: calc(10px * var(--scale)) calc(10px * var(--scale)) 0;
+}
+
+.clip-ref__viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: calc(8px * var(--scale));
+}
+
+.clip-ref__list {
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  /* Четыре точки бегунка и отдельный зазор до области строк. Стабильный
+     резерв не двигает текст при появлении полосы. */
+  padding: 0 calc(12px * var(--scale)) 0 0;
+  list-style: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* thin выбирает системное оформление WebView2, поэтому ширину задаёт
+     только наше правило ::-webkit-scrollbar. */
+  scrollbar-width: auto;
+}
+
+.clip-ref__list::-webkit-scrollbar {
+  width: calc(4px * var(--scale));
+}
+
+.clip-ref__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.clip-ref__list::-webkit-scrollbar-thumb {
+  min-height: calc(24px * var(--scale));
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+}
+
+.clip-ref__list::-webkit-scrollbar-button,
+.clip-ref__list::-webkit-scrollbar-button:single-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.clip-ref__item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: calc(7px * var(--scale));
+  min-width: 0;
+  min-height: calc(25px * var(--scale));
+  padding: calc(4px * var(--scale)) calc(6px * var(--scale));
+  border-radius: var(--radius-control);
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.clip-ref__item:not([data-current="true"])::after {
+  content: "";
+  position: absolute;
+  inset: auto calc(6px * var(--scale)) 0;
+  height: 1px;
+  background: var(--border-hairline);
+}
+
+.clip-ref__item:hover {
+  background: var(--surface-control-hover);
+}
+
+.clip-ref__item[data-current="true"] {
+  background: var(--surface-control-selected);
+}
+
+.clip-ref__item[data-current="true"]::before,
+.clip-ref__item[data-failed="true"]:not([data-current="true"])::before {
+  content: "";
+  position: absolute;
+  inset: calc(5px * var(--scale)) auto calc(5px * var(--scale)) 0;
+  width: calc(2px * var(--scale));
+  border-radius: 1px;
+  background: var(--ui-accent);
+}
+
+.clip-ref__item[data-failed="true"]:not([data-current="true"])::before {
+  background: var(--status-danger);
+}
+
+.clip-ref__text {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: calc(13px * var(--scale));
+  line-height: calc(17px * var(--scale));
+  text-align: left;
+  cursor: pointer;
+}
+
+.clip-ref__preview {
+  display: -webkit-box;
+  max-height: calc(34px * var(--scale));
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.clip-ref__item:hover .clip-ref__text,
+.clip-ref__item[data-current="true"] .clip-ref__text {
+  color: var(--text-primary);
+}
+
+.clip-ref__meta {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(4px * var(--scale));
+  min-width: calc(44px * var(--scale));
+  color: var(--text-muted);
+  font-size: calc(10.5px * var(--scale));
+  line-height: calc(13px * var(--scale));
+  white-space: nowrap;
+}
+
+.clip-ref__drop {
+  display: flex;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: calc(18px * var(--scale));
+  height: calc(24px * var(--scale));
+  /* Область нажатия 24 точки не увеличивает однострочную запись с 25 до 32. */
+  margin-block: calc(-4px * var(--scale));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--scale));
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+
+.clip-ref__item:hover .clip-ref__drop,
+.clip-ref__item:focus-within .clip-ref__drop,
+.clip-ref__item[data-current="true"] .clip-ref__drop,
+.clip-ref__item[data-failed="true"] .clip-ref__drop {
+  opacity: 1;
+}
+
+.clip-ref__drop:hover {
+  color: var(--status-danger);
+}
+
+.clip-ref__text:focus-visible,
+.clip-ref__drop:focus-visible,
+.clip-ref__clear:focus-visible,
+.clip-ref__list:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.clip-ref__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: calc(12px * var(--scale));
+  line-height: calc(17px * var(--scale));
+  text-align: center;
+}
+
+.clip-ref__foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: calc(6px * var(--scale));
+  min-width: 0;
+  min-height: calc(44px * var(--scale));
+  box-sizing: border-box;
+  padding: calc(8px * var(--scale)) 0 calc(9px * var(--scale));
+  border-top: 1px solid var(--border-hairline);
+}
+
+.clip-ref__error {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--scale));
+  min-height: calc(14px * var(--scale));
+  color: var(--status-danger);
+  font-size: calc(11px * var(--scale));
+  line-height: calc(14px * var(--scale));
+}
+
+.clip-ref__error svg {
+  flex: none;
+  font-size: calc(12px * var(--scale));
+}
+
+.clip-ref__error span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clip-ref__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8px * var(--scale));
+  min-width: 0;
+  min-height: calc(26px * var(--scale));
+}
+
+.clip-ref__count {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  line-height: calc(14px * var(--scale));
+  white-space: nowrap;
+}
+
+.clip-ref__clear {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6px * var(--scale));
+  min-width: calc(99px * var(--scale));
+  height: calc(26px * var(--scale));
+  box-sizing: border-box;
+  padding: 0 calc(7px * var(--scale));
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--ui-accent);
+  font-family: inherit;
+  font-size: calc(12px * var(--scale));
+  cursor: pointer;
+}
+
+.clip-ref__clear svg {
+  font-size: calc(16px * var(--scale));
+}
+
+.clip-ref__clear:hover {
+  border-color: var(--ui-accent);
+}
+
+.clip-ref__clear:disabled {
+  color: var(--text-muted);
+  border-color: var(--border-card);
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Свободное сужение ниже узкого пресета сохраняет счётчик и действие,
+ * вместо того чтобы выталкивать кнопку очистки за правую рамку. */
+@container card (width < 13em) {
+  .clip-ref__clear {
+    min-width: calc(28px * var(--scale));
+    width: calc(28px * var(--scale));
+    padding: 0;
+  }
+
+  .clip-ref__clear-label {
+    display: none;
+  }
+}
+
+/* Общая .widget > .card уже является container: card / size.
+ * Legacy floor 140×64 остаётся: здесь сжимается только GPT, не окно. */
+@container card (height < 5.5em) {
+  .clip-ref {
+    padding-top: calc(3px * var(--scale));
+  }
+
+  .clip-ref__viewport {
+    margin-bottom: calc(2px * var(--scale));
+  }
+
+  .clip-ref__foot {
+    gap: calc(2px * var(--scale));
+    min-height: calc(24px * var(--scale));
+    padding-top: calc(2px * var(--scale));
+    padding-bottom: calc(1px * var(--scale));
+  }
+
+  .clip-ref__actions {
+    min-height: calc(20px * var(--scale));
+  }
+
+  .clip-ref__clear {
+    height: calc(20px * var(--scale));
+  }
+}

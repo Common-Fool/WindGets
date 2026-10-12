@@ -1,0 +1,299 @@
+/* Вариант A только для GPT Design. Исходный processes.css не меняется. */
+:root[data-design="reference"] .proc-ref {
+  --proc-name: calc(14px * var(--scale));
+  --proc-small: calc(11px * var(--scale));
+  --proc-cpu-column: calc(60px * var(--scale));
+  --proc-ram-column: calc(76px * var(--scale));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: calc(11px * var(--scale)) calc(11px * var(--scale)) calc(8px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__columns,
+:root[data-design="reference"] .proc-ref__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--proc-cpu-column) var(--proc-ram-column);
+  min-width: 0;
+}
+
+:root[data-design="reference"] .proc-ref__columns {
+  flex: none;
+  align-items: start;
+  height: calc(21px * var(--scale));
+  margin-bottom: calc(7px * var(--scale));
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-muted);
+  font-size: var(--proc-small);
+  line-height: calc(16px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__column {
+  text-align: right;
+  white-space: nowrap;
+}
+
+:root[data-design="reference"] .proc-ref__column[data-active="true"] {
+  color: var(--text-primary);
+}
+
+:root[data-design="reference"] .proc-ref__viewport {
+  flex: 1;
+  min-height: 0;
+}
+
+:root[data-design="reference"] .proc-ref__list {
+  /* Бегунок вынесен в правое поле. Дополнительная ширина компенсирует
+     padding: числа остаются на месте, даже при наложенных полосах WebView2. */
+  width: calc(100% + 6px * var(--scale));
+  max-height: 100%;
+  margin: 0;
+  padding: 0 calc(6px * var(--scale)) 0 0;
+  list-style: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* auto оставляет WebKit-псевдоэлементам оформление: thin включает системный вид. */
+  scrollbar-width: auto;
+}
+
+/* Свой тонкий бегунок без стрелок и системной светлой подложки. */
+:root[data-design="reference"] .proc-ref__list::-webkit-scrollbar {
+  width: calc(4px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-design="reference"] .proc-ref__list::-webkit-scrollbar-thumb {
+  min-height: calc(24px * var(--scale));
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+}
+
+:root[data-design="reference"] .proc-ref__list::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+:root[data-design="reference"] .proc-ref__list::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+:root[data-design="reference"] .proc-ref__list:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+:root[data-design="reference"] .proc-ref__item {
+  grid-template-rows: calc(18px * var(--scale)) calc(2px * var(--scale));
+  row-gap: calc(2px * var(--scale));
+  height: calc(25px * var(--scale));
+  align-items: baseline;
+}
+
+:root[data-design="reference"] .proc-ref__identity {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6px * var(--scale));
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--proc-name);
+  line-height: calc(18px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-design="reference"] .proc-ref__count {
+  flex: none;
+  min-width: calc(23px * var(--scale));
+  color: var(--text-muted);
+  font-size: var(--proc-small);
+  text-align: right;
+}
+
+:root[data-design="reference"] .proc-ref__cpu,
+:root[data-design="reference"] .proc-ref__ram {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--proc-name);
+  font-weight: var(--weight-regular);
+  line-height: calc(18px * var(--scale));
+  white-space: nowrap;
+}
+
+:root[data-design="reference"] .proc-ref__ram {
+  font-size: calc(13px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__item [data-active="true"] {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+:root[data-design="reference"] .proc-ref__metric-label {
+  display: none;
+}
+
+:root[data-design="reference"] .proc-ref__bar {
+  grid-column: 1;
+  width: 100%;
+  align-self: stretch;
+}
+
+:root[data-design="reference"] .proc-ref__bar .bar {
+  height: calc(2px * var(--scale));
+  border-radius: calc(1px * var(--scale));
+  background: var(--border-hairline);
+}
+
+:root[data-design="reference"] .proc-ref__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: calc(7px * var(--scale));
+  padding-top: calc(8px * var(--scale));
+  border-top: 1px solid var(--border-hairline);
+}
+
+:root[data-design="reference"] .proc-ref__foot .toggle {
+  width: calc(56px * var(--scale));
+  height: calc(25px * var(--scale));
+  justify-content: flex-start;
+  gap: calc(7px * var(--scale));
+  padding: 0 calc(8px * var(--scale));
+  border-color: var(--border-card);
+  border-radius: var(--radius-control);
+  font-size: calc(12px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__foot .toggle[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+}
+
+:root[data-design="reference"] .proc-ref__foot .toggle:hover {
+  border-color: var(--border-control-hover);
+}
+
+:root[data-design="reference"] .proc-ref__foot .toggle__dot {
+  flex: none;
+  width: calc(5px * var(--scale));
+  height: calc(5px * var(--scale));
+}
+
+:root[data-design="reference"] .proc-ref__sort-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--proc-small);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-design="reference"] .proc-ref__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--scale));
+  text-align: center;
+}
+
+/* В узком A имя сверху, обе метрики рядом ниже. Кегль контейнера масштабируется. */
+@container card (width < 20em) {
+  :root[data-design="reference"] .proc-ref__columns {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    margin-bottom: calc(5px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__column[data-active="false"],
+  :root[data-design="reference"] .proc-ref__sort-label {
+    display: none;
+  }
+
+  :root[data-design="reference"] .proc-ref__item {
+    grid-template-columns: calc(74px * var(--scale)) minmax(0, 1fr);
+    grid-template-rows: calc(16px * var(--scale)) calc(16px * var(--scale)) calc(2px * var(--scale));
+    column-gap: calc(20px * var(--scale));
+    row-gap: calc(1px * var(--scale));
+    height: calc(38px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__identity {
+    grid-column: 1 / -1;
+    line-height: calc(16px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__cpu,
+  :root[data-design="reference"] .proc-ref__ram {
+    justify-content: space-between;
+    line-height: calc(16px * var(--scale));
+    font-size: calc(13px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__ram {
+    font-size: calc(12px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__metric-label {
+    display: inline;
+    color: var(--text-muted);
+    font-size: calc(10px * var(--scale));
+    font-weight: var(--weight-regular);
+  }
+
+  :root[data-design="reference"] .proc-ref__bar {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Общий предел окна 140 px остаётся прежним у обоих дизайнов. */
+@container card (width < 12em) {
+  :root[data-design="reference"] .proc-ref {
+    padding-inline: calc(8px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__item {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: calc(6px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__metric-label {
+    display: none;
+  }
+
+  :root[data-design="reference"] .proc-ref__cpu,
+  :root[data-design="reference"] .proc-ref__ram {
+    font-size: var(--proc-small);
+  }
+}
+
+@container card (height < 6em) {
+  :root[data-design="reference"] .proc-ref {
+    padding-block: calc(5px * var(--scale));
+  }
+
+  :root[data-design="reference"] .proc-ref__columns {
+    display: none;
+  }
+
+  :root[data-design="reference"] .proc-ref__foot {
+    padding-top: calc(5px * var(--scale));
+  }
+}
