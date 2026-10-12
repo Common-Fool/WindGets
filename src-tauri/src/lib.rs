@@ -22,6 +22,7 @@ mod notes;
 mod notices;
 mod output;
 mod pawnio;
+mod update;
 mod picker;
 mod ping;
 mod poller;
@@ -178,6 +179,11 @@ pub fn run() {
             pawnio::pawnio_install,
             pawnio::pawnio_cancel,
             pawnio::pawnio_remove,
+            update::update_state,
+            update::update_check,
+            update::update_install,
+            update::update_cancel,
+            update::update_set_auto,
             output::pick_output_dir,
             output::reset_output_dir,
             output::open_output_dir,
@@ -232,6 +238,9 @@ pub fn run() {
             // Драйвер PawnIO: ставили ли его мы — с диска; готов ли — по
             // устройству, на каждый вопрос (`pawnio.rs`)
             app.manage(pawnio::Pawnio::new(&handle));
+            // Обновления Windgets: что нашла проверка — только в памяти, срок
+            // недели — в `settings.json` (`update.rs`)
+            app.manage(update::Updates::new());
 
             // Трей поднимаем до окон: если окно не откроется, управление
             // всё равно останется под рукой
@@ -253,6 +262,7 @@ pub fn run() {
             // Напоминание о донатах: свой поток, почти всё время спит. Пока
             // звать некуда (нет ни одной ссылки), не показывает ничего
             support_reminder::start(&handle);
+            update::start(&handle);
             // Хвосты прерванных установок программ — всегда: место на диске
             // они занимают независимо от того, включён ли модуль
             tools::spawn(handle);

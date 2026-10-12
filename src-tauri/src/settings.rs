@@ -475,6 +475,13 @@ pub struct Settings {
     /// впервые запустилось, когда карточка была в последний раз и просили
     /// ли напоминать реже.
     pub support_reminder: SupportReminder,
+    /// Проверять обновления самим, раз в неделю (`update.rs`). Снято — в
+    /// сеть за выпусками не ходим, остаётся «Проверить сейчас».
+    pub update_auto: bool,
+    /// Когда спрашивали GitHub о выпуске, секунды Unix. От неё и считается
+    /// неделя: машину включают каждый день, и проверка «при запуске» была бы
+    /// ежедневной.
+    pub update_checked_at: Option<i64>,
 }
 
 /// Состояние напоминания о донатах. Сроки и правило — в `support_reminder.rs`.
@@ -528,6 +535,8 @@ impl Default for Settings {
             hidden_metrics: BTreeMap::new(),
             sensor_picks: BTreeMap::new(),
             support_reminder: SupportReminder::default(),
+            update_auto: true,
+            update_checked_at: None,
         }
     }
 }
@@ -1068,6 +1077,8 @@ mod tests {
             hidden_metrics: BTreeMap::from([("gpu".to_owned(), vec!["fan".to_owned(), "voltage".to_owned()])]),
             sensor_picks: BTreeMap::from([("chassisFan".to_owned(), "Board/Chip/Fans/Fan #2".to_owned())]),
             support_reminder: SupportReminder { first_run: 1_700_000_000, last_shown: Some(1_710_000_000), rare: true },
+            update_auto: false,
+            update_checked_at: Some(1_720_000_000),
         };
         settings.set_widget("spotify", WidgetSettings::default());
 
@@ -1095,6 +1106,8 @@ mod tests {
         assert_eq!(back.hidden_metrics, settings.hidden_metrics);
         assert_eq!(back.sensor_picks, settings.sensor_picks);
         assert_eq!(back.support_reminder, settings.support_reminder);
+        assert!(!back.update_auto);
+        assert_eq!(back.update_checked_at, Some(1_720_000_000));
 
         let city = back.weather.expect("город пережил запись");
         assert_eq!(city.name, "Грац");

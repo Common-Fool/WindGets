@@ -18,6 +18,7 @@ import {
 } from "../../lib/look";
 import { useSettings, type ChoiceRow } from "../../lib/settings";
 import { WindowsFields } from "./WindowsSection";
+import { UpdateField } from "./UpdateField";
 import { setLanguage, useText, type Key, type Language } from "../../lib/i18n";
 import {
   isReferenceTheme,
@@ -117,6 +118,10 @@ export function GeneralSection() {
       <hr className="divider" />
       <h3 className="settings__subheading caps">{t("settings.section.windows")}</h3>
       <WindowsFields />
+
+      <hr className="divider" />
+      <h3 className="settings__subheading caps">{t("update.title")}</h3>
+      <UpdateField />
     </div>
   );
 }
