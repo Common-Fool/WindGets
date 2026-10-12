@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "src-tauri/Cargo.lock": "2748039cda7006fd1e5fce5b3a9b2545720b72de63153efc23c2aa5fa41eae76",
+    "src-tauri/Cargo.lock": "944f4278aa4a296be578139e42d5c5e38212cd1d142f8ee94d411a0a097696e6",
     "package-lock.json": "6b0596cfbd868b2abf4ebfc98d94804ce38afba2304520690c3d0f7e77580986",
     "src-sensors/Sensors.csproj": "eb924b57fb049e9834bb18ce718e00b1bf977f7132cecb146cab97e2fd89efd1"
   },

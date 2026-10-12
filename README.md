@@ -48,7 +48,8 @@ No accounts, no telemetry, no server. Settings and widget data live in
 encrypted for the current Windows user. Clipboard history is never written to
 disk. Network requests go only where a widget needs them: weather, Spotify,
 your mail server, ping targets, and Measurement Lab for the speedtest — note
-that M-Lab publishes speedtest results as an open dataset.
+that M-Lab publishes speedtest results as an open dataset. Details are in the
+[Privacy Policy](PRIVACY.md).
 
 ## Building from source
 

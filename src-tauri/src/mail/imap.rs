@@ -1669,8 +1669,61 @@ pub fn extract_raw_text(parsed: Option<&mail_parser::Message<'_>>) -> Option<Str
     None
 }
 
+/// Раскодирует HTML-сущности, оставленные отправителем прямо в тексте.
+///
+/// Рассылки (Okta, например) кладут `&nbsp;` и `&amp;` и в часть `text/plain`,
+/// где их никто не раскодирует, и в превью они стояли как есть. Берём
+/// именованные, что встречаются в письмах, и числовые; незнакомое оставляем.
+fn decode_entities(raw: &str) -> String {
+    if !raw.contains('&') {
+        return raw.to_owned();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let decoded = tail.find(';').filter(|&end| end <= 10).and_then(|end| {
+            let name = &tail[1..end];
+            let ch = match name {
+                "nbsp" => Some(Some(' ')),
+                "amp" => Some(Some('&')),
+                "lt" => Some(Some('<')),
+                "gt" => Some(Some('>')),
+                "quot" => Some(Some('"')),
+                "apos" => Some(Some('\'')),
+                // Невидимые разделители рассылок превью не нужны вовсе
+                "zwnj" | "zwj" | "shy" => Some(None),
+                _ => name
+                    .strip_prefix("#x")
+                    .or_else(|| name.strip_prefix("#X"))
+                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                    .or_else(|| name.strip_prefix('#').and_then(|dec| dec.parse::<u32>().ok()))
+                    .and_then(char::from_u32)
+                    .map(Some),
+            };
+            ch.map(|ch| (ch, end))
+        });
+        match decoded {
+            Some((ch, end)) => {
+                if let Some(ch) = ch {
+                    out.push(ch);
+                }
+                rest = &tail[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Схлопывает пробелы и переносы строк в один пробел и обрезает до 180 знаков по границе символа.
 pub fn clean_preview(raw: &str) -> Option<String> {
+    let raw = decode_entities(raw);
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
         return None;
@@ -1692,6 +1745,7 @@ pub fn clean_preview(raw: &str) -> Option<String> {
 ///
 /// Пустой текст даёт `None`.
 pub fn clean_body(raw: &str) -> Option<String> {
+    let raw = &decode_entities(raw);
     // 1. Вырезаем style, script, head, если они присутствуют
     let stripped = if raw.contains('<') {
         strip_html_sections(raw)
@@ -1841,6 +1895,16 @@ mod tests {
         let cleaned = clean_preview(&input).expect("превью получено");
         assert_eq!(cleaned.chars().count(), 180);
         assert_eq!(cleaned, "🦀".repeat(180));
+    }
+
+    #[test]
+    fn entities_left_in_plain_text_are_decoded() {
+        assert_eq!(
+            clean_preview("&nbsp; Activate&nbsp;account &amp; more &#8212; &#x41;&zwnj;B").as_deref(),
+            Some("Activate account & more \u{2014} AB")
+        );
+        // Незнакомое и голый амперсанд остаются как были
+        assert_eq!(decode_entities("Tom & Jerry &bogus; &"), "Tom & Jerry &bogus; &");
     }
 
     #[test]

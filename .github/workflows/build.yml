@@ -17,9 +17,9 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -31,7 +31,7 @@ jobs:
           workspaces: src-tauri
 
       # Сайдкар датчиков — net472: SDK собирает его, Windows держит рантайм
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
@@ -48,14 +48,40 @@ jobs:
         working-directory: src-tauri
         run: cargo test --release
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windgets-setup
           path: src-tauri/target/release/bundle/nsis/*.exe
 
+      # Исходники MPL и LGPL рядом с выпуском: LGPL 2.1 §6(d) просит их
+      # «из того же места», что и программу. Адреса и коммиты — из списка
+      # лицензий; у PawnIO.Modules коммита нет, берётся ветка по умолчанию
+      - name: Third-party sources
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          # Только часть 1 — сборки сайдкара; крейты MPL берутся с crates.io как есть
+          $all = Get-Content THIRD-PARTY-NOTICES.txt -Raw
+          $text = $all.Substring($all.IndexOf('PART 1.'), $all.IndexOf('PART 2.') - $all.IndexOf('PART 1.'))
+          $pattern = 'License: (?:MPL-2\.0|LGPL-2\.1)\s+Source: https://github\.com/([^/\s]+)/([^/\s]+)(?=\s)(?: \(commit ([0-9a-f]{40})\))?'
+          New-Item -ItemType Directory sources | Out-Null
+          $seen = @{}
+          foreach ($m in [regex]::Matches($text, $pattern)) {
+            $owner = $m.Groups[1].Value; $repo = $m.Groups[2].Value
+            $ref = if ($m.Groups[3].Success) { $m.Groups[3].Value } else { 'HEAD' }
+            $key = "$owner/$repo@$ref"
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            $tag = if ($ref -eq 'HEAD') { 'latest' } else { $ref.Substring(0, 7) }
+            Invoke-WebRequest "https://github.com/$owner/$repo/archive/$ref.zip" -OutFile "sources/$repo-$tag.zip"
+          }
+          Compress-Archive -Path sources/* -DestinationPath third-party-sources.zip
+
       - name: Draft release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
-          files: src-tauri/target/release/bundle/nsis/*.exe
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            third-party-sources.zip
