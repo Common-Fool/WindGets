@@ -111,6 +111,9 @@ pub struct WidgetRow {
     pub title: String,
     /// Виджет нажимают: прозрачности для мыши у него не бывает.
     pub interactive: bool,
+    /// Служебное окно (отладка, витрина): галочки «Все» его не трогают, а
+    /// в таблице оно стоит отдельным блоком.
+    pub service: bool,
     pub enabled: bool,
     pub always_on_top: bool,
     pub click_through: bool,
@@ -218,6 +221,7 @@ fn view(app: &AppHandle) -> SettingsView {
                 id: widget.id,
                 title: widget.title(),
                 interactive: widget.interactive,
+                service: widget.chrome,
                 enabled: own.enabled,
                 always_on_top: own.always_on_top,
                 click_through: own.click_through,
@@ -942,7 +946,8 @@ pub fn set_all_widget_option(app: AppHandle, option: String, value: bool) {
     let mut touched: Vec<(&'static widgets::Widget, settings::WidgetSettings)> = Vec::new();
 
     settings::update(&app, &state, |settings| {
-        for widget in widgets::shown() {
+        // Служебные окна — только своей галочкой (12 октября, слово пользователя)
+        for widget in widgets::shown().filter(|widget| !widget.chrome) {
             let mut own = settings.widget(widget);
             if !settings::apply_option(&mut own, &option, value, widget.interactive) {
                 continue;

@@ -147,7 +147,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dpapi_round_trip() {
-        let password = "super_secret_password_123!@#";
+        let password = "not-a-real-password";
         let secret = protect(password).expect("пароль успешно зашифрован");
         assert_ne!(secret, password);
         let decrypted = unprotect(&secret).expect("пароль успешно расшифрован");

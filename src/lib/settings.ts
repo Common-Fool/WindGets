@@ -28,6 +28,8 @@ export type WidgetRow = {
   title: string;
   /** Виджет нажимают: прозрачности для мыши у него не бывает. */
   interactive: boolean;
+  /** Служебное окно: галочки «Все» его не трогают. */
+  service: boolean;
   enabled: boolean;
   alwaysOnTop: boolean;
   clickThrough: boolean;

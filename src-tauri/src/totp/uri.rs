@@ -143,17 +143,17 @@ mod tests {
     /// Издатель бывает записан дважды, и у поля запроса приоритет.
     #[test]
     fn the_issuer_comes_from_the_query_or_from_the_label() {
-        let from_path = parse("otpauth://totp/GitHub:commonfool?secret=JBSWY3DP").expect("из пути");
+        let from_path = parse("otpauth://totp/GitHub:demo-user?secret=JBSWY3DP").expect("из пути");
         assert_eq!(from_path.issuer, "GitHub");
-        assert_eq!(from_path.label, "commonfool");
+        assert_eq!(from_path.label, "demo-user");
 
-        let both = parse("otpauth://totp/Старое:commonfool?secret=JBSWY3DP&issuer=GitHub")
+        let both = parse("otpauth://totp/Старое:demo-user?secret=JBSWY3DP&issuer=GitHub")
             .expect("оба разом");
         assert_eq!(both.issuer, "GitHub", "поле запроса обязано быть главнее");
 
-        let none = parse("otpauth://totp/commonfool?secret=JBSWY3DP").expect("без издателя");
+        let none = parse("otpauth://totp/demo-user?secret=JBSWY3DP").expect("без издателя");
         assert_eq!(none.issuer, "");
-        assert_eq!(none.label, "commonfool");
+        assert_eq!(none.label, "demo-user");
     }
 
     /// Без раскодирования на карточке висело бы `alice%40google.com`.

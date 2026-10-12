@@ -167,7 +167,9 @@ pub fn set_all(app: &AppHandle, on: bool) {
     let settings = settings::update(app, &state, |settings| {
         for widget in widgets::shown() {
             let mut own = settings.widget(widget);
-            if own.enabled == on || (no_gpu && widget.id == "gpu") {
+            // Отладку и витрину включают только своей галочкой: «Все» —
+            // это виджеты, а не служебные окна (12 октября, слово пользователя)
+            if own.enabled == on || widget.chrome || (no_gpu && widget.id == "gpu") {
                 continue;
             }
             own.enabled = on;

@@ -360,7 +360,7 @@ mod tests {
         Account {
             id: store::new_id(),
             issuer: "GitHub".to_owned(),
-            label: "commonfool".to_owned(),
+            label: "demo-user".to_owned(),
             secret: "не важно".to_owned(),
             digits: 6,
             period: 30,
@@ -500,6 +500,6 @@ mod tests {
         assert!(named("", "").is_err());
         assert!(named("  ", " ").is_err(), "одни пробелы — тоже пусто");
         assert!(named("GitHub", "").is_ok());
-        assert!(named("", "commonfool").is_ok());
+        assert!(named("", "demo-user").is_ok());
     }
 }

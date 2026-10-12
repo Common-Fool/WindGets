@@ -194,7 +194,7 @@ mod tests {
         Account {
             id: "a1b2c3d4e5f60718".to_owned(),
             issuer: "GitHub".to_owned(),
-            label: "commonfool".to_owned(),
+            label: "demo-user".to_owned(),
             secret: "0J/RgNC40LLQtdGCLdCx0LvQvtCx".to_owned(),
             digits: 6,
             period: 30,
@@ -276,7 +276,7 @@ mod tests {
         let one = sample();
         let two = Account {
             id: "ffffffffffffffff".to_owned(),
-            label: "commonfool-work".to_owned(),
+            label: "demo-user-work".to_owned(),
             ..sample()
         };
 

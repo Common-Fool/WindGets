@@ -597,7 +597,7 @@ impl Default for WidgetSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            always_on_top: true,
+            always_on_top: false,
             click_through: false,
             locked: false,
             view: 0,
@@ -645,7 +645,9 @@ impl Settings {
             .copied()
             .unwrap_or(WidgetSettings {
                 enabled: widget.enabled,
-                always_on_top: widget.always_on_top(),
+                // Поверх всех — только по выбору человека: по умолчанию виджет
+                // не закрывает собой окна программ (12 октября, слово пользователя)
+                always_on_top: false,
                 click_through: false,
                 locked: false,
                 view: 0,
@@ -1022,14 +1024,14 @@ mod tests {
         assert!(stored.click_through);
     }
 
-    /// Виджеты без записи в файле берут «поверх всех» из реестра: у виджета
-    /// это да, у отладочного окна — нет.
+    /// Виджеты без записи в файле поверх всех не встают: окна программ они
+    /// по умолчанию не закрывают (12 октября, слово пользователя).
     #[test]
-    fn always_on_top_defaults_come_from_the_registry() {
+    fn nothing_is_on_top_by_default() {
         let settings = Settings::default();
 
         let gpu = widgets::find("gpu").expect("видеокарта в реестре");
-        assert!(settings.widget(gpu).always_on_top);
+        assert!(!settings.widget(gpu).always_on_top);
 
         let debug = widgets::find("debug").expect("отладка в реестре");
         assert!(!settings.widget(debug).always_on_top);

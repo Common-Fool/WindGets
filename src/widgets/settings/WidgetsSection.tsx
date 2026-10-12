@@ -76,16 +76,23 @@ export function WidgetsSection() {
     setOffered(on ? [] : [...TOOL_MODULES]);
   };
 
-  const total = settings.widgets.length;
+  /*
+   * Служебные окна — отладка и витрина — стоят отдельным блоком под чертой, и
+   * галочки «Все» их не считают и не трогают: их включают только своей
+   * галочкой (12 октября, слово пользователя). Пропускает их и Rust.
+   */
+  const widgets = settings.widgets.filter((widget) => !widget.service);
+  const service = settings.widgets.filter((widget) => widget.service);
+  const total = widgets.length;
 
   // «Все» считается по тем, кого вообще можно включить: погашенная видеокарта
   // оставила бы галочку смешанной навсегда
-  const switchable = settings.widgets.filter((widget) => !blocked(widget));
+  const switchable = widgets.filter((widget) => !blocked(widget));
   const enabled = switchable.filter((widget) => widget.enabled).length;
   const allEnabled = switchable.length > 0 && enabled === switchable.length;
   const mixedEnabled = enabled > 0 && enabled < switchable.length;
 
-  const onTop = settings.widgets.filter((widget) => widget.alwaysOnTop).length;
+  const onTop = widgets.filter((widget) => widget.alwaysOnTop).length;
   const allTop = total > 0 && onTop === total;
   const mixedTop = onTop > 0 && onTop < total;
 
@@ -95,74 +102,18 @@ export function WidgetsSection() {
    * целиком, и в его строке стоит прочерк. Считай мы их наравне со всеми,
    * галочка «Все» не сошлась бы никогда — полной ей стать было бы нечем.
    */
-  const seeThrough = settings.widgets.filter((widget) => !widget.interactive);
+  const seeThrough = widgets.filter((widget) => !widget.interactive);
   const through = seeThrough.filter((widget) => widget.clickThrough).length;
   const allThrough = seeThrough.length > 0 && through === seeThrough.length;
   const mixedThrough = through > 0 && through < seeThrough.length;
   const throughDisabled = settings.hiddenAll || seeThrough.length === 0;
 
-  const held = settings.widgets.filter((widget) => widget.locked).length;
+  const held = widgets.filter((widget) => widget.locked).length;
   const allHeld = total > 0 && held === total;
   const mixedHeld = held > 0 && held < total;
   const lockDisabled = settings.hiddenAll || settings.locked || total === 0;
 
-  return (
-    <div className="rows">
-      {settings.hiddenAll && (
-        <p className="note">{t("settings.widgets.allHidden")}</p>
-      )}
-
-      <div className="grid">
-        <div className="grid__head">
-          <span />
-          <span className="grid__label caps">{t("settings.widgets.show")}</span>
-          <span className="grid__label caps">{t("settings.widgets.top")}</span>
-          <span className="grid__label caps">{t("settings.widgets.through")}</span>
-          <span className="grid__label caps">{t("settings.widgets.lock")}</span>
-          <span />
-        </div>
-
-        <div className="grid__row grid__row--all">
-          <span className="grid__name">{t("settings.widgets.all")}</span>
-
-          <Check
-            checked={allEnabled}
-            mixed={mixedEnabled}
-            label={t("settings.widgets.showAll")}
-            disabled={total === 0}
-            onChange={toggleAllModules}
-          />
-
-          <Check
-            checked={allTop}
-            mixed={mixedTop}
-            label={t("settings.widgets.topAll")}
-            disabled={settings.hiddenAll || total === 0}
-            onChange={(next) => setAllWidgetOption("top", next)}
-          />
-
-          <Check
-            checked={allThrough}
-            mixed={mixedThrough}
-            label={t("settings.widgets.throughAll")}
-            disabled={throughDisabled}
-            onChange={(next) => setAllWidgetOption("through", next)}
-          />
-
-          <Check
-            checked={allHeld}
-            mixed={mixedHeld}
-            label={t("settings.widgets.lockAll")}
-            disabled={lockDisabled}
-            onChange={(next) => setAllWidgetOption("lock", next)}
-          />
-
-          {/* Настройки бывают только у своего виджета: настраивать «всех»
-              разом тут нечего, и шестерёнки в этой строке нет */}
-          <span />
-        </div>
-
-        {settings.widgets.map((widget) => {
+  const row = (widget: SettingsView["widgets"][number]) => {
           const idle = !widget.enabled || settings.hiddenAll;
 
           return (
@@ -230,7 +181,70 @@ export function WidgetsSection() {
               </button>
             </div>
           );
-        })}
+  };
+
+  return (
+    <div className="rows">
+      {settings.hiddenAll && (
+        <p className="note">{t("settings.widgets.allHidden")}</p>
+      )}
+
+      <div className="grid">
+        <div className="grid__head">
+          <span />
+          <span className="grid__label caps">{t("settings.widgets.show")}</span>
+          <span className="grid__label caps">{t("settings.widgets.top")}</span>
+          <span className="grid__label caps">{t("settings.widgets.through")}</span>
+          <span className="grid__label caps">{t("settings.widgets.lock")}</span>
+          <span />
+        </div>
+
+        <div className="grid__row grid__row--all">
+          <span className="grid__name">{t("settings.widgets.all")}</span>
+
+          <Check
+            checked={allEnabled}
+            mixed={mixedEnabled}
+            label={t("settings.widgets.showAll")}
+            disabled={total === 0}
+            onChange={toggleAllModules}
+          />
+
+          <Check
+            checked={allTop}
+            mixed={mixedTop}
+            label={t("settings.widgets.topAll")}
+            disabled={settings.hiddenAll || total === 0}
+            onChange={(next) => setAllWidgetOption("top", next)}
+          />
+
+          <Check
+            checked={allThrough}
+            mixed={mixedThrough}
+            label={t("settings.widgets.throughAll")}
+            disabled={throughDisabled}
+            onChange={(next) => setAllWidgetOption("through", next)}
+          />
+
+          <Check
+            checked={allHeld}
+            mixed={mixedHeld}
+            label={t("settings.widgets.lockAll")}
+            disabled={lockDisabled}
+            onChange={(next) => setAllWidgetOption("lock", next)}
+          />
+
+          {/* Настройки бывают только у своего виджета: настраивать «всех»
+              разом тут нечего, и шестерёнки в этой строке нет */}
+          <span />
+        </div>
+
+        {widgets.map(row)}
+
+        {service.length > 0 && (
+          <h3 className="settings__subheading caps">{t("settings.widgets.service")}</h3>
+        )}
+        {service.map(row)}
       </div>
 
       {offered.length > 0 && (

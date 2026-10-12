@@ -184,11 +184,6 @@ impl Widget {
         crate::i18n::text(&format!("widget.{}", self.id))
     }
 
-    /// Держать поверх всех окон осмысленно для виджета, но не для отладки.
-    pub fn always_on_top(&self) -> bool {
-        !self.chrome
-    }
-
     pub fn url(&self) -> String {
         format!("index.html?widget={}", self.id)
     }
@@ -973,7 +968,7 @@ pub const WIDGETS: &[Widget] = &[
         // 230 в списке три строки. Порог стоит там, где полной раскладке
         // перестаёт хватать места на одну строку: окно 280
         presets: &[
-            Preset { name: "size.full", width: 440.0, height: Some(340.0), below: None, below_height: None, keeps: Some(18.5) },
+            Preset { name: "size.full", width: 360.0, height: Some(290.0), below: None, below_height: None, keeps: Some(18.5) },
         ],
         view_presets: &[],
         covers: &[],
@@ -986,11 +981,11 @@ pub const WIDGETS: &[Widget] = &[
         // Кнопки выбора, чипы, поля обрезки — прозрачность для мыши отобрала бы
         // у карточки всё
         interactive: true,
-        // Ниже 340 точек строки чипов переносятся уже по две. По высоте предел
-        // держит тесная раскладка: ниже 280 окно в неё и уходит, а в ней при
-        // ширине 340 (выбор тогда в две строки) и волне звука одна строка
-        // списка есть с 191 точки
-        floor: Some((340.0, 192.0)),
+        // Почти квадрат (12 октября, слово пользователя): пустому конвертеру
+        // хватает двухсот точек. Ниже 340 строки чипов переносятся, и выбор
+        // прокручивается сам — это цена узкого окна, а не поломка. По высоте
+        // предел держит тесная раскладка: одна строка списка есть с 191 точки
+        floor: Some((220.0, 190.0)),
     },
     Widget {
         id: "downloader",
@@ -1678,11 +1673,9 @@ mod tests {
     fn debug_windows_keep_their_frame() {
         let debug = find("debug").expect("отладочное окно на месте");
         assert!(debug.chrome, "отладочное окно без рамки не закрыть");
-        assert!(!debug.always_on_top());
 
         let gpu = find("gpu").expect("видеокарта на месте");
         assert!(!gpu.chrome);
-        assert!(gpu.always_on_top());
     }
 
     #[test]
@@ -1869,7 +1862,7 @@ mod correction_tests {
         assert_eq!(converter.presets.len(), 1);
         for design in [Design::App, Design::Reference] {
             assert_eq!(converter.size_choices(design, 0, 0).len(), 1);
-            assert_eq!(converter.design_size(design, 0, 0, 0), (440.0, Some(340.0)));
+            assert_eq!(converter.design_size(design, 0, 0, 0), (360.0, Some(290.0)));
         }
         let speedtest = find("speedtest").unwrap();
         assert_eq!(speedtest.layout_choices(Design::Reference, 2).len(), 0);

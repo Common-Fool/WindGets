@@ -15,7 +15,8 @@ src-tauri/gen/schemas/
 
 # Env
 .env
-.env.local
+.env.*
+!.env.example
 
 # OS
 .DS_Store

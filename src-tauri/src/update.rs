@@ -224,7 +224,7 @@ async fn check(app: &AppHandle) -> Result<(), Code> {
     settings::update(app, &state, |settings| settings.update_checked_at = Some(now()));
 
     let client = crate::tools::client().map_err(Code::from)?;
-    let release = github::latest(&client, REPO).await?;
+    let release = latest(&client).await?;
     let offer = if newer(&release.tag_name, env!("CARGO_PKG_VERSION")) {
         let asset = github::pick_asset(&release, RULE)?;
         Some(Offer { version: release.tag_name.trim_start_matches('v').to_owned(), size: asset.size })
@@ -238,6 +238,15 @@ async fn check(app: &AppHandle) -> Result<(), Code> {
     Ok(())
 }
 
+/// Свежий выпуск. Ответ 404 тут — не «сборки нет», а «выпуска не видно»:
+/// закрытый репозиторий или ещё ни одного выпуска. Сеть, а не «нет установщика».
+async fn latest(client: &reqwest::Client) -> Result<github::Release, Code> {
+    github::latest(client, REPO).await.map_err(|failure| match failure {
+        Download::NoBuild => Code::Network,
+        other => Code::from(other),
+    })
+}
+
 /// Скачивает установщик свежего выпуска, сверяет сумму и запускает его, а
 /// приложение закрывает: заменить запущенный exe установщик не сможет.
 async fn install(app: &AppHandle) -> Result<(), Code> {
@@ -249,7 +258,7 @@ async fn install(app: &AppHandle) -> Result<(), Code> {
     publish(app);
 
     let client = crate::tools::client().map_err(Code::from)?;
-    let release = github::latest(&client, REPO).await?;
+    let release = latest(&client).await?;
     if !newer(&release.tag_name, env!("CARGO_PKG_VERSION")) {
         updates.lock().available = None;
         return Ok(());
