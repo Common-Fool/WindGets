@@ -204,7 +204,7 @@ export function TotpWidget() {
         <GlassCard accent="neutral">
           {/* Кнопкой намеренно: у пустой карточки одно действие, и место для
               перетаскивания вокруг неё остаётся */}
-          <button type="button" className="totp__empty" onClick={() => openWidgetSettings("totp")}>
+          <button type="button" className="totp__empty" data-drags onClick={() => openWidgetSettings("totp")}>
             <span className="totp__empty-title">{t("totp.empty")}</span>
             <span className="totp__empty-hint">{t("totp.emptyHint")}</span>
           </button>
@@ -217,7 +217,7 @@ export function TotpWidget() {
     <div className="widget">
       <GlassCard accent="neutral" flush>
         <div className="totp" ref={space}>
-          <ul className="totp__list" style={fitted === undefined ? undefined : { maxHeight: fitted }}>
+          <ul className="totp__list hover-scrollbar" style={fitted === undefined ? undefined : { maxHeight: fitted }}>
             {accounts.map((row, at) => {
               const code = answer?.codes.find((found) => found.id === row.id);
               const open = !hidden || current === row.id;

@@ -371,7 +371,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetCursorPos, GetWindowRect, IsWindow, IsWindowVisible, HTBOTTOM, HTBOTTOMLEFT,
         HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, WM_ENTERSIZEMOVE,
-        WM_EXITSIZEMOVE, WM_MOVING, WM_NCDESTROY, WM_NCHITTEST, WM_SIZING,
+        WM_EXITSIZEMOVE, WM_MOVING, WM_NCDESTROY, WM_NCHITTEST, WM_SIZING, WINDOWPOS,
+        SWP_NOMOVE, SWP_NOSIZE, WM_DPICHANGED, WM_WINDOWPOSCHANGING,
     };
 
     use super::{offset, resize, snapping, stretch, Edges, Rect, Stuck, GRIP};
@@ -386,6 +387,21 @@ mod imp {
     /// списком окон значит ждать событийный цикл, который в этот момент стоит.
     /// Метка нужна растягиванию: по ней из реестра берётся нижний предел окна.
     static TRACKED: Mutex<Vec<(isize, String)>> = Mutex::new(Vec::new());
+
+    /// Размер окна, которое тянут за карточку, и когда стеречь его перестать.
+    ///
+    /// Перенос за карточку — системный цикл заголовка, и Windows по нему
+    /// включает Snap: у края экрана растягивает окно на половину или весь
+    /// экран, как обычное. Виджету это не нужно никогда, поэтому смену размера
+    /// после переноса мы не пускаем (`WM_WINDOWPOSCHANGING`). Растягивание
+    /// само Windows делает уже после `WM_EXITSIZEMOVE`, отсюда секунда запаса.
+    struct Moved {
+        window: isize,
+        size: (i32, i32),
+        until: Option<std::time::Instant>,
+    }
+
+    static MOVED: Mutex<Option<Moved>> = Mutex::new(None);
 
     /// Всё, что живёт ровно одно перетаскивание.
     ///
@@ -468,7 +484,16 @@ mod imp {
         grip: usize,
     ) -> LRESULT {
         match message {
-            WM_ENTERSIZEMOVE => remember_neighbours(window),
+            WM_ENTERSIZEMOVE => {
+                *MOVED.lock().unwrap() = None;
+                remember_neighbours(window);
+            }
+            WM_MOVING | WM_DPICHANGED | WM_EXITSIZEMOVE | WM_WINDOWPOSCHANGING => guard_size(window, message, lparam),
+            _ => {}
+        }
+
+        match message {
+            WM_ENTERSIZEMOVE => {}
 
             // Прилипание выключено — окно едет ровно за мышью, и правка
             // предложенного прямоугольника ему только помешала бы
@@ -530,6 +555,48 @@ mod imp {
         }
 
         DefSubclassProc(window, message, wparam, lparam)
+    }
+
+    /// Не даёт Snap растянуть перенесённое окно — см. [`Moved`].
+    unsafe fn guard_size(window: HWND, message: u32, lparam: LPARAM) {
+        let mut moved = MOVED.lock().unwrap();
+        let ours = moved.as_ref().is_some_and(|m| m.window == window.0 as isize);
+        match message {
+            WM_MOVING if !ours => {
+                let mut rect = RECT::default();
+                if GetWindowRect(window, &mut rect).is_ok() {
+                    *moved = Some(Moved {
+                        window: window.0 as isize,
+                        size: (rect.right - rect.left, rect.bottom - rect.top),
+                        until: None,
+                    });
+                }
+            }
+            // Переезд на монитор с другим масштабом меняет размер законно
+            WM_DPICHANGED if ours => {
+                let rect = &*(lparam.0 as *const RECT);
+                if let Some(m) = moved.as_mut() {
+                    m.size = (rect.right - rect.left, rect.bottom - rect.top);
+                }
+            }
+            WM_EXITSIZEMOVE if ours => {
+                if let Some(m) = moved.as_mut() {
+                    m.until = Some(std::time::Instant::now() + std::time::Duration::from_secs(1));
+                }
+            }
+            WM_WINDOWPOSCHANGING if ours => {
+                let m = moved.as_ref().unwrap();
+                if m.until.is_some_and(|until| std::time::Instant::now() > until) {
+                    *moved = None;
+                    return;
+                }
+                let pos = &mut *(lparam.0 as *mut WINDOWPOS);
+                if !pos.flags.contains(SWP_NOSIZE) && (pos.cx, pos.cy) != m.size {
+                    pos.flags |= SWP_NOSIZE | SWP_NOMOVE;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Запоминает, где стоят остальные окна.

@@ -451,6 +451,8 @@ pub struct Settings {
     /// новый и в приложении. Та же логика `Option`, что у своей плотности
     /// виджета.
     pub language: Option<String>,
+    /// Значок, выбранный для области уведомлений Windows.
+    pub app_icon: String,
     /// Накопители, скрытые в карточке, — именами из выхлопа LHM (модель).
     ///
     /// ВАЖНО: **хранятся скрытые, а не показанные.** Новый диск появляется в
@@ -511,6 +513,13 @@ pub const SENSOR_SLOTS: &[&str] = &["cpuFan", "chassisFan", "boardTemp", "cpuVol
 /// «Не показывать» в ручном выборе: путь датчика так выглядеть не может.
 pub const PICK_OFF: &str = "off";
 
+/// Значок, который виден в области уведомлений Windows.
+pub const DEFAULT_APP_ICON: &str = "widget-mosaic";
+pub const APP_ICON_IDS: &[&str] = &[
+    "widget-mosaic",
+    "mono-mosaic",
+];
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -531,6 +540,7 @@ impl Default for Settings {
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::new(),
             language: None,
+            app_icon: DEFAULT_APP_ICON.to_owned(),
             hidden_disks: Vec::new(),
             hidden_metrics: BTreeMap::new(),
             sensor_picks: BTreeMap::new(),
@@ -838,12 +848,24 @@ fn parse_settings(text: &str) -> Settings {
     settings.vivid = sane_vivid(settings.vivid);
     settings.poll_seconds = sane_poll_seconds(settings.poll_seconds);
     settings.weather = sane_place(settings.weather);
+    settings.app_icon = sane_app_icon(&settings.app_icon).to_owned();
     settings.output_dirs = sane_output_dirs(settings.output_dirs);
     settings.language = crate::i18n::sane(settings.language);
     settings.hidden_disks = sane_disks(settings.hidden_disks);
     settings.hidden_metrics = sane_metrics(settings.hidden_metrics);
     settings.sensor_picks = sane_picks(settings.sensor_picks);
     settings
+}
+
+/// Незнакомый идентификатор из вручную исправленного файла заменяется выбором
+/// по умолчанию.
+pub fn sane_app_icon(id: &str) -> &'static str {
+    // Остались только два одобренных значка. Прежний белый/чёрно-белый выбор
+    // сохраняет монохром, цветные и неизвестные id получают оранжевые плитки.
+    match id {
+        "mono-mosaic" | "mono-window" | "white-windows" => "mono-mosaic",
+        _ => DEFAULT_APP_ICON,
+    }
 }
 
 /// Снятые ряды: только у процессора и видеокарты, только известные, без
@@ -1075,6 +1097,7 @@ mod tests {
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::from([("downloader".to_owned(), "D:\\Downloads".to_owned())]),
             language: Some("uk".to_owned()),
+            app_icon: "mono-mosaic".to_owned(),
             hidden_disks: vec!["Samsung SSD 970 EVO Plus 2TB".to_owned()],
             hidden_metrics: BTreeMap::from([("gpu".to_owned(), vec!["fan".to_owned(), "voltage".to_owned()])]),
             sensor_picks: BTreeMap::from([("chassisFan".to_owned(), "Board/Chip/Fans/Fan #2".to_owned())]),
@@ -1089,6 +1112,7 @@ mod tests {
 
         assert_eq!(back.card_opacity, 1.0);
         assert_eq!(back.scale, 1.15);
+        assert_eq!(back.app_icon, "mono-mosaic");
         assert_eq!(back.appearance.app.palette, "monochrome");
         assert_eq!(back.appearance.app.glass, "plum");
         assert_eq!(back.appearance.app.accent_color, "#33BBEE");

@@ -51,26 +51,6 @@
   scrollbar-gutter: stable;
 }
 
-/*
- * Полоса прокрутки видна всегда, когда есть что крутить.
- *
- * У списка писем она показывается только во время движения — там строк пять и
- * прокрутка редкость. Тут записей бывает два десятка, и «а список вообще
- * крутится?» — первый вопрос, на который карточка обязана ответить сама.
- */
-.totp__list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.totp__list::-webkit-scrollbar-thumb {
-  background: var(--surface-track);
-  border-radius: var(--radius-pill);
-}
-
-.totp__list::-webkit-scrollbar-thumb:hover {
-  background: var(--border-highlight);
-}
-
 .totp__item {
   border-bottom: 1px solid var(--border-hairline);
   border-radius: var(--radius-control);

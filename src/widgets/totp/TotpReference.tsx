@@ -64,7 +64,7 @@ export function TotpReference({ t, accounts, answer, current, feedback, hidden, 
       <GlassCard accent="neutral" flush>
         <div className="totp-ref" data-layout={stacked ? "b" : "a"}>
           {accounts.length === 0 ? (
-            <button type="button" className="totp-ref__empty" onClick={() => openWidgetSettings("totp")}>
+            <button type="button" className="totp-ref__empty" data-drags onClick={() => openWidgetSettings("totp")}>
               <span>{t("totp.empty")}</span>
               <span className="totp-ref__empty-hint">{t("totp.emptyHint")}</span>
             </button>
@@ -72,7 +72,7 @@ export function TotpReference({ t, accounts, answer, current, feedback, hidden, 
             <>
               <div className="totp-ref__viewport" ref={space}>
                 <ul
-                  className="totp-ref__list"
+                  className="totp-ref__list hover-scrollbar"
                   style={fitted === undefined ? undefined : { height: fitted }}
                   aria-label={t("widget.totp")}
                   onMouseDown={(event) => {

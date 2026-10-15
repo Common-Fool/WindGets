@@ -10,11 +10,11 @@
 //! денется.
 
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
 use crate::settings::{self, SettingsState};
-use crate::{settings_window, windows};
+use crate::{settings_window, widgets, windows};
 
 pub const TRAY_ID: &str = "main";
 
@@ -24,19 +24,63 @@ const LOCK: &str = "app:lock";
 const QUIT: &str = "app:quit";
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
+    let selected_icon = app.state::<SettingsState>().get().app_icon;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Windgets")
         .menu(&build(app)?)
-        .show_menu_on_left_click(true)
-        .on_menu_event(handle);
+        // Меню — только правой кнопкой. Левая поднимает виджеты над окнами,
+        // двойная открывает настройки. Двойному нажатию предшествует
+        // одиночное, и виджеты успевают подняться — это не мешает
+        .show_menu_on_left_click(false)
+        .on_menu_event(handle)
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => {
+                if !windows::recover_unavailable(tray.app_handle()) {
+                    raise_all(tray.app_handle());
+                }
+            }
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+                if !windows::recover_unavailable(tray.app_handle()) {
+                    settings_window::show(tray.app_handle());
+                }
+            }
+            _ => {}
+        });
 
-    // Иконка берётся из бандла; без неё трей всё равно должен подняться
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+    // Выбранный значок хранится в настройках. Если встроенный файл испорчен,
+    // оставляем штатный значок бандла и всё равно поднимаем трей.
+    match icon_image(&selected_icon) {
+        Ok(icon) => builder = builder.icon(icon),
+        Err(error) => {
+            eprintln!("значок трея {selected_icon} не загрузился: {error}");
+            if let Some(icon) = app.default_window_icon() {
+                builder = builder.icon(icon.clone());
+            }
+        }
     }
 
     builder.build(app)?;
     Ok(())
+}
+
+/// Применяет один из встроенных значков к работающему значку трея.
+pub fn set_icon(app: &AppHandle, id: &str) -> Result<(), String> {
+    let icon = icon_image(id)?;
+    let tray = app
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "значок трея ещё не создан".to_owned())?;
+    tray.set_icon(Some(icon))
+        .map_err(|error| format!("не применить значок трея: {error}"))
+}
+
+fn icon_image(id: &str) -> Result<tauri::image::Image<'static>, String> {
+    let rgba = match id {
+        "widget-mosaic" => &include_bytes!("../../src/assets/app-icons/widget-mosaic.rgba")[..],
+        "mono-mosaic" => &include_bytes!("../../src/assets/app-icons/mono-mosaic.rgba")[..],
+        _ => return Err(format!("неизвестный значок трея: {id}")),
+    };
+
+    Ok(tauri::image::Image::new(rgba, 32, 32))
 }
 
 /// Пересобирает меню целиком.
@@ -95,6 +139,9 @@ fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 fn handle(app: &AppHandle, event: MenuEvent) {
+    if matches!(event.id().as_ref(), OPEN | HIDE_ALL | LOCK) && windows::recover_unavailable(app) {
+        return;
+    }
     let state = app.state::<SettingsState>();
 
     match event.id().as_ref() {
@@ -126,5 +173,35 @@ fn handle(app: &AppHandle, event: MenuEvent) {
         QUIT => windows::quit(app),
 
         _ => {}
+    }
+}
+
+/// Поднимает показанные виджеты над всеми окнами, не забирая фокус.
+///
+/// Через «поверх всех» туда и обратно: `HWND_TOP` без активации не
+/// поднимает окно над чужим активным приложением. У кого «поверх всех»
+/// включено своим флагом, тому его и оставляем.
+fn raise_all(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        use ::windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        };
+
+        let settings = app.state::<SettingsState>().get();
+        let flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE;
+        for widget in widgets::shown() {
+            let Some(window) = app.get_webview_window(widget.id) else { continue };
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
+            let Ok(hwnd) = window.hwnd() else { continue };
+            unsafe {
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                if !settings.widget(widget).always_on_top {
+                    let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+                }
+            }
+        }
     }
 }

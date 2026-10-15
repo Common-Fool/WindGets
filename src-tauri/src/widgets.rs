@@ -322,7 +322,7 @@ impl Widget {
         }).collect()
     }
 
-    /// Стартовая геометрия; окончательную высоту GPT измеряет содержимое.
+    /// Стартовая геометрия; у карточек с подгонкой окончательную высоту измеряет содержимое.
     pub fn design_size(&self, design: crate::settings::Design, view: usize, index: usize, layout: usize) -> (f64, Option<f64>) {
         if design != crate::settings::Design::Reference {
             return self.preset_size(self.design_view(design, view), index);
@@ -340,8 +340,8 @@ impl Widget {
             "network" if view == 1 => (if narrow { 230.0 } else { 352.0 }, Some(if narrow { 212.0 } else { 156.0 })),
             "network" => (230.0, Some(182.0)),
             "weather" => (if narrow { 232.0 } else { 360.0 }, Some(match (view, narrow) { (1, true) => 245.0, (1, false) => 227.0, (_, true) => 326.0, _ => 218.0 })),
-            "speedtest" if view == 2 => (262.0, Some(204.0)),
-            "speedtest" => (if narrow { 262.0 } else { 392.0 }, Some(match (layout, narrow) { (1, true) => 240.0, (1, false) => 278.0, (_, true) => 318.0, _ => 266.0 })),
+            "speedtest" if view == 2 => (262.0, Some(196.0)),
+            "speedtest" => (if narrow { 262.0 } else { 392.0 }, Some(match (layout, narrow) { (1, true) => 190.0, (1, false) => 205.0, (_, true) => 216.0, _ => 194.0 })),
             "media" => {
                 let sizes = if layout == 1 {
                     [(420.0, 128.0), (300.0, 128.0), (300.0, 122.0), (300.0, 104.0)]
@@ -365,7 +365,7 @@ impl Widget {
             "todo" => (360.0, Some(236.0)),
             "downloader" => (if narrow { 313.0 } else { 392.0 }, Some(if view == 1 { 84.0 } else { 132.0 })),
             // B бывает только компактным: сохранённый полный номер остаётся для A
-            "password" => (if narrow || layout == 1 { 313.0 } else { 392.0 }, Some(if layout == 1 { 160.0 } else { 148.0 })),
+            "password" => (if narrow || layout == 1 { 280.0 } else { 344.0 }, Some(if layout == 1 { 160.0 } else { 144.0 })),
             // Узкий пресет текстового списка меняет ширину, сохраняя ручную высоту.
             "mail" => self.preset_size(view, index),
             "totp" => (match index { 0 => 330.0, 1 => 280.0, _ => 220.0 }, if index == 0 { Some(if layout == 1 { 210.0 } else { 178.0 }) } else { None }),
@@ -577,20 +577,18 @@ pub const WIDGETS: &[Widget] = &[
     },
     Widget {
         id: "speedtest",
-        // Ломаная, столбики или кольцо с итогами последнего замера. Столбики
-        // стоят рядом с ломаной: это второй способ нарисовать ту же историю,
-        // а «только замер» истории не показывает вовсе
-        views: &["view.chart", "view.columns", "view.measureOnly"],
-        // Все три вида укладываются в одну высоту: график и столбики рисуют
-        // одно и то же место, а кольцо занимает его же
+        // Два способа рисовать столбики: пары с просветами и отдельные ряды.
+        // Новый ряд добавлен в конец: сохранённый вид 2 остаётся «Только замер».
+        views: &["view.chart", "view.columns", "view.measureOnly", "view.separateColumns"],
+        // Стартовая высота истории; «Только замер», работа и отказ
+        // подгоняются по содержимому в обоих дизайнах.
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 392.0, height: Some(250.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.full", width: 392.0, height: Some(229.0), below: None, below_height: None, keeps: None },
             // 17em: тесная раскладка итогов
             // Своя высота обязательна: без неё размер оставляет ту, что была,
-            // и приход из «Только замера» давал ту же карточку без графика —
-            // два пункта меню показывали одно и то же
-            Preset { name: "size.narrow", width: 262.0, height: Some(250.0), below: None, below_height: None, keeps: None },
+            // и приход из «Только замера» оставлял бы старую основу
+            Preset { name: "size.narrow", width: 262.0, height: Some(229.0), below: None, below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
@@ -740,10 +738,10 @@ pub const WIDGETS: &[Widget] = &[
         views: &[],
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 392.0, height: Some(152.0), below: None, below_height: None, keeps: Some(9.5) },
+            Preset { name: "size.full", width: 344.0, height: Some(152.0), below: None, below_height: None, keeps: Some(9.5) },
             // 21em: карточка целиком переезжает во вторую раскладку —
             // прятать у неё нечего, бесполезных элементов нет
-            Preset { name: "size.passwordCompact", width: 313.0, height: Some(89.0), below: Some(21.0), below_height: None, keeps: None },
+            Preset { name: "size.passwordCompact", width: 280.0, height: Some(89.0), below: Some(21.0), below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
@@ -1768,14 +1766,14 @@ mod redesign_tests {
     }
 
     #[test]
-    fn speedtest_layout_and_three_history_views_are_independent() {
+    fn speedtest_layout_and_four_views_are_independent() {
         let widget = find("speedtest").unwrap();
-        assert_eq!(widget.views.len(), 3);
+        assert_eq!(widget.views.len(), 4);
         assert_eq!(widget.layouts().len(), 2);
         for size in 0..2 {
             for layout in 0..2 {
                 assert_eq!(widget.design_size(Design::Reference, 1, size, layout), widget.design_size(Design::Reference, 0, size, layout));
-                assert_eq!(widget.design_size(Design::Reference, 2, size, layout), (262.0, Some(204.0)));
+                assert_eq!(widget.design_size(Design::Reference, 2, size, layout), (262.0, Some(196.0)));
                 assert_eq!(widget.design_size(Design::Reference, 2, size, layout), widget.design_size(Design::Reference, 2, size, 0));
             }
         }
@@ -1793,14 +1791,14 @@ mod text_redesign_tests {
         let widget = find("password").unwrap();
         assert_eq!(widget.layouts().len(), 2);
         for size in 0..2 {
-            let width = if size == 0 { 392.0 } else { 313.0 };
-            assert_eq!(widget.design_size(Design::Reference, 0, size, 0), (width, Some(148.0)));
-            assert_eq!(widget.design_size(Design::Reference, 0, size, 1), (313.0, Some(160.0)), "B только компактный");
+            let width = if size == 0 { 344.0 } else { 280.0 };
+            assert_eq!(widget.design_size(Design::Reference, 0, size, 0), (width, Some(144.0)));
+            assert_eq!(widget.design_size(Design::Reference, 0, size, 1), (280.0, Some(160.0)), "B только компактный");
         }
         assert_eq!(widget.size_choices(Design::Reference, 0, 0).len(), 2);
         assert_eq!(widget.size_choices(Design::Reference, 0, 1).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
         assert_eq!(widget.size_choices(Design::App, 0, 1).len(), 2);
-        assert_eq!(widget.design_size(Design::App, 0, 1, 1), (313.0, Some(89.0)));
+        assert_eq!(widget.design_size(Design::App, 0, 1, 1), (280.0, Some(89.0)));
         assert!(!widget.flexible);
     }
 

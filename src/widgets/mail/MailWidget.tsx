@@ -3,7 +3,7 @@ import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
-import { ReferenceLetterPopupContent, ReferenceLetterRow, ReferenceMailHeader } from "./MailReference";
+import { ReferenceLetterPopupContent, ReferenceLetterRow } from "./MailReference";
 import { fileSize, formatLetterTime } from "../../lib/format";
 import { copyToClipboard } from "../../lib/copy";
 import { openLink } from "../../lib/links";
@@ -384,7 +384,7 @@ function inboxOf(box: MailBox): { inbox: Inbox; stale: boolean } | null {
  */
 function SetupButton({ page, title, hint, error = false }: { page: string; title: string; hint: string; error?: boolean }) {
   return (
-    <button type="button" className="mail__setup-btn" onClick={() => openWidgetSettings("mail", page)}>
+    <button type="button" className="mail__setup-btn" data-drags onClick={() => openWidgetSettings("mail", page)}>
       <span className={error ? "mail__status-title mail__status-title--error" : "mail__status-title"}>{title}</span>
       <span className="mail__status-hint">{hint}</span>
     </button>
@@ -676,19 +676,6 @@ export function MailWidget() {
   const allPicked = shown.length > 0 && shown.every((letter) => picked.includes(letterKey(letter)));
 
   /*
-   * Подпись в углу говорит две вещи разом: сколько непрочитанных и жива ли
-   * связь. Молчание сервера обязано быть видно — иначе старые письма выглядят
-   * свежими сколько угодно долго.
-   */
-  const corner = [
-    unseen > 0 ? `${unseen} unread` : null,
-    stale ? "offline" : null,
-    trouble,
-  ]
-    .filter((piece) => piece !== null)
-    .join(" · ");
-
-  /*
    * Ящики, которые на «Все» не отвечают: каждый своей строкой с адресом.
    * Молчащий ящик не гасит остальные — их письма стоят в списке, — но и
    * пропасть молча он не должен.
@@ -706,327 +693,127 @@ export function MailWidget() {
   } else {
     body = (
       <>
-        {/*
-          * Одна строка на всё: поле поиска в половину ширины, подпись в
-          * свободном месте и значки справа. Поле во всю строку отнимало
-          * у карточки целую строку письма, а искать больше десятка знаков
-          * тут всё равно не приходится.
-          */}
-        {reference ? (
-          <ReferenceMailHeader
-            tabs={tabbed ? <Dots count={accounts.length + 1} active={current === null ? 0 : accounts.findIndex((box) => box.id === current) + 1} limit={MAX_ACCOUNTS + 1} titles={[t("mail.allBoxes"), ...accounts.map((box) => box.address)]} onPick={(at) => pick(at === 0 ? null : accounts[at - 1]!.id)} /> : null}
-            context={lone?.address ?? t("mail.allBoxes")}
-            status={referenceCorner}
-            error={trouble !== null}
-            search={<>
-                  {/*
-                    * «Отметить все» появляется только при отборе: там оно и нужно
-                    * — нашёл, отметил разом, удалил одной кнопкой. В обычном
-                    * ящике отметить все десять писем незачем, а кнопка стояла бы.
-                    */}
-                  {filtering && shown.length > 0 && (
-                    <button
-                      type="button"
-                      className="mail__pick mail__pick--all"
-                      data-on={allPicked}
-                      data-shown={true}
-                      title={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
-                      aria-label={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
-                      onClick={() => setPicked(allPicked ? [] : shown.map(letterKey))}
-                    >
-                      {allPicked ? <BoxCheckedIcon /> : <BoxIcon />}
-                    </button>
-                  )}
-
-                  <input
-                    type="text"
-                    className="input mail__search"
-                    value={query}
-                    placeholder={t("mail.search")}
-                    spellCheck={false}
-                    autoComplete="off"
-                    data-no-drag
-                    onChange={(event) => setQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") look(query, unseenOnly);
-                      if (event.key === "Escape") clearSearch();
-                    }}
-                  />
-                  {query !== "" && (
-                    <button
-                      type="button"
-                      className="mail__head-btn"
-                      title={t("mail.clearSearch")}
-                      aria-label={t("mail.clearSearch")}
-                      onClick={clearSearch}
-                    >
-                      <CloseIcon />
-                    </button>
-                  )}
-
-
-              {picked.length === 0 && (
-                  <button
-                    type="button"
-                    className="mail__head-btn"
-                    data-on={unseenOnly}
-                    title={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
-                    aria-label={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
-                    onClick={() => {
-                      const next = !unseenOnly;
-                      setUnseenOnly(next);
-                      look(query, next);
-                    }}
-                  >
-                    <DotIcon />
-                  </button>
-              )}
-            </>}
-            controls={picked.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="mail__head-btn"
-                      title={t("mail.markRead")}
-                      aria-label={t("mail.markRead")}
-                      onClick={() => bulk("read", "not marked")}
-                    >
-                      <CheckIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="mail__head-btn mail__head-btn--danger"
-                      title={t("mail.delete")}
-                      aria-label={t("mail.delete")}
-                      onClick={() => bulk("delete", "not deleted")}
-                    >
-                      <EraseIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="mail__head-btn"
-                      title={t("mail.clearSelection")}
-                      aria-label={t("mail.clearSelection")}
-                      onClick={() => setPicked([])}
-                    >
-                      <CloseIcon />
-                    </button>
-                  </>
-                ) : (
-                  <>
-
-                    {unseen > 0 &&
-                      (markingAll ? (
-                        <span className="spinner" title={t("mail.working")}>
-                          <RefreshIcon />
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="mail__head-btn"
-                          title={t("mail.markAllRead")}
-                          aria-label={t("mail.markAllRead")}
-                          onClick={() => {
-                            // У «Все» — каждый ящик, где есть непрочитанное
-                            const targets = inTab.filter((box) => (inboxOf(box)?.inbox.unseen ?? 0) > 0);
-                            setTrouble(null);
-                            setMarkingAll(true);
-                            Promise.all(targets.map((box) => markAllMailRead(box.id)))
-                              .then(() => settled(shown.map(letterKey), "read"))
-                              .catch(() => {
-                                setTrouble("not marked");
-                                setMarkingAll(false);
-                              });
-                          }}
-                        >
-                          <CheckAllIcon />
-                        </button>
-                      ))}
-                    {mailbox !== null && (
-                      <button
-                        type="button"
-                        className="mail__head-btn"
-                        title={t("mail.openMailbox")}
-                        aria-label={t("mail.openMailbox")}
-                        onClick={() => openLink(mailbox)}
-                      >
-                        <ExternalLinkIcon />
-                      </button>
-                    )}
-                    {looking ? (
-                      <span className="spinner" title={t("mail.searching")}>
-                        <RefreshIcon />
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="refresh"
-                        data-spinning={spinning}
-                        title={t("mail.refresh")}
-                        aria-label={t("mail.refresh")}
-                        onClick={refresh}
-                      >
-                        <RefreshIcon />
-                      </button>
-                    )}
-                  </>
-                )}
-          />
-        ) : (
-        <div className="mail__head">
-          {/*
-            * «Отметить все» появляется только при отборе: там оно и нужно
-            * — нашёл, отметил разом, удалил одной кнопкой. В обычном
-            * ящике отметить все десять писем незачем, а кнопка стояла бы.
-            */}
-          {filtering && shown.length > 0 && (
-            <button
-              type="button"
-              className="mail__pick mail__pick--all"
-              data-on={allPicked}
-              data-shown={true}
-              title={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
-              aria-label={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
-              onClick={() => setPicked(allPicked ? [] : shown.map(letterKey))}
-            >
-              {allPicked ? <BoxCheckedIcon /> : <BoxIcon />}
-            </button>
+        {/* Поиск забирает всё место, оставшееся между ящиками, счётом
+            и действиями. Все инструменты доступны и во время ввода. */}
+        <div className="mail__head" onMouseDown={(event) => {
+          // На ручном минимуме горизонтальный бегунок прокручивает шапку,
+          // а её свободное место по-прежнему служит ручкой окна.
+          const head = event.currentTarget;
+          const scrollbar = head.offsetHeight - head.clientHeight;
+          if (scrollbar > 0 && event.clientY >= head.getBoundingClientRect().top + head.clientTop + head.clientHeight) {
+            event.stopPropagation();
+          }
+        }}>
+          {tabbed && (
+            <div className="mail__tabs">
+              <Dots count={accounts.length + 1}
+                active={current === null ? 0 : accounts.findIndex((box) => box.id === current) + 1}
+                limit={MAX_ACCOUNTS + 1}
+                titles={[t("mail.allBoxes"), ...accounts.map((box) => box.address)]}
+                onPick={(at) => pick(at === 0 ? null : accounts[at - 1]!.id)} />
+            </div>
           )}
-
-          <input
-            type="text"
-            className="input mail__search"
-            value={query}
-            placeholder={t("mail.search")}
-            spellCheck={false}
-            autoComplete="off"
-            data-no-drag
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") look(query, unseenOnly);
-              if (event.key === "Escape") clearSearch();
-            }}
-          />
-          {query !== "" && (
-            <button
-              type="button"
-              className="mail__head-btn"
-              title={t("mail.clearSearch")}
-              aria-label={t("mail.clearSearch")}
-              onClick={clearSearch}
-            >
-              <CloseIcon />
-            </button>
-          )}
-
-          <span className="mail__unread" data-error={trouble !== null}>
-            {picked.length > 0 ? `${picked.length} selected` : corner}
-          </span>
-
-          {picked.length > 0 ? (
-            <>
-              <button
-                type="button"
-                className="mail__head-btn"
-                title={t("mail.markRead")}
-                aria-label={t("mail.markRead")}
-                onClick={() => bulk("read", "not marked")}
-              >
-                <CheckIcon />
-              </button>
-              <button
-                type="button"
-                className="mail__head-btn mail__head-btn--danger"
-                title={t("mail.delete")}
-                aria-label={t("mail.delete")}
-                onClick={() => bulk("delete", "not deleted")}
-              >
-                <EraseIcon />
-              </button>
-              <button
-                type="button"
-                className="mail__head-btn"
-                title={t("mail.clearSelection")}
-                aria-label={t("mail.clearSelection")}
-                onClick={() => setPicked([])}
-              >
+          <div className="mail__search-box">
+            <input
+              type="text"
+              className="input mail__search"
+              value={query}
+              placeholder={t("mail.search")}
+              aria-label={t("mail.search")}
+              title={query || t("mail.search")}
+              spellCheck={false}
+              autoComplete="off"
+              data-no-drag
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  look(query, unseenOnly);
+                  event.currentTarget.blur();
+                }
+                if (event.key === "Escape") clearSearch();
+              }}
+            />
+            {query !== "" && (
+              <button type="button" className="mail__head-btn"
+                title={t("mail.clearSearch")} aria-label={t("mail.clearSearch")} onClick={clearSearch}>
                 <CloseIcon />
               </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="mail__head-btn"
-                data-on={unseenOnly}
-                title={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
-                aria-label={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
-                onClick={() => {
-                  const next = !unseenOnly;
-                  setUnseenOnly(next);
-                  look(query, next);
-                }}
-              >
-                <DotIcon />
+            )}
+          </div>
+          {referenceCorner !== "" && (
+            <span className="mail__unread" data-error={trouble !== null} title={referenceCorner}>
+              {referenceCorner}
+            </span>
+          )}
+          <div className="mail__controls">
+            {filtering && shown.length > 0 && (
+              <button type="button" className="mail__pick mail__pick--all"
+                data-on={allPicked} data-shown={true}
+                title={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
+                aria-label={allPicked ? t("mail.deselectAll") : t("mail.selectAll")}
+                onClick={() => setPicked(allPicked ? [] : shown.map(letterKey))}>
+                {allPicked ? <BoxCheckedIcon /> : <BoxIcon />}
               </button>
-              {unseen > 0 &&
-                (markingAll ? (
-                  <span className="spinner" title={t("mail.working")}>
-                    <RefreshIcon />
-                  </span>
+            )}
+            {picked.length > 0 ? (
+              <>
+                <button type="button" className="mail__head-btn"
+                  title={t("mail.markRead")} aria-label={t("mail.markRead")} onClick={() => bulk("read", "not marked")}>
+                  <CheckIcon />
+                </button>
+                <button type="button" className="mail__head-btn mail__head-btn--danger"
+                  title={t("mail.delete")} aria-label={t("mail.delete")} onClick={() => bulk("delete", "not deleted")}>
+                  <EraseIcon />
+                </button>
+                <button type="button" className="mail__head-btn"
+                  title={t("mail.clearSelection")} aria-label={t("mail.clearSelection")} onClick={() => setPicked([])}>
+                  <CloseIcon />
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="mail__head-btn" data-on={unseenOnly}
+                  title={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
+                  aria-label={unseenOnly ? t("mail.showAll") : t("mail.unreadOnly")}
+                  onClick={() => {
+                    const next = !unseenOnly;
+                    setUnseenOnly(next);
+                    look(query, next);
+                  }}>
+                  <DotIcon />
+                </button>
+                {unseen > 0 && (markingAll ? (
+                  <span className="spinner" title={t("mail.working")}><RefreshIcon /></span>
                 ) : (
-                  <button
-                    type="button"
-                    className="mail__head-btn"
-                    title={t("mail.markAllRead")}
-                    aria-label={t("mail.markAllRead")}
+                  <button type="button" className="mail__head-btn"
+                    title={t("mail.markAllRead")} aria-label={t("mail.markAllRead")}
                     onClick={() => {
-                      // У «Все» — каждый ящик, где есть непрочитанное
                       const targets = inTab.filter((box) => (inboxOf(box)?.inbox.unseen ?? 0) > 0);
                       setTrouble(null);
                       setMarkingAll(true);
                       Promise.all(targets.map((box) => markAllMailRead(box.id)))
                         .then(() => settled(shown.map(letterKey), "read"))
-                        .catch(() => {
-                          setTrouble("not marked");
-                          setMarkingAll(false);
-                        });
-                    }}
-                  >
+                        .catch(() => { setTrouble("not marked"); setMarkingAll(false); });
+                    }}>
                     <CheckAllIcon />
                   </button>
                 ))}
-              {mailbox !== null && (
-                <button
-                  type="button"
-                  className="mail__head-btn"
-                  title={t("mail.openMailbox")}
-                  aria-label={t("mail.openMailbox")}
-                  onClick={() => openLink(mailbox)}
-                >
-                  <ExternalLinkIcon />
-                </button>
-              )}
-              {looking ? (
-                <span className="spinner" title={t("mail.searching")}>
-                  <RefreshIcon />
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className="refresh"
-                  data-spinning={spinning}
-                  title={t("mail.refresh")}
-                  aria-label={t("mail.refresh")}
-                  onClick={refresh}
-                >
-                  <RefreshIcon />
-                </button>
-              )}
-            </>
-          )}
+                {mailbox !== null && (
+                  <button type="button" className="mail__head-btn"
+                    title={t("mail.openMailbox")} aria-label={t("mail.openMailbox")} onClick={() => openLink(mailbox)}>
+                    <ExternalLinkIcon />
+                  </button>
+                )}
+                {looking ? <span className="spinner" title={t("mail.searching")}><RefreshIcon /></span> : (
+                  <button type="button" className="refresh" data-spinning={spinning}
+                    title={t("mail.refresh")} aria-label={t("mail.refresh")} onClick={refresh}>
+                    <RefreshIcon />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
-        )}
         {reference && referenceTrouble !== null && <div className="mail-ref__trouble" role="status">{referenceTrouble}</div>}
 
         {/*
@@ -1104,7 +891,7 @@ export function MailWidget() {
            * приходят десятком, а в карточку их влезает четыре-пять, и
            * остальные были бы просто недоступны.
            */
-          <ul className="mail__list" data-no-drag data-scrolling={scrolling} onScroll={onScroll}>
+          <ul className="mail__list" data-scrolling={scrolling} onScroll={onScroll}>
             {shown.map((letter) => {
               const key = letterKey(letter);
               const Row = reference ? ReferenceLetterRow : LetterRow;
@@ -1155,7 +942,7 @@ export function MailWidget() {
             * любом состоянии ящика: иначе с вкладки незаведённого ящика было бы
             * не уйти. «+» тут нет — ящики заводят в настройках.
             */}
-          {tabbed && (!reference || lone?.view.status === "noAccount") && (
+          {tabbed && lone?.view.status === "noAccount" && (
             <Dots
               count={accounts.length + 1}
               active={current === null ? 0 : accounts.findIndex((box) => box.id === current) + 1}

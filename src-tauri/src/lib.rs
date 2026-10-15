@@ -50,6 +50,14 @@ use tauri::Manager;
 use crate::windows::Shutdown;
 
 pub fn run() {
+    let mut context = tauri::generate_context!();
+    // Значок HWND (панель задач и Alt+Tab) задаём из исходных байтов.
+    // generate_context кеширует ICO отдельно от ресурса exe: тот уже был
+    // новым, а окна продолжали получать прежний синий график.
+    context.set_default_window_icon(Some(tauri::image::Image::new(
+        include_bytes!("../../src/assets/app-icons/widget-mosaic.rgba"), 32, 32,
+    )));
+
     let app = tauri::Builder::default()
         // Меню виджета по правой кнопке. Слушатель глобальный: событие меню
         // приходит всем сразу, и виджет опознаётся по идентификатору пункта
@@ -109,6 +117,7 @@ pub fn run() {
             i18n::set_language,
             settings_window::open_widget_settings,
             settings_window::settings_view,
+            settings_window::set_app_icon,
             settings_window::set_widget_option,
             settings_window::set_all_widget_option,
             settings_window::set_widget_cover,
@@ -268,16 +277,20 @@ pub fn run() {
             tools::spawn(handle);
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("не удалось запустить приложение");
 
     app.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            // Приложение живёт в трее: выключенный последний виджет — не повод
-            // завершаться. Выход только через пункт меню, он ставит признак.
-            if !app.state::<Shutdown>().started() {
-                api.prevent_exit();
+        match event {
+            tauri::RunEvent::Ready => windows::runtime_ready(),
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                // Приложение живёт в трее: выключенный последний виджет — не повод
+                // завершаться. Выход и восстановление runtime ставят признак.
+                if !app.state::<Shutdown>().started() {
+                    api.prevent_exit();
+                }
             }
+            _ => {}
         }
     });
 }

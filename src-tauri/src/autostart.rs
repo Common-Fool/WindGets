@@ -79,9 +79,11 @@ pub fn enable() -> Result<(), String> {
     let target = format!("\"{}\"", exe.display());
     let user = whoami();
 
+    // На входе в систему оболочка и WebView2 ещё запускаются. Даём им 15 секунд,
+    // а /IT явно удерживает графическое приложение в интерактивной сессии.
     schtasks(&[
         "/Create", "/TN", TASK, "/TR", &target, "/SC", "ONLOGON", "/RU", &user, "/RL", "HIGHEST",
-        "/F",
+        "/IT", "/DELAY", "0000:15", "/F",
     ])
 }
 

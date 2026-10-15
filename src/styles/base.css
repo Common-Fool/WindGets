@@ -47,6 +47,39 @@ body {
   background: var(--border-highlight);
 }
 
+/* Тонкая полоса не двигает строки: место остаётся, бегунок виден только
+   при наведении на карточку. Общее оформление списков дел и кодов 2FA. */
+.widget .hover-scrollbar {
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+.widget .hover-scrollbar::-webkit-scrollbar {
+  width: var(--scrollbar-thin);
+  height: var(--scrollbar-thin);
+}
+
+.widget .hover-scrollbar::-webkit-scrollbar-track,
+.widget .hover-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--radius-pill);
+}
+
+.widget .hover-scrollbar::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.widget:hover .hover-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+.widget:hover .hover-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
 /*
  * Окно виджета — это ровно одна карточка, во всю его площадь.
  *

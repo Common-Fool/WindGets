@@ -160,6 +160,10 @@
    * с текстом на пиксель.
    */
   --scrollbar-size: 8px;
+  --scrollbar-thumb: var(--surface-track);
+  --scrollbar-thumb-hover: var(--border-highlight);
+  --scrollbar-thin: calc(4px * var(--scale));
+  --control-icon-size: calc(28px * var(--scale));
 
   /* ==================== Толщины ==================== */
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   runSpeedtest,
   stageLabel,
@@ -8,6 +8,7 @@ import {
 } from "../../lib/speedtest";
 import { useWindowDrag } from "../../lib/drag";
 import { useText, type Text } from "../../lib/i18n";
+import { NO_VALUE } from "../../lib/format";
 import { useLook } from "../../lib/look";
 import { useContentHeight } from "../../lib/grow";
 import { useWidgetView, useWidgetLayout, useWidgetSize } from "../../lib/view";
@@ -16,7 +17,7 @@ import { BigStat } from "../../components/BigStat";
 import { Trend } from "../../components/Trend";
 import { Arc } from "../../components/Arc";
 import { Button } from "../../components/Button";
-import { RefreshIcon } from "../../components/Icons";
+import { GaugeIcon } from "../../components/Icons";
 import { StatusDot } from "../../components/StatusDot";
 import { DownArrow, UpArrow } from "../../components/Arrows";
 import { SpeedColumns } from "./SpeedColumns";
@@ -52,8 +53,11 @@ export function SpeedtestWidget() {
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const locked = useLockout(view);
   const widgetView = useWidgetView();
-  const columns = widgetView === 1;   // история столбиками
+  const columns = widgetView === 1 || widgetView === 3;
+  const separateColumns = widgetView === 3; // два ряда с общей шкалой
   const gaugeOnly = widgetView === 2; // только кольцо замера, истории нет вовсе
+  const size = useWidgetSize();
+  const content = useRef<HTMLDivElement>(null);
   useWindowDrag();
 
   const measured = report(view);
@@ -68,7 +72,7 @@ export function SpeedtestWidget() {
   const uploads = column(view.history, (entry) => entry.upload);
 
   /*
-   * Кольцо показывает идущий этап, а в покое — последнюю загрузку.
+   * Кольцо показывает идущий этап; в покое внутри стоит запуск.
    *
    * Потолок шкалы не задан числом: он берётся по наибольшему из того, что тут
    * когда-либо мерили, и не опускается ниже опорных пятисот. Постоянный
@@ -85,11 +89,16 @@ export function SpeedtestWidget() {
     runSpeedtest().catch((cause: unknown) => setFailure(String(cause)));
   };
 
+  // У истории своя высота, у итогов — собственная. Измерение не зависит от
+  // прежней высоты окна, поэтому убранный блок не оставляет пустого места.
+  useContentHeight(content, effectiveDesign === "app",
+    `app|${widgetView}|${size}|${view.status}|${running ? view.stage : ""}|${reason ?? ""}|${t.language}`);
+
   // Состояние замера, отказ и lockout принадлежат этому компоненту:
   // смена дизайна меняет только содержимое и не запускает таймер заново.
   if (effectiveDesign === "reference") {
     return (
-      <ReferenceSpeedtest view={view} t={t} measured={measured} columns={columns}
+      <ReferenceSpeedtest view={view} t={t} measured={measured} columns={columns} separateColumns={separateColumns}
         gaugeOnly={gaugeOnly} running={running} reason={reason} locked={locked}
         isUpload={isUpload} shown={shown} share={share} downloads={downloads}
         uploads={uploads} onStart={start} />
@@ -97,14 +106,13 @@ export function SpeedtestWidget() {
   }
 
   return (
-    <div className="widget">
+    <div className="widget speedtest-app-widget">
       <GlassCard accent={activeAccent}>
-        <div className="speed" data-gauge={running || gaugeOnly ? "true" : undefined}>
-          {/* Во время замера график и итоги ни о чём: итоги ещё не готовы,
-              а история пополнится только в конце */}
+        <div className="speed" data-gauge={running || gaugeOnly ? "true" : undefined} ref={content}>
+          {/* История пополнится только в конце; во время замера виден спидометр. */}
           {!running && !gaugeOnly && (
             columns ? (
-              <SpeedColumns history={view.history} />
+              <SpeedColumns history={view.history} variant={separateColumns ? "rows" : "pairs"} />
             ) : (
               <div className="speed__chart">
                 <Trend
@@ -120,79 +128,41 @@ export function SpeedtestWidget() {
             )
           )}
 
-          {/*
-            Кольцо со шкалой. Во время замера оно главное во всех размерах, в
-            покое остаётся только там, где график не помещается, — вид «только
-            замер».
-          */}
-          <div className="speed__gauge">
-            <Arc value={share} span={220}>
-              <BigStat value={speed(shown)} align="center" />
-            </Arc>
+          {(running || gaugeOnly) && (
+            <div className="speed__dial">
+              {running && <span className="speed__phase" role="status">{stageLabel(t, view.stage)}</span>}
+              <SpeedGauge shown={shown} share={share} isUpload={isUpload} running={running}
+                action={<SpeedAction t={t} locked={locked} onStart={start} hero />} />
+            </div>
+          )}
 
-            <p className="speed__unit">
-              <span>Mbps</span>
-              <span className="speed__arrow">
-                {isUpload ? <UpArrow /> : <DownArrow />}
-              </span>
-            </p>
-
-            {/* Этап и отклик стоят только на замере: в покое то же самое
-                говорят колонки итогов, и повторять их незачем */}
-            {running && (
-              <>
-                <span className="speed__phase caps">{stageLabel(t, view.stage)}</span>
-                {measured.latency !== null && (
-                  <span className="speed__ping" data-accent="neutral">
-                    <StatusDot glow />
-                    {measured.latency.toFixed(0)} ms
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="speed__stage">
-            <Button icon={<RefreshIcon />} disabled={running || locked !== 0} onClick={start}>
-              {running
-                ? t("speedtest.measuring")
-                : locked === 0
-                  ? t("speedtest.measure")
-                  : t("speedtest.lockedFor", { seconds: locked })}
-            </Button>
-            {reason !== undefined && <p className="speed__note speed__note--failed">{reason}</p>}
-          </div>
-
-          {/*
-            Итоги. Стрелка и точка у подписи не украшение: в тесной карточке
-            слово гаснет, а глиф и цвет остаются и продолжают различать
-            колонки — тот же приём, что у пинга и сети.
-          */}
-          {!running && (
+          <div className="speed__results" data-action={!running && !gaugeOnly ? "true" : undefined}>
             <div className="duo duo--three">
               <div className="duo__side" data-accent="net-down">
-                <span className="duo__label">
+                <span className="duo__label" title="Download">
                   <DownArrow />
                   <span className="duo__label-text">Download</span>
                 </span>
-                <BigStat value={speed(measured.download)} align="center" />
+                <BigStat value={speed(measured.download)} unit="Mbps" unitPlacement="below" align="center" />
               </div>
               <div className="duo__side" data-accent="net-up">
-                <span className="duo__label">
+                <span className="duo__label" title="Upload">
                   <UpArrow />
                   <span className="duo__label-text">Upload</span>
                 </span>
-                <BigStat value={speed(measured.upload)} align="center" />
+                <BigStat value={speed(measured.upload)} unit="Mbps" unitPlacement="below" align="center" />
               </div>
               <div className="duo__side" data-accent="neutral">
-                <span className="duo__label">
+                <span className="duo__label" title="Ping">
                   <StatusDot glow />
                   <span className="duo__label-text">Ping</span>
                 </span>
-                <BigStat value={measured.latency !== null ? measured.latency.toFixed(0) : undefined} align="center" />
+                <BigStat value={measured.latency !== null ? measured.latency.toFixed(0) : undefined} unit="ms" unitPlacement="below" align="center" />
               </div>
             </div>
-          )}
+            {!running && !gaugeOnly && <SpeedAction t={t} locked={locked} onStart={start} />}
+          </div>
+          {reason !== undefined && <p className="speed__note speed__note--failed" role="alert">{reason}</p>}
         </div>
       </GlassCard>
     </div>
@@ -204,6 +174,7 @@ type ReferenceProps = {
   t: Text;
   measured: Report;
   columns: boolean;
+  separateColumns: boolean;
   gaugeOnly: boolean;
   running: boolean;
   reason: string | undefined;
@@ -218,9 +189,9 @@ type ReferenceProps = {
 
 /**
  * Две утверждённые компоновки GPT. Вид истории остаётся прежней независимой
- * осью: 0 — график, 1 — столбики, 2 — только замер; layout 0/1 означает A/B.
+ * осью: 0 — график, 1 — пары, 2 — только замер, 3 — два ряда; layout 0/1 — A/B.
  */
-function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, reason,
+function ReferenceSpeedtest({ view, t, measured, columns, separateColumns, gaugeOnly, running, reason,
   locked, isUpload, shown, share, downloads, uploads, onStart }: ReferenceProps) {
   const savedLayout = useWidgetLayout();
   const savedSize = useWidgetSize();
@@ -232,18 +203,9 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
   // Меряем весь блок, включая кнопку, город и многострочный отказ. Ширину
   // задаёт выбранный размер, высота не зависит от нынешней высоты окна.
   useContentHeight(content, true,
-    `reference|${layout}|${size}|${columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${stage ?? ""}|${reason ?? ""}|${t.language}`);
+    `reference|${layout}|${size}|${separateColumns ? 3 : columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${stage ?? ""}|${reason ?? ""}|${t.language}`);
 
-  const button = (
-    <div className="speed-reference__action">
-      <Button icon={<RefreshIcon />} disabled={running || locked !== 0} onClick={onStart}>
-        {running ? t("speedtest.measuring") : locked === 0
-          ? t("speedtest.measure") : t("speedtest.lockedFor", { seconds: locked })}
-      </Button>
-    </div>
-  );
-  const message = reason ?? (view.status === "idle"
-    ? t("speedtest.noFreshResult") : t("speedtest.resultReady"));
+  const button = <SpeedAction t={t} locked={locked} onStart={onStart} hero={gaugeOnly} />;
 
   return (
     <div className="widget speedtest-reference-widget">
@@ -256,13 +218,9 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
                 {running && view.status === "running" && <p className="speed-reference__current-phase" role="status">
                   {stageLabel(t, view.stage)}{view.server !== null ? ` · ${view.server}` : ""}
                 </p>}
-                <ReferenceGauge shown={shown} share={share} isUpload={isUpload} />
+                <SpeedGauge shown={shown} share={share} isUpload={isUpload} running={running} action={button} />
               </div>
-              <div className="speed-reference__secondary tabular">
-                <span data-accent="net-up"><UpArrow /><span>Upload</span><strong>{speed(measured.upload) ?? "—"}</strong><small>Mbps</small></span>
-                <span data-accent="neutral"><StatusDot /><span>Ping</span><strong>{measured.latency?.toFixed(0) ?? "—"}</strong><small>ms</small></span>
-              </div>
-              {reason !== undefined && <p className="speed-reference__message" data-failed="true" role="alert">{reason}</p>}
+              <ReferenceResults measured={measured} />
             </>
           ) : running && view.status === "running" ? (
             <div className="speed-reference__run">
@@ -271,7 +229,7 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
                 {view.server !== null ? <><span>M-Lab</span><span aria-hidden="true">·</span><span>{view.server}</span></>
                   : stageLabel(t, view.stage)}
               </p>
-              <ReferenceGauge shown={shown} share={share} isUpload={isUpload} />
+              <SpeedGauge shown={shown} share={share} isUpload={isUpload} running />
               <div className="speed-reference__current-context">
                 <span className="speed-reference__current-phase" role="status">{stageLabel(t, view.stage)}</span>
                 {measured.latency !== null && (
@@ -284,17 +242,12 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
             </div>
           ) : (
             <>
-              <div className="speed-reference__results">
-                <ReferenceMetric direction="down" label="Download" value={measured.download} />
-                <ReferenceMetric direction="up" label="Upload" value={measured.upload} />
-                <ReferenceMetric direction="ping" label="Ping" value={measured.latency} />
-              </div>
+              <ReferenceResults measured={measured} action={button} beside={layout === "b"} />
               <div className="speed-reference__history">
-                {!(layout === "b" && size === 1) && <span className="speed-reference__history-label">{t.count("speedtest.history", view.history.length)}</span>}
                 {columns ? (
                   <div className="speed-reference__chart speed-reference__chart--columns">
-                    <SpeedColumns history={view.history} fit />
-                    <ReferenceLegend />
+                    <SpeedColumns history={view.history} variant={separateColumns ? "rows" : "pairs"} />
+                    {!separateColumns && <ReferenceLegend />}
                   </div>
                 ) : (
                   <div className="speed-reference__chart">
@@ -305,12 +258,9 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
                   </div>
                 )}
               </div>
-              {(reason !== undefined || layout !== "b" || size !== 1) && <p className="speed-reference__message" data-failed={reason !== undefined ? "true" : undefined}
-                role={reason !== undefined ? "alert" : "status"}>{message}</p>}
             </>
           )}
-          {button}
-          {running && !gaugeOnly && reason !== undefined && (
+          {reason !== undefined && (
             <p className="speed-reference__message" data-failed="true" role="alert">{reason}</p>
           )}
         </div>
@@ -319,42 +269,97 @@ function ReferenceSpeedtest({ view, t, measured, columns, gaugeOnly, running, re
   );
 }
 
-function ReferenceMetric({ direction, label, value }: {
-  direction: "down" | "up" | "ping";
-  label: "Download" | "Upload" | "Ping";
-  value: number | null;
+/** В B запуск справа от значения Ping, в A — четвёртая ячейка итогов. */
+function ReferenceResults({ measured, action, beside = false }: {
+  measured: Report;
+  action?: ReactNode;
+  beside?: boolean;
 }) {
-  const formatted = direction === "ping" ? value === null ? undefined : value.toFixed(0) : speed(value);
-  // Пять знаков — утверждённые 566.3. Более быстрый канал помещается
-  // в узкую тройку целиком, не обрезая важное число эллипсисом.
-  const digits = Math.max(5, formatted?.length ?? 1);
   return (
-    <div className="speed-reference__metric" data-accent={direction === "down" ? "net-down" : direction === "up" ? "net-up" : "neutral"}
-      style={{ "--speed-reference-digits": digits } as CSSProperties}>
-      <span className="speed-reference__metric-label">
-        {direction === "down" ? <DownArrow /> : direction === "up" ? <UpArrow /> : <StatusDot />}
-        <span>{label}</span>
-      </span>
-      <BigStat value={formatted} unit={direction === "ping" ? "ms" : "Mbps"} unitPlacement="below" />
+    <div className="speed-reference__results" data-action={action !== undefined && !beside ? "true" : undefined}>
+      <ReferenceMetric direction="down" label="Download" value={measured.download} />
+      <ReferenceMetric direction="up" label="Upload" value={measured.upload} />
+      <ReferenceMetric direction="ping" label="Ping" value={measured.latency} action={beside ? action : undefined} />
+      {!beside && action}
     </div>
   );
 }
 
-/** Тот же Arc, та же доля скорости от общего потолка; это не процент теста. */
-function ReferenceGauge({ shown, share, isUpload }: {
+function ReferenceMetric({ direction, label, value, action }: {
+  direction: "down" | "up" | "ping";
+  label: "Download" | "Upload" | "Ping";
+  value: number | null;
+  action?: ReactNode;
+}) {
+  const formatted = direction === "ping" ? value === null ? undefined : value.toFixed(0) : speed(value);
+  // Пять знаков — утверждённые 566.3. Более быстрый канал помещается
+  // в узкую тройку целиком, не обрезая важное число эллипсисом.
+  const digits = Math.max(action === undefined ? 5 : 2, formatted?.length ?? 1);
+  return (
+    <div className="speed-reference__metric" data-accent={direction === "down" ? "net-down" : direction === "up" ? "net-up" : "neutral"}
+      style={{ "--speed-reference-digits": digits } as CSSProperties}>
+      <span className="speed-reference__metric-label" title={label}>
+        {direction === "down" ? <DownArrow /> : direction === "up" ? <UpArrow /> : <StatusDot />}
+        <span>{label}</span>
+      </span>
+      {action === undefined ? (
+        <BigStat value={formatted} unit={direction === "ping" ? "ms" : "Mbps"} unitPlacement="below" />
+      ) : (
+        <div className="speed-reference__metric-reading">
+          <div className="speed-reference__metric-value">
+            <span className={`stat__value tabular${formatted === undefined ? " stat__value--empty" : ""}`}>
+              {formatted ?? NO_VALUE}
+            </span>
+            <span className="stat__unit">{direction === "ping" ? "ms" : "Mbps"}</span>
+          </div>
+          {action}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SpeedAction({ t, locked, onStart, hero = false }: { t: Text; locked: number; onStart: () => void; hero?: boolean }) {
+  const label = locked === 0 ? t("speedtest.measure") : t("speedtest.lockedFor", { seconds: locked });
+  return (
+    <div className="speed-action" data-hero={hero ? "true" : undefined}>
+      <Button variant="outline" icon={hero ? (
+        <svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" fill="currentColor"
+          stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
+          <path d="M8 4.5 20 12 8 19.5Z" />
+        </svg>
+      ) : <GaugeIcon />} disabled={locked !== 0} onClick={onStart} label={label} />
+      {locked !== 0 && <span className="speed__wait" title={label}>{locked}</span>}
+    </div>
+  );
+}
+
+/** Общий спидометр: стрелка и скорость во время замера, запуск внутри дуги в покое. */
+function SpeedGauge({ shown, share, isUpload, running, action }: {
   shown: number | null;
   share: number | null;
   isUpload: boolean;
+  running: boolean;
+  action?: ReactNode;
 }) {
   const formatted = speed(shown);
   return (
-    <div className="speed-reference__gauge" data-accent={isUpload ? "net-up" : "net-down"}
-      style={{ "--speed-reference-digits": Math.max(5, formatted?.length ?? 1) } as CSSProperties}>
-      <Arc value={share} span={220} thickness={3}>
-        <BigStat value={formatted} align="center" />
-        <p className="speed-reference__gauge-unit">
-          <span>Mbps</span>{isUpload ? <UpArrow /> : <DownArrow />}
-        </p>
+    <div className="speed-gauge" data-accent={isUpload ? "net-up" : "net-down"} data-running={running ? "true" : undefined}
+      style={{ "--speed-gauge-digits": Math.max(5, formatted?.length ?? 1),
+        "--speed-gauge-angle": `${-110 + (share ?? 0) * 220}deg` } as CSSProperties}>
+      <Arc value={running ? share : null} span={220} thickness={3}>
+        {running ? (
+          <>
+            {share !== null && <svg className="speed-gauge__needle" viewBox="0 0 100 100" aria-hidden="true">
+              <path d="M50 15 53 50 50 53 47 50Z" />
+              <circle cx="50" cy="50" r="3" />
+            </svg>}
+            <div className="speed-gauge__reading">
+              <BigStat value={formatted} align="center" />
+              <p className="speed-gauge__unit"><span>Mbps</span>{isUpload ? <UpArrow /> : <DownArrow />}</p>
+            </div>
+          </>
+        ) : action}
       </Arc>
     </div>
   );

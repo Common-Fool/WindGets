@@ -72,12 +72,27 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  min-height: var(--control-icon-size);
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
-/* Между полем и значками: подпись сама и есть распорка */
+.mail__head::-webkit-scrollbar { height: calc(2px * var(--scale)); }
+.mail__tabs { flex: 0 1 auto; min-width: var(--space-5); overflow: auto; }
+.mail__tabs::-webkit-scrollbar { height: 0; }
+.mail__tabs .dots { gap: var(--space-1); }
+.mail__controls { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+.mail__controls .spinner { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); }
+.mail__head .mail__head-btn,
+.mail__head .refresh,
+.mail__head .mail__pick--all { flex: none; width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); }
+.mail__search-box { display: flex; flex: 1; align-items: center; min-width: calc(3 * var(--space-5)); gap: var(--space-1); }
+
+/* Подпись берёт свою ширину; свободное место достаётся поиску. */
 .mail__unread {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   text-align: right;
   white-space: nowrap;
@@ -676,27 +691,23 @@ button.mail__box-trouble:focus-visible {
   color: var(--status-danger);
 }
 
-/*
- * Поле поиска занимает всю верхнюю строку.
- *
- * Двумя классами, а не одним: `.input` из base.css с той же весомостью
- * перебивал бы наши правила, окажись он ниже по порядку следования, — а
- * порядок файлов менялся (до этапа 48 base.css шёл последним).
- */
-/*
- * Половина строки, не больше.
- *
- * Во всю ширину оно отнимало у карточки целую строку письма, а искать тут
- * длиннее десятка знаков всё равно не приходится. Ужимается вместе с окном:
- * `flex-basis` в процентах, а не в точках.
- */
+/* Растягиваемое поле. Два класса держат приоритет над общим .input. */
 .input.mail__search {
-  flex: 0 1 50%;
+  flex: 1;
+  width: 100%;
   min-width: 0;
+  height: var(--control-icon-size);
   padding: 0 var(--space-2);
   font-family: var(--font-sans);
   font-size: var(--text-xs);
   line-height: calc(1em * var(--leading-tight));
+}
+
+.input.mail__search:focus,
+.input.mail__search:focus-visible {
+  border-color: var(--border-control-hover);
+  box-shadow: none;
+  outline: none;
 }
 
 /*

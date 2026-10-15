@@ -100,6 +100,8 @@ export type SettingsView = {
   design: Design;
   /** Выбранный язык. `null` — «как в Windows». */
   language: Language | null;
+  /** Выбранная иконка системного трея. */
+  appIcon: string;
   /** Все языки самоназваниями: `id` — код, `title` — «Русский», «中文». */
   languages: ChoiceRow[];
   /** Язык Windows — что выберется при «как в Windows». */
@@ -152,6 +154,7 @@ const EMPTY: SettingsView = {
   soundMixerCollapsed: false,
   design: "reference",
   language: null,
+  appIcon: "widget-stack",
   languages: [],
   systemLanguage: "ru",
   hiddenDisks: [],
@@ -278,6 +281,11 @@ export function setWidgetCover(id: string, index: number): void {
 
 export function setFlag(name: Flag, value: boolean): void {
   void invoke("set_flag", { name, value });
+}
+
+/** Выбрать и запомнить значок в системном трее. */
+export function setAppIcon(id: string): Promise<void> {
+  return invoke("set_app_icon", { id });
 }
 
 export function setSource(seconds: number): void {

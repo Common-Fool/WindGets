@@ -2,31 +2,33 @@
  * Спидтест. Своих значений не заводит: всё из tokens.css, раскладка колонок
  * общая и лежит в styles/base.css.
  *
- * Видов у виджета три:
+ * Видов у виджета четыре:
  * - график — сглаженные линии прошлых замеров;
- * - столбики — парные столбики приёма и отдачи;
- * - только замер — кольцо со шкалой последнего замера (или текущего во время теста).
+ * - пары с промежутками — столбики приёма и отдачи рядом;
+ * - два отдельных ряда — приём сверху, отдача снизу;
+ * - только замер — запуск внутри дуги, а во время теста стрелка и скорость.
  */
+
+.speedtest-app-widget > .card > .card__body {
+  --card-pad-block: var(--space-4);
+  flex: none;
+  padding: var(--space-4);
+}
 
 .speed {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   gap: var(--space-2);
-  height: 100%;
+  min-width: 0;
 }
 
 /*
- * График отдаёт высоту первым: кнопка и итоги не сжимаются вовсе.
- *
- * ВАЖНО: вместе с местом надо снять и собственный нижний предел графика.
- * `Trend` держит `min-height` для случая, когда его ставят в контейнер без
- * высоты; здесь высота есть, и этот предел приводил к тому, что график
- * переставал сжиматься и **вылезал за нижнюю границу родителя** — наползая на
- * кнопку замера. Обрезки на самом блоке не было, ловилось только глазами.
+ * История имеет собственную высоту. Итоги и отказ добавляются к ней,
+ * а окно подгоняется по содержимому без зависимости от прежнего размера.
  */
 .speed__chart {
-  flex: 1;
+  flex: none;
+  height: calc(144px * var(--scale));
   min-height: 0;
   overflow: hidden;
 }
@@ -36,57 +38,36 @@
 }
 
 /*
- * История столбиками: занимает место родителя ровно так же, как график.
- * Своей высоты не назначает и тянется вместе с окном.
+ * История столбиками занимает выделенное ей место так же, как график.
  *
- * Своего просвета ряд не задаёт: место замера делится поровну, а столбики в
- * нём стоят по центру — весь остаток и есть просвет. Заданный сверху зазор
- * отнимал бы ширину у самих столбиков, и на тридцати замерах они утончались
- * бы до волоска.
- *
- * ВАЖНО: **ширина столбика задана целым числом точек и за кеглем не едет.**
- * Прежде она была токеном `--bar-thin` (3 точки на геометрию, то есть 2,85 при
- * кегле 90 %), а сами столбики умели сжиматься — и на дробной ширине с дробным
- * положением одни рисовались в две точки, другие в три. Выглядело это как
- * столбики вдвое тоньше соседних, причём вперемешку. Целое число снимает
- * вопрос: остаток ширины уходит в просветы, а они дробности не выдают.
+ * SpeedColumns передаёт целую толщину и внутренний просвет переменными,
+ * считает число последних замеров по месту и ставит их на целые CSS-пиксели.
+ * Столбики не сжимаются; прокрутки и усреднения истории нет.
  */
 .speed__columns {
-  /* Три точки — та же ширина, что была у столбика приёма всегда: менялось тут
-     только то, что она перестала быть дробной */
-  --speed-bar: 3px;
-  /*
-   * Отдача уже приёма: её и меряют реже, и смотрят на неё вторым делом.
-   *
-   * Точка, а не половина от трёх: половина — это 1,5, то есть та же дробная
-   * ширина, с которой начался разнобой. Целая точка ложится в пиксель всегда и
-   * у всех столбиков одинаково; отношение при этом не два к одному, а три.
-   */
-  --speed-bar-up: 1px;
-
-  display: flex;
-  align-items: flex-end;
+  position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  /* Страховка: тридцать замеров при этих ширинах в карточку помещаются, но
-     выйти за её край ряд не должен ни при каких */
   overflow: hidden;
 }
 
+.speed > .speed__columns {
+  flex: none;
+  height: calc(144px * var(--scale));
+}
+
 /*
- * Пара столбиков одного замера: приём и отдача вплотную друг к другу.
- *
- * Место замер занимает равное, а сами столбики в нём стоят по центру: остаток
- * ширины и становится просветом между замерами. Отсюда и вид ряда — тонкие
- * пары, разделённые воздухом, а не сплошная гребёнка.
+ * Пара одного замера: приём и отдача одинаковой толщины, между ними просвет.
+ * От соседних замеров пару отделяет больший зазор.
  */
 .speed__pair {
+  position: absolute;
+  bottom: 0;
   display: flex;
-  flex: 1;
   align-items: flex-end;
-  justify-content: center;
-  gap: 1px;
-  min-width: 0;
+  gap: var(--speed-inner-gap);
+  width: calc(2 * var(--speed-bar) + var(--speed-inner-gap));
   height: 100%;
 }
 
@@ -100,9 +81,7 @@
  * событие, столбик стоит ровно там, где замер был, и подложка на всю высоту
  * рисовала бы замеры, которых не делали.
  *
- * Сжиматься столбику НЕ разрешено: сжатие и давало разнобой ширин. Тридцать
- * замеров при этих ширинах помещаются даже в самую узкую карточку — считать
- * там нечего, порога не нужно.
+ * Сжиматься столбику не разрешено: нужное число целых замеров считает компонент.
  */
 .speed__bar {
   display: flex;
@@ -112,8 +91,49 @@
   height: 100%;
 }
 
-.speed__bar[data-accent="net-up"] {
-  width: var(--speed-bar-up);
+.speed__columns[data-variant="rows"] {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.speed__lane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: 0;
+}
+
+.speed__lane + .speed__lane {
+  border-top: 1px solid var(--border-hairline);
+  padding-top: var(--space-1);
+}
+
+.speed__lane-label {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1.1;
+}
+
+.speed__lane-label svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.speed__lane-bars {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.speed__lane-bars > .speed__bar {
+  position: absolute;
+  bottom: 0;
 }
 
 /*
@@ -128,188 +148,132 @@
     linear-gradient(to bottom, var(--accent) 2px, transparent 2px),
     linear-gradient(
       to top,
-      color-mix(in srgb, var(--accent) 16%, transparent),
-      color-mix(in srgb, var(--accent) 48%, transparent)
+      color-mix(in srgb, var(--accent) 38%, transparent),
+      color-mix(in srgb, var(--accent) 80%, transparent)
     );
 }
 
-/*
- * Кольцо со шкалой — то, как замер выглядит во всех размерах.
- *
- * ВАЖНО: **в покое его не видно нигде, кроме вида «только замер».** Там, где
- * помещается график, история полезнее одной цифры; там, где не помещается,
- * кольцо и есть весь виджет.
- */
-/*
- * ВАЖНО: **кольцо крупное, а цифра внутри — обычного кегля.** В первой
- * редакции было наоборот: кольцо ужали до 72 точек, а цифру взяли крупную, и
- * «415.7» вылезало за дугу почти вдвое. Внутри кольца остаётся 68 % его
- * ширины — остальное съедает поле от обводки.
- */
-.speed__gauge {
+/* Общий для обоих дизайнов спидометр и запуск внутри дуги. */
+.speed-gauge {
   --arc-size: calc(120px * var(--scale));
-  display: none;
+  --speed-gauge-number: var(--text-2xl);
+  display: flex;
   flex: none;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
-}
-
-.speed[data-gauge="true"] .speed__gauge {
-  display: flex;
-}
-
-/*
- * С кольцом карточка собирается к середине, а не растаскивается по краям:
- * `space-between` рассчитан на график, кнопку и итоги, а тут блоков меньше и
- * между ними зияло.
- */
-.speed[data-gauge="true"] {
   justify-content: center;
-  gap: var(--space-3);
+  min-width: 0;
 }
 
-/*
- * ВАЖНО: **у кольца пустая нижняя четверть, и её надо подобрать.** Сектор
- * 220° открыт снизу, а коробка у дуги квадратная — под видимой частью
- * остаётся около двенадцати процентов высоты пустого места, и следующая
- * строка отсчитывалась от него. Выглядело как лишний отступ, которого нет ни
- * в одном правиле.
- */
-.speed__gauge .arc {
-  margin-bottom: calc(var(--arc-size) * -0.12);
-}
+/* Подбираем пустую нижнюю часть открытой дуги, сохраняя место под число. */
+.speed-gauge .arc { margin-bottom: calc(var(--arc-size) * -0.08); }
+.speed-gauge .arc__track { stroke: var(--accent); }
+.speed-gauge[data-running="true"] .arc__track { stroke: var(--border-hairline); }
 
-/* Единица со стрелкой этапа: вниз на загрузке, вверх на отдаче */
-.speed__unit {
+.speed-gauge__needle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: var(--text-primary);
+  transform: rotate(var(--speed-gauge-angle));
+  transform-origin: center;
+  transition: transform var(--duration-slow) var(--ease);
+}
+.speed-gauge__needle circle { fill: var(--accent); }
+.speed-gauge__reading {
+  position: absolute;
+  top: 56%;
+  left: 10%;
+  right: 10%;
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--scale));
+}
+.speed-gauge .stat__value {
+  font-size: calc(var(--speed-gauge-number) * 5 / var(--speed-gauge-digits));
+  line-height: 1;
+}
+.speed-gauge__unit {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-1);
   margin: 0;
   color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
-/* Название этапа — приглушённой капителью, как подписи колонок */
-.speed__phase {
-  color: var(--text-muted);
   font-size: var(--text-2xs);
+  line-height: 1;
+}
+.speed-gauge__unit svg {
+  flex: none;
+  width: calc(12px * var(--scale));
+  height: calc(12px * var(--scale));
+  color: var(--accent);
 }
 
-/*
- * Середина карточки: кнопка в покое, крупная цифра во время замера. Забирает
- * свободное место, поэтому со скрытым графиком цифра встаёт ровно посередине.
- */
-.speed__stage {
+.speed-action {
   display: flex;
   flex: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
+  gap: calc(2px * var(--scale));
 }
-
-/* Замер идёт: графика и итогов нет, и всё место достаётся цифре */
-.speed__stage:only-child {
-  flex: 1;
-}
-
-.speed__note {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-tight);
-  text-align: center;
-}
-
-.speed__note--failed {
-  color: var(--status-danger);
-}
-
-.speed__ping {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--accent);
-}
-
-/*
- * Стрелки приёма и отдачи в итогах и в строке этапа во время замера.
- * Наследуют цвет акцента колонки или текущего этапа замера.
- */
-.speed .duo__label svg,
-.speed__arrow {
-  display: flex;
+.speed-action > .btn {
   flex: none;
-  color: var(--accent);
-  /* Не мельче строки, к которой стоят: на --text-xs стрелка и точка
-     превращались в крапинку, и колонки переставали различаться */
-  font-size: var(--text-md);
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  min-width: 0;
+  padding: 0;
   line-height: 1;
 }
+.speed-action .btn__icon { font-size: calc(20px * var(--scale)); }
+/* Круглый пуск повторяет геометрию дуги, размер кнопки не растит её коробку. */
+.speed-action[data-hero="true"] > .btn {
+  width: calc(48px * var(--scale));
+  height: calc(48px * var(--scale));
+  border-radius: var(--radius-pill);
+  color: var(--ui-accent);
+}
+.speed-action[data-hero="true"] .btn__icon { font-size: calc(24px * var(--scale)); }
+.speed-action[data-hero="true"] > .btn:hover:not(:disabled) {
+  border-color: var(--ui-accent-hover);
+  color: var(--ui-accent-hover);
+}
+.speed__wait { color: var(--text-muted); font-size: var(--text-2xs); line-height: 1; }
 
-/*
- * Уплотнение итогов: шаг отступов ниже базового из base.css,
- * чтобы содержимое занимало высоту и не висело в пустоте.
- */
-/* Колонки итогов стоят тесно: между ними и так есть стрелка с цветом, а
-   зазоры на узкой карточке съедали больше места, чем сами числа */
-.speed .duo--three {
+.speed__dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--space-1);
 }
-
-.speed .duo__side + .duo__side {
-  padding-left: 0;
+.speed__phase { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.2; text-align: center; }
+.speed__results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.speed__results[data-action="true"] { grid-template-columns: minmax(0, 1fr) auto; }
+.speed__note {
+  margin: 0;
+  color: var(--status-danger);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
 }
 
-.speed .duo__label {
-  margin-bottom: var(--space-1);
-}
+.speed .duo--three { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); }
+.speed .duo__side + .duo__side { padding-left: 0; }
+.speed .duo__label { gap: var(--space-1); margin-bottom: var(--space-1); }
+/* Сжимается только слово: центрирование длинной подписи обрезало стрелку слева. */
+.speed .duo__label svg { display: block; flex: none; width: var(--text-md); height: var(--text-md); color: var(--accent); }
+.speed .duo__label .dot { flex: none; }
+.speed .duo__label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.speed .duo .stat__value { font-size: var(--text-md); }
+.speed .duo .stat__unit { text-transform: none; letter-spacing: normal; }
 
-/*
- * Узкая карточка: кнопка замера остаётся значком, подпись уходит.
- * Итоги остаются строкой из трёх колонок при любой ширине.
- */
-/*
- * Легенда под графиком уходит первой: в узкой карточке «Загрузка» и «Отдача»
- * занимают целую строку, а те же две величины подписаны стрелками в итогах
- * прямо под ней.
- */
 @container card (width < 20em) {
-  .speed .trend__legend {
-    display: none;
-  }
-}
-
-@container card (width < 14em) {
-  .speed .btn__label {
-    display: none;
-  }
-
-  .speed .btn {
-    padding: var(--space-2);
-  }
-}
-
-/*
- * Низкая карточка: график уходит, остаются только кнопка запуска и итоги.
- *
- * Порог взят около 11em и пока не замерен на живом окне: точный замер
- * делает автор проекта.
- */
-/*
- * Только замер: графика нет, остаются кнопка и итоги.
- *
- * Кнопка тут главная и потому крупнее обычной, а цифры итогов, наоборот,
- * мельче: в первой редакции этого вида они спорили с кнопкой за внимание, и
- * карточка выглядела набором чисел без подписи.
- */
-/* Итоги последнего замера — справка, а не заголовок: цифры мельче крупной
-   цифры замера примерно в полтора раза */
-.speed .duo .stat__value {
-  font-size: var(--text-md);
+  .speed .trend__legend { display: none; }
 }

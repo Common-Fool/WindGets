@@ -189,9 +189,7 @@ export function PasswordWidget() {
             <span className="pass__strength" data-accent={strength.accent}>
               <MetricLabel icon={<ShieldIcon />}>{t(strength.label)}</MetricLabel>
             </span>
-            <Button icon={<RefreshIcon />} onClick={() => setValue(generate(options))}>
-              {t("password.generate")}
-            </Button>
+            <Button icon={<RefreshIcon />} label={t("password.generate")} onClick={() => setValue(generate(options))} />
           </div>
         </div>
       </GlassCard>

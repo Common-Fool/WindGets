@@ -1,5 +1,7 @@
-import type { CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
 import type { Report } from "../../lib/speedtest";
+import { useWidth } from "../../lib/size";
+import { DownArrow, UpArrow } from "../../components/Arrows";
 
 /**
  * Наибольшее число замеров в истории.
@@ -18,24 +20,49 @@ const CAPACITY = 30;
  */
 const MIN_FILL = 0.12;
 
+// Целые CSS-пиксели: толщина и просветы не меняются с кеглем карточки.
+const BAR_WIDTH = 3;
+const INNER_GAP = 1;
+const PAIR_GAP = 3;
+const ROW_GAP = 1;
+const PAIR_WIDTH = BAR_WIDTH * 2 + INNER_GAP;
+const GEOMETRY = {
+  "--speed-bar": `${BAR_WIDTH}px`,
+  "--speed-inner-gap": `${INNER_GAP}px`,
+} as CSSProperties;
+
 type Props = {
   /** История замеров, старые в начале. */
   history: readonly Report[];
-  /** GPT распределяет места замеров, сохраняя одинаковую толщину всех пар. */
-  fit?: boolean;
+  /** Пары рядом или два отдельных ряда с общими позициями замеров. */
+  variant?: "pairs" | "rows";
 };
 
 /**
- * История замеров парными столбиками: приём (зелёный) и отдача (розовый) рядом.
+ * История замеров: пары с промежутками или два отдельных ряда.
  *
- * Не картинка: ряд элементов `<span>` во флексе с высотой заливки в процентах
- * тянется вместе с окном без искажения пропорций `viewBox`.
+ * Толщина обоих столбиков одинакова. Если места не хватает, показываем последние
+ * целые замеры, без усреднения, сжатия столбиков и прокрутки. История на диске
+ * остаётся полной; шкала обоих вариантов считается по всем тридцати замерам.
  *
  * Шкала считается от наименьшего замера по всей истории (по обоим рядам разом),
  * а не от нуля: разница между 480 и 570 видна сразу.
  */
-export function SpeedColumns({ history, fit = false }: Props) {
+export function SpeedColumns({ history, variant = "pairs" }: Props) {
+  const row = useRef<HTMLDivElement>(null);
+  const width = Math.floor(useWidth(row));
   const entries = history.slice(-CAPACITY);
+  const separate = variant === "rows";
+  const itemWidth = separate ? BAR_WIDTH : PAIR_WIDTH;
+  const gap = separate ? ROW_GAP : PAIR_GAP;
+  const capacity = Math.max(0, Math.floor((width + gap) / (itemWidth + gap)));
+  const visible = capacity > 0 ? entries.slice(-capacity) : [];
+
+  // Остаток ширины идёт между замерами, не уменьшая минимальный просвет.
+  // Шаг может быть дробным, а левый край каждого столбика — всегда целый.
+  const leftOf = (index: number) => Math.round(visible.length <= 1
+    ? (width - itemWidth) / 2
+    : index * (width - itemWidth) / (visible.length - 1));
 
   const values: number[] = [];
   for (const entry of entries) {
@@ -51,34 +78,37 @@ export function SpeedColumns({ history, fit = false }: Props) {
   const max = values.length > 0 ? Math.max(...values) : 0;
 
   return (
-    <div className="speed__columns" data-fit={fit || undefined}
-      style={fit ? { "--speed-count": Math.max(1, entries.length) } as CSSProperties : undefined} aria-hidden="true">
-      {entries.map((entry, index) => {
-        const downShare = shareOf(entry.download, min, max);
-        const upShare = shareOf(entry.upload, min, max);
-
-        return (
-          <div key={index} className="speed__pair">
-            <span className="speed__bar" data-accent="net-down">
-              {downShare !== null && (
-                <span
-                  className="speed__fill"
-                  style={{ height: `${(downShare * 100).toFixed(1)}%` }}
-                />
-              )}
+    <div className="speed__columns" data-variant={variant} ref={row} style={GEOMETRY} aria-hidden="true">
+      {separate ? (
+        (["download", "upload"] as const).map((direction) => (
+          <div className="speed__lane" key={direction}>
+            <span className="speed__lane-label" data-accent={direction === "download" ? "net-down" : "net-up"}>
+              {direction === "download" ? <DownArrow /> : <UpArrow />}
+              {direction === "download" ? "Download" : "Upload"}
             </span>
-            <span className="speed__bar" data-accent="net-up">
-              {upShare !== null && (
-                <span
-                  className="speed__fill"
-                  style={{ height: `${(upShare * 100).toFixed(1)}%` }}
-                />
-              )}
-            </span>
+            <div className="speed__lane-bars">
+              {visible.map((entry, index) => (
+                <SpeedBar key={index} accent={direction === "download" ? "net-down" : "net-up"}
+                  share={shareOf(entry[direction], min, max)} left={leftOf(index)} />
+              ))}
+            </div>
           </div>
-        );
-      })}
+        ))
+      ) : visible.map((entry, index) => (
+        <div key={index} className="speed__pair" style={{ left: `${leftOf(index)}px` }}>
+          <SpeedBar accent="net-down" share={shareOf(entry.download, min, max)} />
+          <SpeedBar accent="net-up" share={shareOf(entry.upload, min, max)} />
+        </div>
+      ))}
     </div>
+  );
+}
+
+function SpeedBar({ accent, share, left }: { accent: "net-down" | "net-up"; share: number | null; left?: number }) {
+  return (
+    <span className="speed__bar" data-accent={accent} style={left === undefined ? undefined : { left: `${left}px` }}>
+      {share !== null && <span className="speed__fill" style={{ height: `${(share * 100).toFixed(1)}%` }} />}
+    </span>
   );
 }
 

@@ -1,8 +1,4 @@
-/*
- * Утверждённые A/B только для GPT. Исходная .speed и её пороги остаются
- * в speedtest.css без изменений. Нейтральные поверхности и контролы берут
- * общие токены GPT; данные — прежние net-down/net-up/neutral.
- */
+/* GPT: запуск входит в итоги; высота определяется содержимым без пустых строк. */
 .speedtest-reference-widget > .card > .card__body {
   --card-pad-block: var(--space-4);
   flex: none;
@@ -11,82 +7,117 @@
 
 .speed-reference {
   --speed-reference-number: calc(29px * var(--scale));
-  --speed-reference-dial-number: calc(29px * var(--scale));
-  --speed-reference-base-height: calc(240px * var(--scale));
   --speed-reference-chart-height: calc(95px * var(--scale));
   display: grid;
-  grid-template-columns: calc(118px * var(--scale)) minmax(0, 1fr);
-  grid-template-areas: "results results" "action message" "history history";
-  grid-template-rows: auto auto minmax(0, 1fr);
-  column-gap: calc(18px * var(--scale));
-  row-gap: calc(10px * var(--scale));
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "results" "history";
+  gap: var(--space-2);
   min-width: 0;
-  min-height: var(--speed-reference-base-height);
   color: var(--text-primary);
 }
-
-.speed-reference[data-size="1"] {
-  --speed-reference-base-height: calc(292px * var(--scale));
-  --speed-reference-chart-height: calc(123px * var(--scale));
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "results" "action" "message" "history";
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  column-gap: 0;
-}
+.speed-reference[data-size="1"] { --speed-reference-chart-height: calc(123px * var(--scale)); }
 
 .speed-reference__results {
   grid-area: results;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  column-gap: calc(10px * var(--scale));
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
-  padding-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-hairline);
 }
-
+.speed-reference__results[data-action="true"] { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
 .speed-reference__metric {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
 }
-
+.speed-reference__metric-reading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--control-icon-size);
+  grid-template-rows: auto;
+  align-items: center;
+  column-gap: calc(6px * var(--scale));
+  row-gap: calc(2px * var(--scale));
+  min-width: 0;
+}
+.speed-reference__metric-value {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: baseline;
+  gap: calc(3px * var(--scale));
+  min-width: 0;
+  container-type: inline-size;
+}
+.speed-reference__metric-value > .stat__unit {
+  flex: none;
+  width: calc(14px * var(--scale));
+  white-space: nowrap;
+}
+.speed-reference__metric-reading > .speed-action { display: contents; }
+.speed-reference__metric-reading > .speed-action > .btn {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: center;
+}
+.speed-reference__metric-reading > .speed-action > .speed__wait {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+}
 .speed-reference__metric-label {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
   min-height: calc(14px * var(--scale));
   color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: 1;
   white-space: nowrap;
 }
-
+.speed-reference__metric-label > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .speed-reference__metric-label > svg {
   flex: none;
   width: calc(14px * var(--scale));
   height: calc(14px * var(--scale));
   color: var(--accent);
 }
-
+/* На узком A подписи остаются целыми рядом с новой ячейкой запуска. */
+.speed-reference[data-layout="a"][data-size="1"]:not([data-gauge="true"]) .speed-reference__metric-label {
+  font-size: calc(10px * var(--scale));
+  gap: calc(2px * var(--scale));
+}
+.speed-reference[data-layout="a"][data-size="1"]:not([data-gauge="true"]) .speed-reference__metric-label > svg {
+  width: calc(12px * var(--scale));
+  height: calc(12px * var(--scale));
+}
 .speed-reference__metric-label .dot,
 .speed-reference__ping .dot {
+  flex: none;
   width: calc(5px * var(--scale));
   height: calc(5px * var(--scale));
   margin-inline: calc(4.5px * var(--scale));
 }
-
 .speed-reference__metric .stat__main {
   flex-direction: column;
   align-items: flex-start;
   gap: calc(2px * var(--scale));
 }
-
+/* У кнопки своя ячейка. Число подстраивается под оставшуюся ширину колонки. */
 .speed-reference__metric .stat__value {
-  font-size: var(--speed-reference-number);
+  font-size: min(var(--speed-reference-number), calc(180cqw / var(--speed-reference-digits)));
   line-height: 1;
 }
-
+.speed-reference__metric-reading .stat__value {
+  flex: none;
+  font-size: min(var(--speed-reference-number), calc((100cqw - 17px * var(--scale)) * 1.8 / var(--speed-reference-digits)));
+}
 .speed-reference__metric .stat__unit {
   color: var(--text-muted);
   font-size: var(--text-2xs);
@@ -94,69 +125,23 @@
   text-transform: none;
   letter-spacing: normal;
 }
-
-.speed-reference[data-layout="a"][data-size="1"] .speed-reference__metric .stat__value {
-  font-size: calc(var(--speed-reference-number) * 5 / var(--speed-reference-digits));
-}
-
-.speed-reference__action {
-  grid-area: action;
-  display: flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.speed-reference__action > .btn {
-  width: 100%;
-  min-width: 0;
-  min-height: calc(30px * var(--scale));
-  padding-block: calc(5px * var(--scale));
-  border-radius: 6px;
-  line-height: 1;
-}
-
-.speed-reference__action .btn:disabled {
-  border-color: var(--border-card);
-  color: var(--text-muted);
-  opacity: 1;
-}
-
+.speed-reference .speed-action .btn:disabled { border-color: var(--border-card); color: var(--text-muted); opacity: 1; }
 .speed-reference__message {
-  grid-area: message;
-  align-self: center;
+  grid-column: 1 / -1;
   min-width: 0;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--status-danger);
   font-size: var(--text-xs);
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
-
-.speed-reference__message[data-failed="true"] {
-  color: var(--status-danger);
-}
-
-.speed-reference[data-size="1"] .speed-reference__message {
-  text-align: center;
-}
-
 .speed-reference__history {
   grid-area: history;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
   min-width: 0;
   min-height: 0;
 }
-
-.speed-reference__history-label {
-  flex: none;
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-  line-height: calc(14px * var(--scale));
-  overflow-wrap: anywhere;
-}
-
 .speed-reference__chart {
   flex: none;
   height: var(--speed-reference-chart-height);
@@ -164,14 +149,7 @@
   min-height: 0;
   background: none;
 }
-
-.speed-reference__chart > .trend {
-  min-height: 0;
-  background: none;
-}
-
-/* В утверждённом узком GPT легенда и подписи шкалы остаются. Пороги
- * исходной .speed не распространяются на эту независимую разметку. */
+.speed-reference__chart > .trend { min-height: 0; background: none; }
 .speed-reference .trend__legend,
 .speed-reference__legend {
   display: flex;
@@ -182,147 +160,52 @@
   font-size: var(--text-2xs);
   line-height: 1.1;
 }
+.speed-reference .trend__mark { color: var(--text-muted); }
+.speed-reference__chart--columns { display: flex; flex-direction: column; gap: var(--space-2); }
+.speed-reference__chart--columns > .speed__columns { flex: 1; min-height: 0; }
+.speed-reference__key { display: inline-flex; align-items: center; gap: var(--space-2); }
+.speed-reference__sample { width: calc(14px * var(--scale)); border-top: var(--stroke-line) solid var(--accent); }
+.speed-reference__sample--dashed { border-top-style: dashed; }
 
-.speed-reference .trend__mark {
-  color: var(--text-muted);
-}
-
-.speed-reference__chart--columns {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.speed-reference__chart--columns > .speed__columns {
-  flex: 1;
-  min-height: 0;
-}
-
-.speed-reference__key {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.speed-reference__sample {
-  width: calc(14px * var(--scale));
-  border-top: var(--stroke-line) solid var(--accent);
-}
-
-.speed-reference__sample--dashed {
-  border-top-style: dashed;
-}
-
-/* B: абсолютные результаты слева, история и сообщение справа; действие
- * отдельной строкой снизу. Контейнер имеет собственную минимальную высоту,
- * поэтому подгонка окна не замыкает высоту графика на высоту окна. */
+/* B: запуск справа от числа Ping. История заполняет высоту трёх итогов. */
 .speed-reference[data-layout="b"] {
-  --speed-reference-base-height: calc(252px * var(--scale));
   --speed-reference-chart-height: calc(148px * var(--scale));
   grid-template-columns: calc(112px * var(--scale)) minmax(0, 1fr);
-  grid-template-areas: "results history" "results message" "action action";
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas: "results history";
   column-gap: var(--space-4);
-  row-gap: var(--space-3);
 }
-
 .speed-reference[data-layout="b"] .speed-reference__results {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: 0 var(--space-4) 0 0;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 0;
   border-bottom: 0;
   border-right: 1px solid var(--border-hairline);
 }
-
+.speed-reference[data-layout="b"] .speed-reference__chart {
+  flex: 1;
+  height: auto;
+  min-height: var(--speed-reference-chart-height);
+}
 .speed-reference[data-layout="b"][data-size="1"] {
   --speed-reference-number: calc(22px * var(--scale));
-  --speed-reference-base-height: calc(214px * var(--scale));
   --speed-reference-chart-height: calc(160px * var(--scale));
-  grid-template-columns: calc(78px * var(--scale)) minmax(0, 1fr);
-  grid-template-areas: "results history" "results message" "action action";
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  column-gap: calc(8px * var(--scale));
-  row-gap: calc(6px * var(--scale));
+  grid-template-columns: calc(84px * var(--scale)) minmax(0, 1fr);
+  column-gap: var(--space-2);
 }
-.speed-reference[data-layout="b"][data-size="1"] .speed-reference__results { gap: calc(10px * var(--scale)); padding-right: calc(6px * var(--scale)); }
-.speed-reference[data-layout="b"][data-size="1"] .speed-reference__metric .stat__value { font-size: calc(var(--speed-reference-number) * 5 / var(--speed-reference-digits)); }
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__results { padding-right: calc(6px * var(--scale)); }
 .speed-reference[data-layout="b"][data-size="1"] .speed-reference__metric-label { font-size: calc(10px * var(--scale)); gap: calc(2px * var(--scale)); }
 .speed-reference[data-layout="b"][data-size="1"] .trend { --trend-gutter: 0px; }
 .speed-reference[data-layout="b"][data-size="1"] .trend__mark { display: none; }
-.speed-reference[data-layout="b"][data-size="1"] :is(.trend__legend, .speed-reference__legend) { gap: calc(8px * var(--scale)); }
+.speed-reference[data-layout="b"][data-size="1"] :is(.trend__legend, .speed-reference__legend) { gap: var(--space-2); }
 .speed-reference[data-layout="b"][data-size="1"] :is(.trend__key, .speed-reference__key) { gap: calc(3px * var(--scale)); }
-/* Во всех GPT размерах Download 3px, Upload 1px: остаток идёт в зазоры.
- * Тридцать пар занимают минимум 120px и помещаются даже в узком B при 90%. */
-.speed-reference .speed__columns[data-fit] { display: grid; grid-template-columns: repeat(var(--speed-count), minmax(4px, 1fr)); column-gap: 0; }
-.speed-reference .speed__columns[data-fit] .speed__pair { gap: 0; }
-.speed-reference .speed__columns[data-fit] .speed__bar { flex: none; width: var(--speed-bar); min-width: var(--speed-bar); }
-.speed-reference .speed__columns[data-fit] .speed__bar[data-accent="net-up"] { width: var(--speed-bar-up); min-width: var(--speed-bar-up); }
 
-/* Вид «Только замер»: та же дуга и шкала, истории и её заголовка нет. */
-.speed-reference__history[data-gauge="true"] {
-  align-items: center;
-  justify-content: center;
-}
-
-.speed-reference__gauge {
-  --arc-size: calc(96px * var(--scale));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-}
-
-.speed-reference__gauge .arc {
-  margin-bottom: calc(var(--arc-size) * -0.12);
-}
-
-.speed-reference__gauge .arc__track {
-  stroke: var(--border-hairline);
-}
-
-.speed-reference__gauge .stat__value {
-  font-size: calc(var(--speed-reference-dial-number) * 5 / var(--speed-reference-digits));
-  line-height: 1;
-}
-
-.speed-reference__gauge-unit {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: var(--space-1);
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  line-height: 1;
-}
-
-.speed-reference__gauge-unit svg {
-  flex: none;
-  width: calc(13px * var(--scale));
-  height: calc(13px * var(--scale));
-  color: var(--accent);
-}
-
-.speed-reference[data-layout="b"] .speed-reference__history .speed-reference__gauge {
-  --arc-size: calc(132px * var(--scale));
-  --speed-reference-dial-number: calc(34px * var(--scale));
-}
-
-.speed-reference[data-layout="b"][data-size="1"] .speed-reference__history .speed-reference__gauge {
-  --arc-size: calc(102px * var(--scale));
-  --speed-reference-dial-number: calc(28px * var(--scale));
-}
-
-/* Измерение: история и итоговые колонки скрыты в JSX. Видна текущая
- * скорость соответствующего направления, этап, город и измеренный Ping. */
-.speed-reference[data-running="true"][data-size] {
+/* Измерение истории: прежние этапы и сервер, без отдельного блока запуска. */
+.speed-reference[data-running="true"][data-layout][data-size] {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "run" "action" "message";
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: var(--space-4);
+  grid-template-areas: "run";
 }
-
 .speed-reference__run {
   grid-area: run;
   display: grid;
@@ -391,7 +274,7 @@
   min-width: 0;
 }
 
-.speed-reference__run > .speed-reference__gauge {
+.speed-reference__run > .speed-gauge {
   --arc-size: calc(120px * var(--scale));
   grid-area: gauge;
   align-self: center;
@@ -429,9 +312,9 @@
   grid-template-rows: auto auto minmax(calc(126px * var(--scale)), 1fr) auto;
 }
 
-.speed-reference[data-layout="a"][data-size="1"] .speed-reference__run > .speed-reference__gauge {
+.speed-reference[data-layout="a"][data-size="1"] .speed-reference__run > .speed-gauge {
   --arc-size: calc(144px * var(--scale));
-  --speed-reference-dial-number: calc(34px * var(--scale));
+  --speed-gauge-number: calc(34px * var(--scale));
 }
 
 .speed-reference[data-layout="a"][data-size="1"] .speed-reference__current-context {
@@ -468,9 +351,9 @@
   justify-content: flex-start;
 }
 
-.speed-reference[data-layout="b"] .speed-reference__run > .speed-reference__gauge {
+.speed-reference[data-layout="b"] .speed-reference__run > .speed-gauge {
   --arc-size: calc(132px * var(--scale));
-  --speed-reference-dial-number: calc(34px * var(--scale));
+  --speed-gauge-number: calc(34px * var(--scale));
 }
 
 .speed-reference[data-layout="b"] .speed-reference__current-context {
@@ -488,28 +371,19 @@
   justify-content: center;
 }
 
-.speed-reference[data-layout="b"][data-size="1"] .speed-reference__run > .speed-reference__gauge {
+.speed-reference[data-layout="b"][data-size="1"] .speed-reference__run > .speed-gauge {
   --arc-size: calc(112px * var(--scale));
-  --speed-reference-dial-number: calc(26px * var(--scale));
+  --speed-gauge-number: calc(26px * var(--scale));
 }
 
-/* «Только замер» одинаково читается в A/B: дуга, Upload/Ping, запуск. */
+/* «Только замер»: в покое запуск внутри дуги, три результата всегда снизу. */
 .speed-reference[data-gauge="true"][data-layout][data-size] {
-  min-height: 0;
+  --speed-reference-number: calc(22px * var(--scale));
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto auto auto;
-  grid-template-areas: "dial" "secondary" "message" "action";
-  gap: calc(8px * var(--scale));
+  grid-template-areas: "dial" "results";
+  gap: var(--space-2);
 }
 .speed-reference__dial { grid-area: dial; display: flex; flex-direction: column; align-items: center; gap: calc(6px * var(--scale)); }
 .speed-reference__dial > .speed-reference__current-phase { margin: 0; text-align: center; }
-.speed-reference__dial .speed-reference__gauge { --arc-size: calc(136px * var(--scale)); --speed-reference-dial-number: calc(32px * var(--scale)); }
-.speed-reference[data-size="1"] .speed-reference__dial .speed-reference__gauge { --arc-size: calc(116px * var(--scale)); --speed-reference-dial-number: calc(28px * var(--scale)); }
-.speed-reference__secondary { grid-area: secondary; display: flex; justify-content: center; gap: calc(16px * var(--scale)); font-size: calc(11px * var(--scale)); color: var(--text-secondary); white-space: nowrap; }
-.speed-reference__secondary > span { display: inline-flex; align-items: center; gap: calc(4px * var(--scale)); }
-.speed-reference__secondary strong { font-weight: 400; color: var(--text-primary); }
-.speed-reference__secondary small { font-size: calc(10px * var(--scale)); color: var(--text-muted); }
-.speed-reference__secondary svg { width: calc(12px * var(--scale)); height: calc(12px * var(--scale)); color: var(--accent); }
-.speed-reference__secondary .dot { width: calc(4px * var(--scale)); height: calc(4px * var(--scale)); }
-.speed-reference[data-size="1"] .speed-reference__secondary { gap: calc(8px * var(--scale)); font-size: calc(10px * var(--scale)); }
-.speed-reference[data-size="1"] .speed-reference__secondary > span { gap: calc(3px * var(--scale)); }
+.speed-reference__dial .speed-gauge { --arc-size: calc(120px * var(--scale)); --speed-gauge-number: calc(28px * var(--scale)); }
+.speed-reference[data-gauge="true"] .speed-reference__results { padding: 0; border: 0; }

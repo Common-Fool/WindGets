@@ -14,7 +14,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  margin-bottom: calc(8px * var(--scale));
+  margin-bottom: var(--space-1);
 }
 
 .clip-ref__list {
@@ -197,11 +197,11 @@
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: calc(6px * var(--scale));
+  gap: var(--space-1);
   min-width: 0;
-  min-height: calc(44px * var(--scale));
+  min-height: 0;
   box-sizing: border-box;
-  padding: calc(8px * var(--scale)) 0 calc(9px * var(--scale));
+  padding: calc(2px * var(--scale)) 0 var(--space-1);
   border-top: 1px solid var(--border-hairline);
 }
 
@@ -233,7 +233,7 @@
   justify-content: space-between;
   gap: calc(8px * var(--scale));
   min-width: 0;
-  min-height: calc(26px * var(--scale));
+  min-height: var(--control-icon-size);
 }
 
 .clip-ref__count {
@@ -249,15 +249,14 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  gap: calc(6px * var(--scale));
-  min-width: calc(99px * var(--scale));
-  height: calc(26px * var(--scale));
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
   box-sizing: border-box;
-  padding: 0 calc(7px * var(--scale));
+  padding: 0;
   border: 1px solid var(--border-card);
   border-radius: var(--radius-control);
   background: none;
-  color: var(--ui-accent);
+  color: var(--text-secondary);
   font-family: inherit;
   font-size: calc(12px * var(--scale));
   cursor: pointer;
@@ -267,8 +266,10 @@
   font-size: calc(16px * var(--scale));
 }
 
-.clip-ref__clear:hover {
-  border-color: var(--ui-accent);
+.clip-ref__clear:hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+  background: var(--surface-control-hover);
+  color: var(--text-primary);
 }
 
 .clip-ref__clear:disabled {
@@ -276,20 +277,6 @@
   border-color: var(--border-card);
   opacity: 0.55;
   cursor: default;
-}
-
-/* Свободное сужение ниже узкого пресета сохраняет счётчик и действие,
- * вместо того чтобы выталкивать кнопку очистки за правую рамку. */
-@container card (width < 13em) {
-  .clip-ref__clear {
-    min-width: calc(28px * var(--scale));
-    width: calc(28px * var(--scale));
-    padding: 0;
-  }
-
-  .clip-ref__clear-label {
-    display: none;
-  }
 }
 
 /* Общая .widget > .card уже является container: card / size.
@@ -315,6 +302,7 @@
   }
 
   .clip-ref__clear {
+    width: calc(20px * var(--scale));
     height: calc(20px * var(--scale));
   }
 }

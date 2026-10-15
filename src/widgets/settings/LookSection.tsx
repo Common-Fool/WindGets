@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import iconWidgetMosaic from "../../assets/app-icons/widget-mosaic.png";
+import iconMonoMosaic from "../../assets/app-icons/mono-mosaic.png";
 import { Slider } from "../../components/Slider";
 import { ChevronIcon } from "../../components/Icons";
 import {
@@ -16,7 +18,7 @@ import {
   setDesign,
   useLook,
 } from "../../lib/look";
-import { useSettings, type ChoiceRow } from "../../lib/settings";
+import { setAppIcon, useSettings, type ChoiceRow } from "../../lib/settings";
 import { WindowsFields } from "./WindowsSection";
 import { UpdateField } from "./UpdateField";
 import { setLanguage, useText, type Key, type Language } from "../../lib/i18n";
@@ -60,6 +62,11 @@ const COLOR_ROLES = [
   { id: "caution", title: "look.base.caution", usage: "look.base.cautionUsage", token: "--metric-ram" },
   { id: "negative", title: "look.base.negative", usage: "look.base.negativeUsage", token: "--metric-net-up" },
 ] as const satisfies readonly { id: string; title: Key; usage: Key; token: string }[];
+
+const APP_ICON_CHOICES = [
+  { id: "widget-mosaic", image: iconWidgetMosaic, title: "look.appIcon.widgetMosaic" },
+  { id: "mono-mosaic", image: iconMonoMosaic, title: "look.appIcon.monoMosaic" },
+] as const satisfies readonly { id: string; image: string; title: Key }[];
 
 /** Готовые образцы «Одного акцента»; любой другой — полем HEX или пипеткой. */
 const ACCENT_CHOICES: { color: string; title: Key }[] = [
@@ -242,15 +249,65 @@ export function AppearanceSection() {
         <div className="field__scale"><span>{t("look.opacityLow")}</span><span>{t("look.opacityHigh")}</span></div>
       </div>
     ) },
+    { id: "app-icon", content: <AppIconPicker /> },
   ];
   if (look.effectiveDesign === "reference") {
-    const order = ["design", "design-error", "scope", "palette", "single", "custom", "glass", "vivid", "opacity", "legend"];
+    const order = ["design", "design-error", "scope", "palette", "single", "custom", "glass", "vivid", "opacity", "legend", "app-icon"];
     fields.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   }
 
   return (
     <div className="rows" data-settings-page={look.effectiveDesign === "reference" ? "appearance" : undefined}>
       {fields.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>)}
+    </div>
+  );
+}
+
+function AppIconPicker() {
+  const settings = useSettings();
+  const t = useText();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+
+  async function choose(id: string) {
+    if (pending || id === settings.appIcon) return;
+    setPending(true);
+    setError(false);
+    try {
+      await setAppIcon(id);
+    } catch {
+      setError(true);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="field" data-look-field="app-icon">
+      <div className="field__head">
+        <span className="field__name">{t("look.appIcon")}</span>
+      </div>
+      <div className="app-icon-grid" role="group" aria-label={t("look.appIcon")}>
+        {APP_ICON_CHOICES.map((option) => {
+          const selected = settings.appIcon === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className="app-icon-choice"
+              aria-label={t(option.title)}
+              aria-pressed={selected}
+              disabled={pending}
+              onClick={() => void choose(option.id)}
+            >
+              <img src={option.image} alt="" />
+              <span className="app-icon-choice__name">{t(option.title)}</span>
+              {selected && <span className="app-icon-choice__check" aria-hidden="true">✓</span>}
+            </button>
+          );
+        })}
+      </div>
+      {error && <p className="note note--error" role="alert">{t("look.appIconError")}</p>}
     </div>
   );
 }

@@ -86,7 +86,7 @@ export function PasswordReference({ layout, options, value, strength, counts, co
   );
   const generate = (
     <div className="pass-reference__generate">
-      <Button icon={<RefreshIcon />} onClick={onGenerate}>{t("password.generate")}</Button>
+      <Button icon={<RefreshIcon />} label={t("password.generate")} onClick={onGenerate} />
     </div>
   );
 

@@ -44,6 +44,59 @@ static LAYOUT_SCALE: Mutex<BTreeMap<String, f64>> = Mutex::new(BTreeMap::new());
 /// выше, чем стояло, и за вечер уползало бы к верхнему краю.
 static LIFTED: Mutex<BTreeMap<String, Lift>> = Mutex::new(BTreeMap::new());
 
+/// Трей появляется раньше окон. До Ready незавершённую сборку не лечим перезапуском.
+static RUNTIME_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn runtime_ready() {
+    RUNTIME_READY.store(true, Ordering::SeqCst);
+}
+
+/// По явному действию в трее восстанавливает приложение с потерянными HWND.
+///
+/// Tauri может держать WebviewWindow, когда нативного окна уже нет. Простые
+/// show/SetWindowPos тогда ничего не показывают. Перезапускаем весь runtime:
+/// общая среда WebView2 могла потерять сразу все окна, включая настройки.
+/// Только по действию человека, без фонового цикла повторных перезапусков.
+pub fn recover_unavailable(app: &AppHandle) -> bool {
+    #[cfg(windows)]
+    {
+        use ::windows::Win32::UI::WindowsAndMessaging::IsWindow;
+
+        if app.state::<Shutdown>().started() {
+            return true;
+        }
+        if !RUNTIME_READY.load(Ordering::SeqCst) {
+            return false;
+        }
+
+        let settings = app.state::<SettingsState>().get();
+        // Проверяем существующие объекты: включаемый модуль ещё может строиться,
+        // а выключенный — уже разбираться. Отсутствие его метки само по себе нормально.
+        for (label, window) in app.webview_windows() {
+            if label != crate::settings_window::LABEL
+                && !widgets::find(&label).is_some_and(|widget| {
+                    settings.widget(widget).enabled
+                }) {
+                continue;
+            }
+            let alive = window.hwnd()
+                .map(|hwnd| unsafe { IsWindow(Some(hwnd)).as_bool() })
+                .unwrap_or(false);
+            if !alive {
+                eprintln!("окно «{label}» потеряло HWND; восстанавливаем приложение по действию в трее");
+                // С текущих потерянных окон геометрию не читаем: на диске остаётся
+                // последняя исправная раскладка. Признак разрешает ExitRequested.
+                app.state::<Shutdown>().begin();
+                app.request_restart();
+                return true;
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+    false
+}
+
 /// Долг подъёма и место, куда мы окно этим подъёмом поставили.
 ///
 /// ВАЖНО: **место здесь не для отчётности, а чтобы отличить своё поднятие от
@@ -639,6 +692,9 @@ pub fn create(app: &AppHandle, widget: &'static Widget) -> Result<WebviewWindow,
         // Пол, а не размер по содержимому: узкую карточку выбирают сами, и
         // сохранённый размер бывает вдвое меньше реестрового
         .min_inner_size(floor.width, floor.height)
+        // Развернуть виджет на весь экран нечем и незачем: без кнопки
+        // развёртывания Snap не тянет его и к верхнему краю (`snap.rs`, `Moved`)
+        .maximizable(false)
         .decorations(widget.chrome)
         .transparent(!widget.chrome)
         .shadow(widget.chrome)

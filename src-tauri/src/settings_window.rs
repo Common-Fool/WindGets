@@ -191,6 +191,8 @@ pub struct SettingsView {
     pub design: settings::Design,
     /// Выбранный язык. `None` — «как в Windows».
     pub language: Option<String>,
+    /// Значок системного трея.
+    pub app_icon: String,
     /// Все языки — самоназваниями, они не переводятся.
     pub languages: Vec<ChoiceRow>,
     /// Язык Windows: подпись «Как в Windows · Русский» говорит, что именно
@@ -267,6 +269,7 @@ fn view(app: &AppHandle) -> SettingsView {
         sound_mixer_collapsed: settings.sound_mixer_collapsed,
         design: settings.design,
         language: settings.language.clone(),
+        app_icon: settings.app_icon.clone(),
         languages: crate::i18n::LANGUAGES
             .iter()
             .map(|language| ChoiceRow {
@@ -532,6 +535,24 @@ fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
 #[tauri::command]
 pub fn settings_view(app: AppHandle) -> SettingsView {
     view(&app)
+}
+
+/// Меняет значок трея и сохраняет его выбор.
+#[tauri::command]
+pub fn set_app_icon(app: AppHandle, id: String) -> Result<(), String> {
+    if !settings::APP_ICON_IDS.contains(&id.as_str()) {
+        return Err(format!("неизвестный значок трея: {id}"));
+    }
+
+    let state = app.state::<SettingsState>();
+    if state.get().app_icon == id {
+        return Ok(());
+    }
+
+    crate::tray::set_icon(&app, &id)?;
+    settings::update(&app, &state, |settings| settings.app_icon = id);
+    emit(&app);
+    Ok(())
 }
 
 /// Одна галочка в строке виджета: `top`, `through` или `lock`.

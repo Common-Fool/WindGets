@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useText } from "../../lib/i18n";
 import { fileSize, formatLetterTime } from "../../lib/format";
 import { copyToClipboard } from "../../lib/copy";
@@ -7,30 +6,6 @@ import { deleteLetter, markMailRead, type LetterBody } from "../../lib/mail";
 import { Linked } from "../../components/Linked";
 import { BoxCheckedIcon, BoxIcon, CheckIcon, ClipIcon, CloseIcon, EraseIcon, ExternalLinkIcon, RefreshIcon } from "../../components/Icons";
 import type { LetterPopupProps, LetterRowProps } from "./MailWidget";
-
-type HeaderProps = {
-  tabs: ReactNode;
-  context: string;
-  status: string;
-  error: boolean;
-  search: ReactNode;
-  controls: ReactNode;
-};
-
-/** Только расположение: поиск, отбор и действия остаются у MailWidget. */
-export function ReferenceMailHeader({ tabs, context, status, error, search, controls }: HeaderProps) {
-  return (
-    <div className="mail-ref__chrome">
-      <div className="mail-ref__tabs">{tabs}</div>
-      <span className="mail-ref__status" data-error={error} title={status}>{status}</span>
-      <div className="mail-ref__globals">
-        <span className="mail-ref__context" title={context}>{context}</span>
-        {controls}
-      </div>
-      <div className="mail-ref__search">{search}</div>
-    </div>
-  );
-}
 
 /** A — колонки; B — тема и метаданные. Команды и ключи те же, что у Claude. */
 export function ReferenceLetterRow({ letter, onSelect, act, busy, picked, anyPicked, onPick, layout = 0 }: LetterRowProps) {

@@ -17,6 +17,7 @@ import "./Dots.css";
  * оно всплывает подсказкой, а «+» в карточке нет: ящики заводят в настройках.
  */
 type Props = {
+  className?: string;
   /** Сколько страниц. Ноль и один — точку всё равно рисуем. */
   count: number;
   /** Какая открыта. */
@@ -34,14 +35,14 @@ type Props = {
   scrollable?: boolean;
 };
 
-export function Dots({ count, active, limit, onPick, onAdd, titles, disabled = false, scrollable = false }: Props) {
+export function Dots({ count, active, limit, onPick, onAdd, titles, disabled = false, scrollable = false, className }: Props) {
   const t = useText();
   // Пустая книга рисуется как одна страница: пустая заметка — это страница,
   // которую ещё не написали, а не отсутствие страниц
   const shown = Math.max(count, 1);
 
   return (
-    <div className="dots" data-no-drag={scrollable || undefined}>
+    <div className={["dots", className].filter(Boolean).join(" ")} data-no-drag={scrollable || undefined}>
       {Array.from({ length: shown }, (_, at) => (
         <button
           key={at}

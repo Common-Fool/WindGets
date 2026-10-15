@@ -36,11 +36,6 @@
   scrollbar-gutter: stable;
 }
 
-.totp-ref__list::-webkit-scrollbar { width: 6px; }
-.totp-ref__list::-webkit-scrollbar-track { background: var(--surface-track); border-radius: var(--radius-pill); }
-.totp-ref__list::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-pill); }
-.totp-ref__list::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
-
 /* У sample нет рамки и padding: contentRect равен полному шагу строки. */
 .totp-ref__item {
   height: var(--totp-row);

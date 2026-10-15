@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useWindowDrag } from "../../lib/drag";
@@ -183,6 +183,36 @@ export function TodoWidget() {
   const alone = board.lists.length <= 1;
   const finished = tasks.some((task) => task.done);
 
+  const list = useRef<HTMLUListElement>(null);
+  useLayoutEffect(() => {
+    const viewport = list.current;
+    if (viewport === null) return;
+    const rows = Array.from(viewport.children) as HTMLElement[];
+    const fit = () => {
+      const box = viewport.getBoundingClientRect();
+      // Размеры DOMRect сохраняют дробную часть масштаба, clientHeight её теряет.
+      const tolerance = 0.25 / window.devicePixelRatio;
+      for (const row of rows) {
+        const bounds = row.getBoundingClientRect();
+        // Строка выше самого viewport может прокручиваться частями. Остальные
+        // скрываем только при настоящем пересечении нижнего края, не по индексу.
+        const clipped = bounds.height <= box.height && bounds.top < box.bottom && bounds.bottom > box.bottom + tolerance;
+        row.toggleAttribute("data-clipped", clipped);
+        row.inert = clipped;
+      }
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    rows.forEach((row) => observer.observe(row));
+    viewport.addEventListener("scroll", fit, { passive: true });
+    fit();
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scroll", fit);
+      rows.forEach((row) => { row.removeAttribute("data-clipped"); row.inert = false; });
+    };
+  }, [tasks, reference, layout, editing]);
+
   /**
    * Одна дверь на все правки доски: пишем сразу, задержки тут не нужно.
    *
@@ -306,11 +336,12 @@ export function TodoWidget() {
   }
 
   return (
-    <div className={reference ? "widget widget--todo-reference" : "widget"}>
+    <div className={reference ? "widget widget--todo widget--todo-reference" : "widget widget--todo"}>
       {/* Акцент нейтральный: дела не железо, метрики у них нет */}
       <GlassCard accent="neutral">
         <div className={reference ? "todo todo--reference" : "todo"} data-layout={layout} data-alarm={alarm !== null}>
           <Dots
+            className="hover-scrollbar"
             scrollable={reference}
             count={board.lists.length}
             active={board.active}
@@ -329,7 +360,7 @@ export function TodoWidget() {
           {tasks.length === 0 ? (
             <p className="todo__empty">{reference && !ready ? alarm === "read" ? "" : t("common.loading") : t("todo.empty")}</p>
           ) : (
-            <ul className="todo__list">
+            <ul className="todo__list hover-scrollbar" ref={list} tabIndex={0} aria-label={t("widget.todo")}>
               {tasks.map((task) => (
                 /*
                  * Строка дела — не кнопка: за кнопку окно не потащишь, а тянут
@@ -354,10 +385,7 @@ export function TodoWidget() {
                   onContextMenu={(event) => {
                     /*
                      * ВАЖНО: **в поле правки меню строки не всплывает.** Там
-                     * правая кнопка — это «Вырезать / Копировать / Вставить»
-                     * движка, без которых в строку нечем вставить текст мышью.
-                     * Событие уходит дальше нетронутым: гасит его оболочка
-                     * окна, и она же оставляет полю его собственное меню.
+                     * событие уходит оболочке окна, которая гасит меню движка.
                      */
                     if (event.target instanceof Element && event.target.closest("input")) {
                       return;

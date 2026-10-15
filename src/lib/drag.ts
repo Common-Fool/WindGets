@@ -36,6 +36,18 @@ export const KEEPS_THE_MOUSE = "button, input, textarea, select, a, label, [data
 const DRAG_THRESHOLD = 4;
 
 /**
+ * Нажатие пришлось на полосу прокрутки: за неё крутят список, а не тянут окно.
+ *
+ * Полоса — часть самого прокручиваемого элемента, и нажатие на неё приходит
+ * ему же. Прежде списки почты целиком стояли в `data-no-drag` ради одной
+ * полосы, и окно тянулось только за края.
+ */
+function onScrollbar(target: Element, x: number): boolean {
+  const bar = target.clientWidth > 0 ? target.getBoundingClientRect().left + target.clientLeft + target.clientWidth : 0;
+  return target.scrollHeight > target.clientHeight && target.clientWidth > 0 && x >= bar;
+}
+
+/**
  * Окно тянется за любое пустое место карточки.
  *
  * Пришло на смену `data-tauri-drag-region` в шапке: шапки у виджетов больше
@@ -84,7 +96,11 @@ export function useWindowDrag(ignoresLock = false): void {
       if (locked) return;
       if (!(event.target instanceof Element)) return;
 
-      if (event.target.closest(KEEPS_THE_MOUSE) !== null) return;
+      // Кнопка во всю карточку (пустое состояние почты и 2FA) — ручка окна:
+      // щелчок без сдвига остаётся ей, сдвиг уводит окно
+      const keeper = event.target.closest(KEEPS_THE_MOUSE);
+      if (keeper !== null && !keeper.hasAttribute("data-drags")) return;
+      if (onScrollbar(event.target, event.clientX)) return;
 
       release();
 

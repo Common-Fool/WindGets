@@ -97,13 +97,11 @@ function AppClipboard() {
             </span>
             <Button
               variant="outline"
-              icon="✕"
+              icon={<EraseIcon />}
               label={t("clipboard.clearHint")}
               disabled={entries.length === 0}
               onClick={() => control({ kind: "clear" })}
-            >
-              {t("common.clear")}
-            </Button>
+            />
           </div>
         </div>
       </GlassCard>
@@ -256,7 +254,6 @@ function ReferenceClipboard() {
                 onClick={() => { void clear(); }}
               >
                 <EraseIcon />
-                <span className="clip-ref__clear-label">{t("common.clear")}</span>
               </button>
             </div>
           </div>
