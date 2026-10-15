@@ -64,6 +64,12 @@ export function SpeedtestWidget() {
   const running = view.status === "running";
   const reason = failure ?? reasonOf(view);
 
+  // Отказ запуска («Уже меряем» от второго нажатия) живёт до начала замера:
+  // иначе он стоял бы под итогами и после удачного конца
+  useEffect(() => {
+    if (view.status === "running") setFailure(undefined);
+  }, [view.status]);
+
   const isUpload = running && view.stage === "upload";
   const activeSpeed = isUpload ? measured.upload : measured.download;
   const activeAccent = isUpload ? "net-up" : "net-down";
@@ -437,7 +443,9 @@ function useLockout(view: Snapshot): number {
   const previous = useRef(view.status);
 
   useEffect(() => {
-    if (view.status === "failed" && previous.current !== "failed") {
+    // Только из идущего замера: открытое окно сперва видит «простой» до
+    // ответа Rust, и вчерашний отказ выглядел бы новым переходом
+    if (view.status === "failed" && previous.current === "running") {
       setUntil(Date.now() + LOCKOUT);
     }
     previous.current = view.status;

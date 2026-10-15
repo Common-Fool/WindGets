@@ -293,7 +293,12 @@ async fn install(app: &AppHandle) -> Result<(), Code> {
     publish(app);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
-    app.exit(0);
+    // ВАЖНО: **выходим штатной дорогой, а не голым `app.exit`.** Приложение
+    // живёт в трее, и `ExitRequested` отменяется, пока не поднят признак
+    // `Shutdown`: голый выход отменялся бы, а установщик упирался бы в
+    // работающий процесс. `quit` поднимает признак и пишет места окон — а писать
+    // их можно только из главного потока, отсюда `on_main`.
+    crate::windows::on_main(app, |app| crate::windows::quit(&app));
     Ok(())
 }
 

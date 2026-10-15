@@ -173,9 +173,10 @@ fn preview_widget(app: &AppHandle, id: &str, change: impl FnOnce(&mut settings::
     };
 
     app.state::<SettingsState>().update_with(|settings| {
-        let mut own = settings.widget(widget);
-        change(&mut own);
-        settings.set_widget(widget.id, own);
+        settings.edit_widget(widget, |own| {
+            change(own);
+            true
+        });
     });
 
     // Только тому окну, которого касается: остальным пересчитывать нечего

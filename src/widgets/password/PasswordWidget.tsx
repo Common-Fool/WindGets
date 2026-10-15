@@ -10,7 +10,7 @@ import {
   type CharClass,
   type Options,
 } from "../../lib/password";
-import { copyToClipboard } from "../../lib/copy";
+import { copySecret } from "../../lib/copy";
 import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
@@ -73,7 +73,7 @@ export function PasswordWidget() {
   const copy = () => {
     const revision = resultRevision.current;
     const request = ++copyRequest.current;
-    void copyToClipboard(value).then((done) => {
+    void copySecret(value).then((done) => {
       // В GPT старый ответ копии не подтверждает уже созданный новый пароль.
       // Claude сохраняет прежнюю обработку ответа.
       if (referenceNow.current && (revision !== resultRevision.current || request !== copyRequest.current)) return;
@@ -169,6 +169,7 @@ export function PasswordWidget() {
               value={options.length}
               min={MIN_LENGTH}
               max={MAX_LENGTH}
+              ariaLabel={t("password.length")}
               onChange={(next) => change("length", next)}
             />
             <span className="pass__length tabular">{options.length}</span>

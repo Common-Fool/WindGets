@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 /*
  * Копирование в буфер обмена: одно на все виджеты.
  *
@@ -20,6 +22,17 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     return true;
   } catch {
     return copyThroughSelection(text);
+  }
+}
+
+/** Копирует секрет нативно с запретом истории и облачного буфера Windows. */
+export async function copySecret(text: string): Promise<boolean> {
+  try {
+    await invoke("clipboard_copy_secret", { text });
+    return true;
+  } catch {
+    // Обычная копия сняла бы защитные пометки: на отказе возвращаем отказ.
+    return false;
   }
 }
 

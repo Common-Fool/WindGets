@@ -278,6 +278,14 @@ pub fn rescale(app: &AppHandle) {
 
         let now = size.to_logical::<f64>(factor);
         let ratio = to / from;
+        crate::snap::release_size_guard(&window);
+
+        // Сжимая, сперва опускаем предел: прежний, крупный, Windows приложила
+        // бы к новому размеру, и окно у своего минимума осталось бы прежним
+        // при уже записанном новом масштабе
+        if ratio < 1.0 {
+            let _ = window.set_min_size(Some(widget.min_size(to)));
+        }
 
         if widget.flexible {
             let _ = window.set_size(LogicalSize::new(now.width * ratio, now.height * ratio));
@@ -340,6 +348,7 @@ pub fn apply_preset(
     let settings = window.app_handle().state::<SettingsState>().get();
     let own = settings.widget(widget);
     let (width, own_height) = widget.design_size(settings.design, view, index, own.layout);
+    crate::snap::release_size_guard(window);
 
     let (Ok(factor), Ok(size)) = (window.scale_factor(), window.inner_size()) else {
         return;
@@ -670,6 +679,40 @@ fn build_window(app: &AppHandle, widget: &'static Widget, visible: bool) -> Resu
 pub const BROWSER_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --process-per-site";
 
+/// Гасит у окна меню WebView2 и его сочетания клавиш — нативно, в настройках
+/// движка.
+///
+/// ВАЖНО: **слушатель `contextmenu` в `Shell` не единственная защита и не
+/// первая.** Он ставится, когда смонтирован React, а окно показывается раньше:
+/// пока грузится скрипт или если он упал, правая кнопка дала бы «Обновить» и
+/// «Печать». Сочетания (`Ctrl+P`, `F5`, `Ctrl+R`, `Ctrl+F`) `preventDefault` на
+/// меню не трогает вовсе. Правку текста (`Ctrl+C`, `Ctrl+V`, `Ctrl+Z`) запрет
+/// сочетаний браузера не задевает — у WebView2 это отдельная группа клавиш.
+///
+/// Обязана стоять у каждого окна: виджетов, настроек, напоминания.
+pub fn lock_browser(window: &WebviewWindow) {
+    let label = window.label().to_owned();
+    let done = window.with_webview(move |webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+        use windows::core::Interface;
+
+        // SAFETY: контроллер отдаёт Tauri в главном потоке окна, а это и есть
+        // поток, в котором WebView2 принимает вызовы своих настроек
+        let result = unsafe {
+            webview.controller().CoreWebView2().and_then(|core| core.Settings()).and_then(|settings| {
+                settings.SetAreDefaultContextMenusEnabled(false)?;
+                settings.cast::<ICoreWebView2Settings3>()?.SetAreBrowserAcceleratorKeysEnabled(false)
+            })
+        };
+        if let Err(error) = result {
+            eprintln!("меню WebView2 у «{label}» не погашено: {error}");
+        }
+    });
+    if let Err(error) = done {
+        eprintln!("меню WebView2 у «{}» не погашено: {error}", window.label());
+    }
+}
+
 /// Первая половина сборки: сам webview, спрятанным.
 ///
 /// ВАЖНО: **на ходу — только из потока, который не держит главный.** Сборка
@@ -730,6 +773,7 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     if !widget.chrome {
         keep_frameless(window);
     }
+    lock_browser(window);
 
     if widget.id == "converter" {
         // Прежние фиксированные min/max больше не ограничивают ручной resize.
@@ -739,7 +783,7 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
         let _ = window.set_min_size(Some(widget.min_size(scale)));
     }
     let _ = window.restore_state(state_flags());
-    sound_panel::restore_anchor(&window);
+    sound_panel::restore_anchor(window);
     if widget.id == "sound" {
         // Модуль мог разобрать прежнее окно с раскрытой панелью. Новое
         // начинает с основы и не наследует долг её старого роста вниз.
@@ -753,7 +797,7 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     if !widget.flexible {
         apply_preset(window, widget, own.size, own.view, scale);
     }
-    if widget.id == "sound" { sound_panel::clamp_base(&window); }
+    if widget.id == "sound" { sound_panel::clamp_base(window); }
 
     apply(window, own, resizes(widget, &settings, own));
 

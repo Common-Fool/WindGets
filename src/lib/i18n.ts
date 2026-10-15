@@ -95,9 +95,11 @@ type State = {
   /** `null` — словарь ещё не приехал, и окну рисовать нечем. */
   texts: Record<string, string> | null;
   text: Text;
+  /** Словарь не загрузился ни на своём языке, ни на английском. */
+  failed: boolean;
 };
 
-let state: State = { texts: null, text: makeText("ru", null) };
+let state: State = { texts: null, text: makeText("ru", null), failed: false };
 const listeners = new Set<() => void>();
 let started = false;
 
@@ -111,15 +113,27 @@ async function adopt(code: string): Promise<void> {
   const ticket = ++loads;
 
   let texts: Record<string, string>;
+  let shown: Language = language;
   try {
     texts = await CATALOGS[language]();
   } catch {
-    return;
+    // ВАЖНО: **неприехавший словарь не оставляет окно пустым навсегда.**
+    // Прежде отказ молча возвращался, `Shell` ждал словаря вечно, и окно
+    // стояло прозрачным пятном. Сперва английский, потом — честный отказ
+    try {
+      texts = await CATALOGS.en();
+      shown = "en";
+    } catch {
+      if (ticket !== loads) return;
+      state = { ...state, failed: true };
+      for (const listener of listeners) listener();
+      return;
+    }
   }
   if (ticket !== loads) return;
 
-  document.documentElement.lang = LOCALES[language];
-  state = { texts, text: makeText(language, texts) };
+  document.documentElement.lang = LOCALES[shown];
+  state = { texts, text: makeText(shown, texts), failed: false };
   for (const listener of listeners) listener();
 }
 
@@ -167,6 +181,11 @@ export function useText(): Text {
 /** Словарь приехал: до него окну рисовать нечем, кроме ключей. */
 export function useTextReady(): boolean {
   return useSyncExternalStore(subscribe, () => state.texts !== null);
+}
+
+/** Словарь не загрузился вовсе: окну нечем писать, остаётся кнопка повтора. */
+export function useTextFailed(): boolean {
+  return useSyncExternalStore(subscribe, () => state.failed);
 }
 
 /** Выбор языка из окна настроек. `null` — «как в Windows». */

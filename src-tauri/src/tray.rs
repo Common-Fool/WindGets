@@ -34,15 +34,17 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(handle)
         .on_tray_icon_event(|tray, event| match event {
-            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => {
-                if !windows::recover_unavailable(tray.app_handle()) {
-                    raise_all(tray.app_handle());
-                }
+            // Сперва проверка потерянных окон: восстановление перезапускает
+            // приложение, и тогда само нажатие уже не нужно
+            TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                if !windows::recover_unavailable(tray.app_handle()) =>
+            {
+                raise_all(tray.app_handle());
             }
-            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
-                if !windows::recover_unavailable(tray.app_handle()) {
-                    settings_window::show(tray.app_handle());
-                }
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. }
+                if !windows::recover_unavailable(tray.app_handle()) =>
+            {
+                settings_window::show(tray.app_handle());
             }
             _ => {}
         });

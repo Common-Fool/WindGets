@@ -61,6 +61,8 @@ pub const BODY_MAX_CHARS: usize = 10_000;
 pub enum MailError {
     /// Учётная запись не задана полностью
     NoAccount,
+    /// Список получен до смены поколения папки: UID больше не тот.
+    Stale,
     /// Ошибка входа (сервер не пустил: неверный логин или пароль)
     Auth(String),
     /// Ошибка связи (не достучались до сервера: сеть, DNS, таймаут)
@@ -71,9 +73,20 @@ impl std::fmt::Display for MailError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoAccount => write!(f, "учётная запись не задана"),
+            Self::Stale => write!(f, "{}", tr!("mail.error.stale")),
             Self::Auth(msg) => write!(f, "сервер не пустил: {msg}"),
             Self::Network(msg) => write!(f, "не достучались до сервера: {msg}"),
         }
+    }
+}
+
+/// UID можно применять только к тому поколению папки, с которым его показали.
+/// Если сервер не сообщает поколение, сохраняем совместимость с ним.
+fn check_uid_validity(expected: Option<u32>, actual: Option<u32>) -> Result<(), MailError> {
+    if matches!((expected, actual), (Some(expected), Some(actual)) if expected != actual) {
+        Err(MailError::Stale)
+    } else {
+        Ok(())
     }
 }
 
@@ -314,6 +327,7 @@ async fn fetch_inbox_session(
     if mailbox.exists == 0 {
         let _ = session.logout().await;
         return Ok(Inbox {
+            uid_validity: mailbox.uid_validity,
             unseen,
             letters: Vec::new(),
             mailbox: mailbox_url,
@@ -325,6 +339,7 @@ async fn fetch_inbox_session(
     if last_uids.is_empty() {
         let _ = session.logout().await;
         return Ok(Inbox {
+            uid_validity: mailbox.uid_validity,
             unseen,
             letters: Vec::new(),
             mailbox: mailbox_url,
@@ -370,10 +385,38 @@ async fn fetch_inbox_session(
     letters.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| b.uid.cmp(&a.uid)));
 
     Ok(Inbox {
+        uid_validity: mailbox.uid_validity,
         unseen,
         letters,
         mailbox: mailbox_url,
     })
+}
+
+/// Сверяет поколение сразу при открытии папки, до любой команды с UID.
+async fn checked_inbox<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send>(
+    session: &mut async_imap::Session<T>,
+    uid_validity: Option<u32>,
+    writable: bool,
+) -> Result<(), MailError> {
+    let mailbox = if writable {
+        session.select("INBOX").await
+    } else {
+        session.examine("INBOX").await
+    }.map_err(|e| MailError::Network(format!("ошибка открытия INBOX: {e}")))?;
+    check_uid_validity(uid_validity, mailbox.uid_validity)
+}
+
+/// Дочитывает ответ STORE и проверяет tagged-статус, включая NO/BAD и обрыв.
+/// Поток uid_store в async-imap 0.11 отбрасывает финальный статус без проверки.
+async fn store_flags<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send>(
+    session: &mut async_imap::Session<T>,
+    uids: &str,
+    flag: &str,
+) -> Result<(), MailError> {
+    session
+        .run_command_and_check_ok(format!("UID STORE {uids} +FLAGS.SILENT ({flag})"))
+        .await
+        .map_err(|e| MailError::Network(format!("ошибка UID STORE: {e}")))
 }
 
 /// Помечает письмо прочитанным по UID с ограничением по времени в 15 секунд.
@@ -383,6 +426,7 @@ pub async fn mark_read(
     login: &str,
     password: &str,
     uids: &[u32],
+    uid_validity: Option<u32>,
 ) -> Result<(), MailError> {
     if host.trim().is_empty() || login.trim().is_empty() || password.is_empty() {
         return Err(MailError::NoAccount);
@@ -393,7 +437,7 @@ pub async fn mark_read(
 
     tokio::time::timeout(
         REQUEST_TIMEOUT,
-        mark_read_session(host, port, login, password, uids),
+        mark_read_session(host, port, login, password, uids, uid_validity),
     )
     .await
     .map_err(|_| {
@@ -410,23 +454,13 @@ async fn mark_read_session(
     login: &str,
     password: &str,
     uids: &[u32],
+    uid_validity: Option<u32>,
 ) -> Result<(), MailError> {
     let mut session = connect_and_login(host, port, login, password).await?;
 
-    session
-        .select("INBOX")
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка SELECT INBOX: {e}")))?;
+    checked_inbox(&mut session, uid_validity, true).await?;
 
-    let mut stream = session
-        .uid_store(uid_set(uids), "+FLAGS (\\Seen)")
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка UID STORE: {e}")))?;
-
-    while let Some(res) = stream.next().await {
-        let _ = res;
-    }
-    drop(stream);
+    store_flags(&mut session, &uid_set(uids), "\\Seen").await?;
 
     let _ = session.logout().await;
     Ok(())
@@ -469,39 +503,17 @@ async fn mark_all_read_session(
         .await
         .map_err(|e| MailError::Network(format!("ошибка SELECT INBOX: {e}")))?;
 
-    // Сперва пробуем одной командой на весь диапазон
-    let all_marked = match session.uid_store("1:*", "+FLAGS.SILENT (\\Seen)").await {
-        Ok(mut stream) => {
-            while let Some(res) = stream.next().await {
-                let _ = res;
-            }
-            true
-        }
-        Err(_) => false,
-    };
-
-    if !all_marked {
-        // Если сервер не принял диапазон 1:*, ищем непрочитанные вручную
+    // Сперва пробуем одной командой на весь диапазон; не принял сервер
+    // диапазон `1:*` — ищем непрочитанные сами, и уже их отказ — настоящий
+    if store_flags(&mut session, "1:*", "\\Seen").await.is_err() {
         let unseen = session
             .uid_search("UNSEEN")
             .await
             .map_err(|e| MailError::Network(format!("ошибка UID SEARCH UNSEEN: {e}")))?;
 
         if !unseen.is_empty() {
-            let uids = unseen
-                .iter()
-                .map(|u| u.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let mut stream = session
-                .uid_store(&uids, "+FLAGS.SILENT (\\Seen)")
-                .await
-                .map_err(|e| MailError::Network(format!("ошибка UID STORE UNSEEN: {e}")))?;
-
-            while let Some(res) = stream.next().await {
-                let _ = res;
-            }
-            drop(stream);
+            let uids = unseen.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+            store_flags(&mut session, &uids, "\\Seen").await?;
         }
     }
 
@@ -516,6 +528,7 @@ pub async fn delete_letter(
     login: &str,
     password: &str,
     uids: &[u32],
+    uid_validity: Option<u32>,
 ) -> Result<(), MailError> {
     if host.trim().is_empty() || login.trim().is_empty() || password.is_empty() {
         return Err(MailError::NoAccount);
@@ -526,7 +539,7 @@ pub async fn delete_letter(
 
     tokio::time::timeout(
         REQUEST_TIMEOUT,
-        delete_letter_session(host, port, login, password, uids),
+        delete_letter_session(host, port, login, password, uids, uid_validity),
     )
     .await
     .map_err(|_| {
@@ -543,14 +556,12 @@ async fn delete_letter_session(
     login: &str,
     password: &str,
     uids: &[u32],
+    uid_validity: Option<u32>,
 ) -> Result<(), MailError> {
     let mut session = connect_and_login(host, port, login, password).await?;
 
     // Открываем ящик INBOX на запись
-    session
-        .select("INBOX")
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка SELECT INBOX: {e}")))?;
+    checked_inbox(&mut session, uid_validity, true).await?;
 
     // Опрашиваем возможности сервера
     let capabilities = session
@@ -619,14 +630,7 @@ async fn delete_letter_session(
             .await
             .map_err(|e| MailError::Network(format!("ошибка UID COPY в корзину: {e}")))?;
 
-        let mut store_stream = session
-            .uid_store(uid_set(uids), "+FLAGS (\\Deleted)")
-            .await
-            .map_err(|e| MailError::Network(format!("ошибка UID STORE \\Deleted: {e}")))?;
-        while let Some(res) = store_stream.next().await {
-            let _ = res;
-        }
-        drop(store_stream);
+        store_flags(&mut session, &uid_set(uids), "\\Deleted").await?;
 
         /*
          * ВАЖНО: **сплошного `EXPUNGE` тут быть не должно.** Он выносит из
@@ -647,7 +651,7 @@ async fn delete_letter_session(
                 .map_err(|e| MailError::Network(format!("ошибка UID EXPUNGE: {e}")))?;
             tokio::pin!(exp_stream);
             while let Some(res) = exp_stream.next().await {
-                let _ = res;
+                res.map_err(|e| MailError::Network(format!("ошибка UID EXPUNGE: {e}")))?;
             }
         }
     }
@@ -721,6 +725,8 @@ fn parse_letter(
         // Чей ящик — знает только опрос: сессия IMAP о нашем списке ящиков не
         // слышала. Заполняет `mail/mod.rs`
         account: String::new(),
+        revision: String::new(),
+        uid_validity: None,
         uid,
         from,
         from_address,
@@ -754,10 +760,11 @@ pub async fn fetch_body(
     login: &str,
     password: &str,
     uid: u32,
+    uid_validity: Option<u32>,
 ) -> Result<LetterBody, MailError> {
     tokio::time::timeout(
         REQUEST_TIMEOUT,
-        fetch_body_session(host, port, login, password, uid),
+        fetch_body_session(host, port, login, password, uid, uid_validity),
     )
     .await
     .map_err(|_| {
@@ -774,15 +781,13 @@ async fn fetch_body_session(
     login: &str,
     password: &str,
     uid: u32,
+    uid_validity: Option<u32>,
 ) -> Result<LetterBody, MailError> {
     let mut session = connect_and_login(host, port, login, password).await?;
 
     // Только чтение и только PEEK: открытое письмо прочитанным не становится,
     // для этого есть своя кнопка
-    session
-        .examine("INBOX")
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка команды EXAMINE INBOX: {e}")))?;
+    checked_inbox(&mut session, uid_validity, false).await?;
 
     let mut stream = session
         .uid_fetch(uid.to_string(), format!("(BODY.PEEK[]<0.{BODY_LIMIT}>)"))
@@ -957,6 +962,7 @@ pub async fn search_inbox(
             .map(|link| link.to_owned())
             .or_else(|| super::web::mailbox_url(host));
         return Ok(Inbox {
+            uid_validity: None,
             unseen: 0,
             letters: Vec::new(),
             mailbox: mailbox_url,
@@ -988,7 +994,7 @@ async fn search_inbox_session(
     let mut session = connect_and_login(host, port, login, password).await?;
 
     // Открываем ящик строго только для чтения через EXAMINE (не SELECT!)
-    session
+    let mailbox = session
         .examine("INBOX")
         .await
         .map_err(|e| MailError::Network(format!("ошибка команды EXAMINE INBOX: {e}")))?;
@@ -1035,6 +1041,7 @@ async fn search_inbox_session(
     if found_uids.is_empty() {
         let _ = session.logout().await;
         return Ok(Inbox {
+            uid_validity: mailbox.uid_validity,
             unseen: 0,
             letters: Vec::new(),
             mailbox: mailbox_url,
@@ -1088,6 +1095,7 @@ async fn search_inbox_session(
     let unseen = letters.iter().filter(|l| !l.seen).count() as u32;
 
     Ok(Inbox {
+        uid_validity: mailbox.uid_validity,
         unseen,
         letters,
         mailbox: mailbox_url,
@@ -1833,6 +1841,90 @@ fn is_delimiter_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uid_validity_requires_the_same_known_generation() {
+        assert_eq!(check_uid_validity(Some(77), Some(77)), Ok(()));
+        assert_eq!(check_uid_validity(Some(77), Some(78)), Err(MailError::Stale));
+        assert_eq!(check_uid_validity(Some(77), None), Ok(()));
+        assert_eq!(check_uid_validity(None, Some(78)), Ok(()));
+        assert_eq!(check_uid_validity(None, None), Ok(()));
+    }
+
+    /// Ответ разбирает настоящий клиент, транспорт — память, без сети и TLS.
+    /// При смене поколения после открытия папки больше не уходит ни одной команды.
+    #[tokio::test]
+    async fn mailbox_responses_guard_uids_before_any_action() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        for writable in [false, true] {
+            for actual in [Some(77), Some(u32::MAX), None] {
+                let (client_io, server_io) = tokio::io::duplex(4096);
+                let server = tokio::spawn(async move {
+                    let (reader, mut writer) = tokio::io::split(server_io);
+                    let mut reader = BufReader::new(reader);
+                    writer.write_all(b"* OK ready\r\n").await.unwrap();
+                    let mut line = String::new();
+                    reader.read_line(&mut line).await.unwrap();
+                    let tag = line.split_whitespace().next().unwrap();
+                    writer.write_all(format!("{tag} OK logged in\r\n").as_bytes()).await.unwrap();
+                    line.clear();
+                    reader.read_line(&mut line).await.unwrap();
+                    let command = if writable { "SELECT \"INBOX\"" } else { "EXAMINE \"INBOX\"" };
+                    assert!(line.contains(command), "{line}");
+                    let tag = line.split_whitespace().next().unwrap();
+                    let generation = actual.map(|value| format!("* OK [UIDVALIDITY {value}] generation\r\n")).unwrap_or_default();
+                    writer.write_all(format!("* 1 EXISTS\r\n* OK [UIDNEXT 43] next\r\n{generation}{tag} OK opened\r\n").as_bytes()).await.unwrap();
+                    line.clear();
+                    assert_eq!(reader.read_line(&mut line).await.unwrap(), 0, "лишняя команда: {line}");
+                });
+                let mut client = async_imap::Client::new(client_io);
+                client.read_response().await.unwrap().unwrap();
+                let mut session = client.login("user", "password").await.unwrap();
+                let result = checked_inbox(&mut session, Some(77), writable).await;
+                assert_eq!(result, if actual == Some(u32::MAX) { Err(MailError::Stale) } else { Ok(()) });
+                drop(session);
+                tokio::time::timeout(Duration::from_secs(2), server).await.unwrap().unwrap();
+            }
+        }
+    }
+
+
+    /// Проверяем протокол на настоящем клиенте библиотеки: промежуточный FETCH
+    /// не заменяет финальный OK, а NO/BAD и оборванный ответ не дают успеха.
+    #[tokio::test]
+    async fn store_flags_checks_the_complete_response() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        for status in [Some("OK"), Some("NO"), Some("BAD"), None] {
+            let (client_io, server_io) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let (reader, mut writer) = tokio::io::split(server_io);
+                let mut reader = BufReader::new(reader);
+                writer.write_all(b"* OK ready\r\n").await.unwrap();
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let tag = line.split_whitespace().next().unwrap();
+                writer.write_all(format!("{tag} OK logged in\r\n").as_bytes()).await.unwrap();
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                assert!(line.contains("UID STORE 42 +FLAGS.SILENT (\\Seen)"));
+                writer.write_all(b"* 1 FETCH (UID 42 FLAGS (\\Seen))\r\n").await.unwrap();
+                if let Some(status) = status {
+                    let tag = line.split_whitespace().next().unwrap();
+                    writer.write_all(format!("{tag} {status} finished\r\n").as_bytes()).await.unwrap();
+                }
+            });
+            let mut client = async_imap::Client::new(client_io);
+            client.read_response().await.unwrap().unwrap();
+            let mut session = client.login("user", "password").await.unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(2), store_flags(&mut session, "42", "\\Seen"))
+                .await.expect("ответ должен завершиться");
+            assert_eq!(result.is_ok(), status == Some("OK"), "{status:?}: {result:?}");
+            server.await.unwrap();
+        }
+    }
+
 
     /// Разметка внутри ссылки не должна рвать запись на строки: именно это
     /// однажды и рассыпало по экрану «[», текст, «]» и адрес порознь.

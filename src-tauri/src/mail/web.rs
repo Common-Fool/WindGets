@@ -60,14 +60,27 @@ pub fn letter_url(host: &str, message_id: Option<&str>, own_mailbox: Option<&str
 
             if !id.is_empty() {
                 let encoded = percent_encode(id);
+                let user = gmail_user(&base).unwrap_or("0");
                 return Some(format!(
-                    "https://mail.google.com/mail/u/0/#search/rfc822msgid:{encoded}"
+                    "https://mail.google.com/mail/u/{user}/#search/rfc822msgid:{encoded}"
                 ));
             }
         }
     }
 
     Some(base)
+}
+
+/// Номер аккаунта берём только из пути своей ссылки Gmail, до запроса и фрагмента.
+fn gmail_user(link: &str) -> Option<&str> {
+    let (_, address) = link.split_once("://")?;
+    let (host, path) = address.split_once('/')?;
+    if !["mail.google.com", "gmail.com", "www.gmail.com"].iter().any(|gmail| host.eq_ignore_ascii_case(gmail)) {
+        return None;
+    }
+    let path = path.split(['?', '#']).next()?;
+    let user = path.strip_prefix("mail/u/")?.split('/').next()?;
+    (!user.is_empty() && user.bytes().all(|ch| ch.is_ascii_digit())).then_some(user)
 }
 
 /// Ручное процентное кодирование (URL-encoding) по списку разрешённых знаков RFC 3986 (unreserved).
@@ -110,6 +123,21 @@ mod tests {
         let url = letter_url("imap.gmail.com", Some("<abc@mail>"), Some("https://mail.google.com/u/1"))
             .expect("ссылка собралась");
         assert!(url.contains("rfc822msgid:abc%40mail"), "{url}");
+    }
+
+    #[test]
+    fn gmail_keeps_the_user_from_the_custom_path() {
+        for (own, expected) in [
+            ("https://mail.google.com/mail/u/1/#inbox", "1"),
+            ("https://mail.google.com/mail/u/12/?authuser=0#inbox", "12"),
+            ("https://gmail.com/mail/u/2", "2"),
+            ("https://mail.google.com/mail/u/x/#inbox", "0"),
+            ("https://mail.google.com/#/mail/u/3/", "0"),
+            ("https://example.org/mail/u/4/", "0"),
+        ] {
+            let url = letter_url("imap.gmail.com", Some("<id@mail>"), Some(own)).unwrap();
+            assert_eq!(url, format!("https://mail.google.com/mail/u/{expected}/#search/rfc822msgid:id%40mail"));
+        }
     }
 
     #[test]

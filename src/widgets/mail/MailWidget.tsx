@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useWindowDrag } from "../../lib/drag";
-import { useText } from "../../lib/i18n";
+import { useText, type Key } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
 import { ReferenceLetterPopupContent, ReferenceLetterRow } from "./MailReference";
@@ -41,6 +41,10 @@ import {
 } from "../../components/Icons";
 import "./mail.css";
 import "./mail-reference.css";
+
+// Отказ «список устарел» узнаём по тексту: Rust берёт его из того же каталога
+// и на том же языке (`MailError::Stale`), отдельного кода ошибки у команд нет
+const STALE_LIST_KEY: Key = "mail.error.stale";
 
 export type LetterRowProps = {
   /** Компоновка GPT: 0 — таблица, 1 — дайджест. */
@@ -141,7 +145,7 @@ function LetterRow({
                   aria-label={t("mail.markRead")}
                   onClick={(event) => {
                     event.stopPropagation();
-                    act(letter, markMailRead(letter.account, [letter.uid]), "not marked", "read");
+                    act(letter, markMailRead(letter.account, [letter.uid], letter.revision, letter.uidValidity), "not marked", "read");
                   }}
                 >
                   <CheckIcon />
@@ -154,7 +158,7 @@ function LetterRow({
                 aria-label={t("mail.delete")}
                 onClick={(event) => {
                   event.stopPropagation();
-                  act(letter, deleteLetter(letter.account, [letter.uid]), "not deleted", "delete");
+                  act(letter, deleteLetter(letter.account, [letter.uid], letter.revision, letter.uidValidity), "not deleted", "delete");
                 }}
               >
                 <EraseIcon />
@@ -212,12 +216,12 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
    */
   const [body, setBody] = useState<LetterBody | null>(null);
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<"stale" | "body" | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    setFailed(false);
+    setFailed(null);
     setBody(null);
 
     getMailBody(letter)
@@ -226,17 +230,17 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
         setBody(loaded);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!alive) return;
-        setFailed(true);
+        setFailed(String(error) === t(STALE_LIST_KEY) ? "stale" : "body");
         setLoading(false);
       });
 
     return () => {
       alive = false;
     };
-    // Письмо — пара «ящик + UID»: одинаковый UID в двух ящиках — два письма
-  }, [letter.account, letter.uid]);
+    // Тело прежнего поколения нельзя показывать письму с повторившимся UID.
+  }, [letter.account, letter.revision, letter.uidValidity, letter.uid]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -249,7 +253,8 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  if (reference) return <ReferenceLetterPopupContent letter={letter} onClose={onClose} busy={busy} onMarkRead={onMarkRead} body={body} loading={loading} failed={failed} />;
+  const failure = failed === null ? null : failed === "stale" ? t(STALE_LIST_KEY) : t("mail.popupFailed");
+  if (reference) return <ReferenceLetterPopupContent letter={letter} onClose={onClose} busy={busy} onMarkRead={onMarkRead} body={body} loading={loading} failed={failure} />;
 
   return (
     <div className="mail__popup-overlay" onClick={onClose}>
@@ -330,7 +335,7 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
               </span>
             </div>
           ) : failed ? (
-            <div className="mail__popup-empty">{t("mail.popupFailed")}</div>
+            <div className="mail__popup-empty">{failure}</div>
           ) : body !== null && body.text !== null && body.text.trim() !== "" ? (
             <div className="mail__popup-text">
               {/*
@@ -424,7 +429,7 @@ export function MailWidget() {
    */
   const [trouble, setTrouble] = useState<string | null>(null);
   /*
-   * Письма, над которыми идёт работа, — ключами «ящик:UID».
+   * Письма, над которыми идёт работа, — ключами letterKey с поколением папки.
    *
    * Список, а не одно письмо: пока идёт пометка одного, ничто не мешает нажать
    * по второму, и второй кружок обязан появиться там же, где нажали.
@@ -452,12 +457,30 @@ export function MailWidget() {
   /** Номер последнего поиска: ответ опоздавшего, со сменой вкладки, не нужен. */
   const asked = useRef(0);
   /*
-   * Отмеченные письма — ключами «ящик:UID», а не строками.
+   * Отмеченные письма — ключами letterKey, а не строками.
    *
    * Список под ними живой: пока их отмечали, мог прийти опрос и подвинуть
    * порядок. Ключ письма переживает и опрос, и переход к поиску.
    */
   const [picked, setPicked] = useState<string[]>([]);
+  const accountVersion = accounts.map((box) => `${box.id}:${box.revision}:${box.view.status === "ready" ? box.view.inbox.uidValidity ?? "none" : "waiting"}`).join("|");
+  const liveVersion = useRef(accountVersion);
+  liveVersion.current = accountVersion;
+  const repeatSearch = useRef(() => {});
+  repeatSearch.current = () => {
+    if (query.trim() !== "" || unseenOnly) look(query, unseenOnly);
+  };
+
+  // Новые реквизиты или UIDVALIDITY отменяют выбор, окно и опоздавшие ответы.
+  useLayoutEffect(() => {
+    asked.current++;
+    setFound(null);
+    setLooking(false);
+    setSelectedLetter(null);
+    setPicked([]);
+    setBusy([]);
+    repeatSearch.current();
+  }, [accountVersion]);
 
   useEffect(() => () => window.clearTimeout(scrollTimer.current), []);
 
@@ -504,6 +527,7 @@ export function MailWidget() {
   function look(text: string, unread: boolean, boxes: MailBox[] = inTab) {
     const phrase = text.trim();
     const number = ++asked.current;
+    const version = accountVersion;
     if (phrase === "" && !unread) {
       setFound(null);
       setLooking(false);
@@ -515,13 +539,22 @@ export function MailWidget() {
     setTrouble(null);
     setPicked([]);
     void Promise.allSettled(ids.map((id) => searchMail(id, phrase, unread))).then((answers) => {
-      if (number !== asked.current) return;
+      if (number !== asked.current || version !== liveVersion.current) return;
       const inboxes = answers.flatMap((answer) => (answer.status === "fulfilled" ? [answer.value] : []));
       setLooking(false);
       if (inboxes.length < answers.length) setTrouble("search failed");
       if (inboxes.length === 0 && answers.length > 0) return;
 
+      // Поиск тоже может первым увидеть новое поколение, раньше фонового опроса.
+      setSelectedLetter((selected) => {
+        if (selected === null) return null;
+        const at = ids.indexOf(selected.account);
+        const answer = answers[at];
+        return answer?.status === "fulfilled" && answer.value.uidValidity !== selected.uidValidity ? null : selected;
+      });
       setFound({
+        // Слитый список не имеет общего поколения: оно есть у каждого письма.
+        uidValidity: inboxes.length === 1 ? inboxes[0]!.uidValidity : null,
         unseen: inboxes.reduce((sum, inbox) => sum + inbox.unseen, 0),
         letters: newestFirst(inboxes.flatMap((inbox) => inbox.letters)),
         mailbox: inboxes.length === 1 ? inboxes[0]!.mailbox : null,
@@ -572,6 +605,7 @@ export function MailWidget() {
    * было негде.
    */
   function settled(keys: string[], kind: "read" | "delete") {
+    if (accountVersion !== liveVersion.current) return;
     setFound((was) => {
       if (was === null) return was;
       const letters =
@@ -587,7 +621,7 @@ export function MailWidget() {
       };
     });
 
-    if (query.trim() !== "" || unseenOnly) look(query, unseenOnly);
+    repeatSearch.current();
   }
 
   /**
@@ -598,21 +632,22 @@ export function MailWidget() {
   function bulk(kind: "read" | "delete", failed: string) {
     const chosen = shown.filter((letter) => picked.includes(letterKey(letter)));
     const keys = chosen.map(letterKey);
-    const work = Promise.all(
-      [...byAccount(chosen)].map(([account, uids]) =>
-        kind === "read" ? markMailRead(account, uids) : deleteLetter(account, uids),
-      ),
-    );
-
+    const groups = [...byAccount(chosen)];
     setTrouble(null);
     setBusy((was) => [...new Set([...was, ...keys])]);
     setPicked([]);
-    work
-      .then(() => settled(keys, kind))
-      .catch(() => {
-        setTrouble(failed);
-        setBusy([]);
-      });
+    void Promise.allSettled(groups.map(([account, uids]) => {
+      const source = chosen.find((letter) => letter.account === account)!;
+      return kind === "read" ? markMailRead(account, uids, source.revision, source.uidValidity) : deleteLetter(account, uids, source.revision, source.uidValidity);
+    })).then((answers) => {
+      if (accountVersion !== liveVersion.current) return;
+      const succeeded = groups.filter((_, at) => answers[at]!.status === "fulfilled").map(([account]) => account);
+      const done = chosen.filter((letter) => succeeded.includes(letter.account)).map(letterKey);
+      if (done.length > 0) settled(done, kind);
+      const refused = answers.find((answer) => answer.status === "rejected" && String(answer.reason) === t(STALE_LIST_KEY));
+      if (answers.some((answer) => answer.status === "rejected")) setTrouble(refused ? "stale" : failed);
+      setBusy((was) => was.filter((key) => !keys.includes(key)));
+    });
   }
 
   /**
@@ -628,8 +663,9 @@ export function MailWidget() {
     setBusy((was) => (was.includes(key) ? was : [...was, key]));
     work
       .then(() => settled([key], kind))
-      .catch(() => {
-        setTrouble(failed);
+      .catch((error: unknown) => {
+        if (accountVersion !== liveVersion.current) return;
+        setTrouble(String(error) === t(STALE_LIST_KEY) ? "stale" : failed);
         setBusy((was) => was.filter((one) => one !== key));
       });
   }
@@ -651,7 +687,9 @@ export function MailWidget() {
    * иначе обычные входящие.
    */
   const filtering = query.trim() !== "" || unseenOnly;
-  const shown = filtering ? (found?.letters ?? []) : letters;
+  const shown = (filtering ? (found?.letters ?? []) : letters).filter((letter) =>
+    inTab.some((box) => box.id === letter.account && box.revision === letter.revision),
+  );
 
   /*
    * Письмо для всплывающего окна берётся из того списка, что сейчас на экране,
@@ -682,7 +720,7 @@ export function MailWidget() {
    */
   const troubles = lone === null ? inTab.filter((box) => box.view.status === "failed" || box.view.status === "noAccount") : [];
 
-  const referenceTrouble = trouble === "not marked" ? t("mail.notMarked") : trouble === "not deleted" ? t("mail.notDeleted") : trouble === "search failed" ? t("mail.searchFailed") : null;
+  const referenceTrouble = trouble === "not marked" ? t("mail.notMarked") : trouble === "not deleted" ? t("mail.notDeleted") : trouble === "search failed" ? t("mail.searchFailed") : trouble === "stale" ? t(STALE_LIST_KEY) : null;
   const referenceCorner = picked.length > 0 ? t.count("mail.selectedCount", picked.length) : [unseen > 0 ? t.count("mail.unreadCount", unseen) : null, stale ? t("mail.offline") : null, referenceTrouble].filter((piece) => piece !== null).join(" · ");
 
   let body: ReactNode;
@@ -791,9 +829,14 @@ export function MailWidget() {
                       const targets = inTab.filter((box) => (inboxOf(box)?.inbox.unseen ?? 0) > 0);
                       setTrouble(null);
                       setMarkingAll(true);
-                      Promise.all(targets.map((box) => markAllMailRead(box.id)))
-                        .then(() => settled(shown.map(letterKey), "read"))
-                        .catch(() => { setTrouble("not marked"); setMarkingAll(false); });
+                      void Promise.allSettled(targets.map(markAllMailRead)).then((answers) => {
+                        if (accountVersion !== liveVersion.current) return;
+                        const succeeded = targets.filter((_, at) => answers[at]!.status === "fulfilled").map((box) => box.id);
+                        const done = shown.filter((letter) => succeeded.includes(letter.account)).map(letterKey);
+                        if (done.length > 0) settled(done, "read");
+                        if (answers.some((answer) => answer.status === "rejected")) setTrouble("not marked");
+                        setMarkingAll(false);
+                      });
                     }}>
                     <CheckAllIcon />
                   </button>
@@ -921,7 +964,7 @@ export function MailWidget() {
             onMarkRead={() =>
               act(
                 currentLetter,
-                markMailRead(currentLetter.account, [currentLetter.uid]),
+                markMailRead(currentLetter.account, [currentLetter.uid], currentLetter.revision, currentLetter.uidValidity),
                 "not marked",
                 "read",
               )

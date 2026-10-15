@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "src-tauri/Cargo.lock": "f3d1604e8e239498e4f75ba4fb9b8a342956b39907f984417c7a9e06960b1fcc",
-    "package-lock.json": "6b0596cfbd868b2abf4ebfc98d94804ce38afba2304520690c3d0f7e77580986",
+    "src-tauri/Cargo.lock": "e460446d6c0d33b7d315bb2e3656feca2e48ee046318058af9c2d8cdb54839e7",
+    "package-lock.json": "bb9f243642d6d2cd8c814dd990a0fb79c8e6f12f7d1eb110d89334b48f84490a",
     "src-sensors/Sensors.csproj": "eb924b57fb049e9834bb18ce718e00b1bf977f7132cecb146cab97e2fd89efd1"
   },
   "parts": [
@@ -40,7 +40,7 @@
     {
       "id": "ytdlp",
       "name": "yt-dlp",
-      "license": "Unlicense",
+      "license": "GPL-3.0+",
       "url": "https://github.com/yt-dlp/yt-dlp"
     },
     {
@@ -52,7 +52,7 @@
     {
       "id": "pawnio",
       "name": "PawnIO",
-      "license": "GPL-2.0+",
+      "license": "Proprietary",
       "url": "https://github.com/namazso/PawnIO"
     }
   ],

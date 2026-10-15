@@ -106,6 +106,14 @@ function TrackRow({ track }: { track: Track }) {
     control({ kind: "sessionVolume", id: track.id, percent });
   }
   function toggle() {
+    // Тишина нулём, а не флагом: снятие флага её не вернёт — как у общей
+    // громкости, возвращаем полную
+    if (quiet && shown.volume === 0) {
+      show({ ...shown, volume: 100, muted: false });
+      control({ kind: "sessionVolume", id: track.id, percent: 100 });
+      if (shown.muted) control({ kind: "sessionMute", id: track.id, muted: false });
+      return;
+    }
     show({ ...shown, muted: !quiet });
     control({ kind: "sessionMute", id: track.id, muted: !quiet });
   }

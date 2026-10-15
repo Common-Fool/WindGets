@@ -90,18 +90,14 @@ pub fn read() -> Option<String> {
         return None;
     }
 
-    // Размер блока — верхняя граница поиска нуля: блок без завершающего нуля
-    // увёл бы чтение за свой конец, а виноватым выглядел бы буфер обмена
-    let limit = unsafe { GlobalSize(memory) } / size_of::<u16>();
-    let mut length = 0;
-    while length < limit && unsafe { *pointer.add(length) } != 0 {
-        length += 1;
-    }
-
-    let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(pointer, length) });
+    // Даже чужой блок на сотни мегабайт просматриваем только до потолка:
+    // один знак может занимать пару UTF-16, плюс место под завершающий ноль.
+    let limit = (unsafe { GlobalSize(memory) } / size_of::<u16>()).min(super::MAX_CHARS * 2 + 1);
+    let wide = unsafe { std::slice::from_raw_parts(pointer, limit) };
+    let text = super::bounded_text_length(wide).map(|length| String::from_utf16_lossy(&wide[..length]));
     let _ = unsafe { GlobalUnlock(memory) };
 
-    Some(text)
+    text
 }
 
 /// Кладёт текст в буфер.
@@ -116,26 +112,48 @@ pub fn write(text: &str, owner: Option<HWND>) -> Result<(), String> {
 
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
 
-    // GMEM_MOVEABLE обязателен: буфер принимает только перемещаемую память
-    let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of_val(&wide[..])) }
-        .map_err(|error| format!("не выделить память под текст: {error}"))?;
+    set_data(CF_UNICODETEXT, &wide)
+}
 
-    let pointer = unsafe { GlobalLock(memory) }.cast::<u16>();
+/// Кладёт секрет с запретом истории, облачного буфера и обработки мониторами.
+/// Пометки публикуются до текста под одним открытием: отказ не оставит
+/// в буфере секрет без защиты. Обычного запасного копирования здесь нет.
+pub fn write_secret(text: &str, owner: HWND) -> Result<(), String> {
+    let formats = [
+        format_id(w!("ExcludeClipboardContentFromMonitorProcessing")),
+        format_id(w!("CanIncludeInClipboardHistory")),
+        format_id(w!("CanUploadToCloudClipboard")),
+    ];
+    let formats = formats.map(|id| id.ok_or_else(|| "не зарегистрировать защитный формат буфера".to_owned()));
+    let [exclude, history, cloud] = formats;
+    let formats = [exclude?, history?, cloud?];
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let _open = Open::new(Some(owner))?;
+    unsafe { EmptyClipboard() }.map_err(|error| format!("буфер не очистился: {error}"))?;
+    for format in formats {
+        set_data(format, &[0u32])?;
+    }
+    set_data(CF_UNICODETEXT, &wide)
+}
+
+/// Передаёт буферу отдельный блок памяти; при отказе владение остаётся у нас.
+fn set_data<T: Copy>(format: u32, data: &[T]) -> Result<(), String> {
+    // GMEM_MOVEABLE обязателен: буфер принимает только перемещаемую память
+    let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of_val(data)) }
+        .map_err(|error| format!("не выделить память под данные буфера: {error}"))?;
+    let pointer = unsafe { GlobalLock(memory) }.cast::<T>();
     if pointer.is_null() {
         let _ = unsafe { GlobalFree(Some(memory)) };
-        return Err("память под текст не заперлась".to_owned());
+        return Err("память под данные буфера не заперлась".to_owned());
     }
-    unsafe { std::ptr::copy_nonoverlapping(wide.as_ptr(), pointer, wide.len()) };
+    unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), pointer, data.len()) };
     let _ = unsafe { GlobalUnlock(memory) };
 
-    // ВАЖНО: удался — память больше не наша, буфер владеет ею сам и освободит
-    // её при следующей очистке. Не удался — освобождаем, иначе утечка на
-    // каждое нажатие по строке.
-    match unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(memory.0))) } {
+    match unsafe { SetClipboardData(format, Some(HANDLE(memory.0))) } {
         Ok(_) => Ok(()),
         Err(error) => {
             let _ = unsafe { GlobalFree(Some(memory)) };
-            Err(format!("буфер не принял текст: {error}"))
+            Err(format!("буфер не принял данные: {error}"))
         }
     }
 }

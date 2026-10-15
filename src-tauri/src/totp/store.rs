@@ -148,16 +148,68 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join(FILE))
 }
 
-/// Читает записи с диска. При любой беде возвращает пустой список: потерянный
-/// файл — это «записей нет», а не повод не подняться.
-pub fn load(app: &AppHandle) -> Stored {
-    let Ok(path) = file_path(app) else {
-        return Stored::default();
+/// Что пошло не так при чтении файла записей.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trouble {
+    /// Файл есть, но не прочитался: занят, нет доступа. Записей мы не видели,
+    /// и писать поверх нельзя — первая же правка затёрла бы их пустым списком.
+    Unreadable,
+    /// Файл прочитался, но не разобрался. Он отложен рядом (`totp.bad.json`):
+    /// секреты в нём под DPAPI, и вернуть их можно руками.
+    SetAside,
+}
+
+/// Прочитанное с диска и то, что при этом случилось.
+#[derive(Debug, Default)]
+pub struct Loaded {
+    pub stored: Stored,
+    pub trouble: Option<Trouble>,
+}
+
+/// Читает записи с диска.
+///
+/// ВАЖНО: **«файла нет» и «файл не прочитался» — разные исходы.** Прежде оба
+/// давали пустой список, и следующая же новая запись ложилась на диск поверх
+/// прежнего файла — то есть временный отказ чтения стирал все секреты
+/// навсегда. Теперь пусто только там, где файла правда нет.
+pub fn load(app: &AppHandle) -> Loaded {
+    let path = match file_path(app) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("2FA: {error}");
+            return Loaded { stored: Stored::default(), trouble: Some(Trouble::Unreadable) };
+        }
     };
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Stored::default();
+
+    let text = match crate::disk::read_existing(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Loaded::default(),
+        Err(error) => {
+            eprintln!("2FA: totp.json не прочитался, запись запрещена до повторного чтения: {error}");
+            return Loaded { stored: Stored::default(), trouble: Some(Trouble::Unreadable) };
+        }
     };
-    serde_json::from_str(&text).unwrap_or_default()
+
+    match parse(&text) {
+        Some(stored) => Loaded { stored, trouble: None },
+        None => {
+            match crate::disk::set_aside(&path) {
+                Ok(aside) => eprintln!("2FA: totp.json не разобрался, файл отложен в {}", aside.display()),
+                Err(error) => {
+                    // Не отложился — значит, запись поверх его бы затёрла:
+                    // держим хранилище запертым, как непрочитанное
+                    eprintln!("2FA: totp.json не разобрался и не отложен: {error}");
+                    return Loaded { stored: Stored::default(), trouble: Some(Trouble::Unreadable) };
+                }
+            }
+            Loaded { stored: Stored::default(), trouble: Some(Trouble::SetAside) }
+        }
+    }
+}
+
+/// Разбор текста файла; `None` — файл испорчен.
+fn parse(text: &str) -> Option<Stored> {
+    serde_json::from_str(text).ok()
 }
 
 /// Атомарно сохраняет записи на диск.
@@ -292,5 +344,15 @@ mod tests {
         assert_eq!(id.len(), 16);
         assert!(id.chars().all(|sign| sign.is_ascii_hexdigit()));
         assert_ne!(id, new_id(), "два ключа подряд не совпадают");
+    }
+
+    /// Испорченный файл отличается от целого: иначе он молча стал бы пустым
+    /// списком, и первая новая запись затёрла бы все секреты.
+    #[test]
+    fn a_broken_file_is_told_apart_from_a_whole_one() {
+        assert!(parse("не json").is_none());
+        assert!(parse(r#"{"accounts":"много"}"#).is_none());
+        assert!(parse("{}").is_some_and(|stored| stored.accounts.is_empty()));
+        assert!(parse(r#"{"accounts":[]}"#).is_some());
     }
 }

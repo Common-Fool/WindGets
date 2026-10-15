@@ -30,6 +30,8 @@ mod processes;
 mod sensors;
 mod settings;
 mod settings_window;
+#[cfg(windows)]
+mod single;
 mod snap;
 mod sound;
 mod speedtest;
@@ -50,6 +52,12 @@ use tauri::Manager;
 use crate::windows::Shutdown;
 
 pub fn run() {
+    // Второй экземпляр будит первый и уходит, ничего не тронув (`single.rs`)
+    #[cfg(windows)]
+    if !single::claim() {
+        return;
+    }
+
     let mut context = tauri::generate_context!();
     // Значок HWND (панель задач и Alt+Tab) задаём из исходных байтов.
     // generate_context кеширует ICO отдельно от ресурса exe: тот уже был
@@ -93,6 +101,8 @@ pub fn run() {
             sound::sound_icon,
             clipboard::clipboard_state,
             clipboard::clipboard_control,
+            clipboard::clipboard_copy_secret,
+            journal::report_crash,
             processes::processes_state,
             notes::notes_pages,
             notes::set_notes_pages,
@@ -222,6 +232,8 @@ pub fn run() {
             // Журнал — первым: и чтение настроек, и сайдкар, которого
             // поднимут ниже, пишут свои отказы в stderr (`journal.rs`)
             journal::start(&handle);
+            #[cfg(windows)]
+            single::listen(&handle);
 
             let settings = settings::load(&handle);
             // Язык — до трея и окон: их подписи собираются на нём
@@ -256,9 +268,21 @@ pub fn run() {
             if let Err(error) = tray::install(&handle) {
                 eprintln!("значок в трее не создался: {error}");
             }
+            // Первый запуск — файла мест ещё нет: окна без сохранённого места
+            // Tauri ставит друг на друга, поэтому расставляем их сеткой, как
+            // кнопка сброса. Смотрим до сборки окон: сборка сама его не пишет,
+            // но решать надо по тому, что было на диске до запуска
+            let first_run = handle
+                .path()
+                .app_config_dir()
+                .map(|dir| !dir.join(tauri_plugin_window_state::DEFAULT_FILENAME).exists())
+                .unwrap_or(false);
             // Окна включённых модулей. Собираем здесь, в главном потоке до
             // событийного цикла; на ходу их собирает `modules::set` из пула
             windows::prepare_all(&handle);
+            if first_run {
+                windows::reset_places(&handle);
+            }
             // Окно настроек собирается всегда: страницу виджета в нём
             // открывают изнутри webview, а оно само — не модуль
             settings_window::prepare(&handle);
@@ -283,12 +307,10 @@ pub fn run() {
     app.run(|app, event| {
         match event {
             tauri::RunEvent::Ready => windows::runtime_ready(),
-            tauri::RunEvent::ExitRequested { api, .. } => {
-                // Приложение живёт в трее: выключенный последний виджет — не повод
-                // завершаться. Выход и восстановление runtime ставят признак.
-                if !app.state::<Shutdown>().started() {
-                    api.prevent_exit();
-                }
+            // Приложение живёт в трее: выключенный последний виджет — не повод
+            // завершаться. Выход и восстановление runtime ставят признак.
+            tauri::RunEvent::ExitRequested { api, .. } if !app.state::<Shutdown>().started() => {
+                api.prevent_exit();
             }
             _ => {}
         }

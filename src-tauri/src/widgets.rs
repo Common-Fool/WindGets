@@ -473,7 +473,7 @@ pub const WIDGETS: &[Widget] = &[
         // переживает любую ширину и высоту, и отнимать у неё мышь незачем
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Виджет нажимают: переключатель ЦПУ/ОЗУ
         interactive: true,
         floor: None,
@@ -569,7 +569,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Левая кнопка раскрывает почасовой прогноз, правая — меню виджета:
         // с прозрачностью для мыши окно перестало бы ловить обе
         interactive: true,
@@ -595,7 +595,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Замер запускается кнопкой: прозрачность для мыши сделала бы виджет
         // вечным «замера не было»
         interactive: true,
@@ -625,7 +625,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Виджет нажимают: и молчание, и полоса, и выбор устройства
         interactive: true,
         // Вертикальная основа уже общего предела; остальные виджеты его сохраняют.
@@ -644,7 +644,7 @@ pub const WIDGETS: &[Widget] = &[
         // Список строк текста: тянется мышью, как и процессы
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Виджет нажимают: строка возвращает текст в буфер, крестик убирает её
         interactive: true,
         floor: None,
@@ -667,7 +667,7 @@ pub const WIDGETS: &[Widget] = &[
         // высота осмысленна
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // В поле пишут — прозрачность для мыши отобрала бы у него нажатия
         interactive: true,
         // Свой предел по высоте: ни точки страниц, ни значки не расступаются
@@ -693,7 +693,7 @@ pub const WIDGETS: &[Widget] = &[
         // Список строк: сколько влезло, столько и показано
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Дела отмечают, добавляют и удаляют — прозрачность для мыши отобрала
         // бы у карточки нажатия целиком
         interactive: true,
@@ -725,7 +725,7 @@ pub const WIDGETS: &[Widget] = &[
         // Список писем: сколько строк влезло, столько и показано
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // В углу карточки кнопка обновления — прозрачность для мыши отобрала бы
         // у неё нажатия
         interactive: true,
@@ -748,7 +748,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         interactive: true,
         // Предел по высоте опустился до общего пола вслед за уплотнением:
         // второй раскладке хватает 74 точек, и прежние 95 запрещали бы её же
@@ -788,7 +788,7 @@ pub const WIDGETS: &[Widget] = &[
         // Список записей: сколько строк влезло, столько и показано — как почта
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // По строке нажимают, чтобы скопировать код: прозрачность для мыши
         // отобрала бы у карточки единственное её действие
         interactive: true,
@@ -902,7 +902,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[2],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         interactive: true,
         floor: None,
     },
@@ -943,7 +943,7 @@ pub const WIDGETS: &[Widget] = &[
         // вокруг неё
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Пульт: прозрачность для мыши отобрала бы у него все кнопки разом
         interactive: true,
         floor: None,
@@ -975,7 +975,7 @@ pub const WIDGETS: &[Widget] = &[
         // мышью, сохранённая геометрия важнее реестровой; выбора пресетов нет.
         flexible: true,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Кнопки выбора, чипы, поля обрезки — прозрачность для мыши отобрала бы
         // у карточки всё
         interactive: true,
@@ -1018,7 +1018,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: true,
+        enabled: false,
         // Поле ссылки и кнопки — без мыши карточка бесполезна
         interactive: true,
         floor: None,
@@ -1726,7 +1726,7 @@ mod redesign_tests {
                         let mut settings = Settings::default();
                         let own = WidgetSettings { view, size, layout, scale: Some(1.3), ..WidgetSettings::default() };
                         settings.set_widget(id, own);
-                        let saved = serde_json::to_value(&settings.widget(widget)).unwrap();
+                        let saved = serde_json::to_value(settings.widget(widget)).unwrap();
                         let reloaded: Settings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
                         assert_eq!(serde_json::to_value(reloaded.widget(widget)).unwrap(), saved,
                             "{id}: компоновка и размер сохранены после чтения настроек");

@@ -242,12 +242,12 @@ export function setAllWidgetOption(option: WidgetOption, value: boolean): void {
  * фоновых работ. Своей командой, а не столбцом `set_widget_option`: она
  * собирает и разбирает окно, а это Rust делает только из async-команды.
  */
-export function setModule(id: string, on: boolean): void {
-  void invoke("set_module", { id, on });
+export function setModule(id: string, on: boolean): Promise<void> {
+  return invoke<void>("set_module", { id, on });
 }
 
-export function setAllModules(on: boolean): void {
-  void invoke("set_all_modules", { on });
+export function setAllModules(on: boolean): Promise<void> {
+  return invoke<void>("set_all_modules", { on });
 }
 
 /** Вид виджета: чем карточка себя рисует. Номер — место в `views`. */

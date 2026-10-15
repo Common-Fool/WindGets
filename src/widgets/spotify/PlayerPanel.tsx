@@ -21,6 +21,7 @@ import {
   VolumeIcon,
 } from "./icons";
 import { useText, type Key } from "../../lib/i18n";
+import { openLink } from "../../lib/links";
 
 /** Как часто досчитываем позицию между опросами. Глазу этого достаточно. */
 const TICK_MS = 250;
@@ -155,7 +156,7 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
    * починка в одной не доезжала бы до остальных.
    */
   const art =
-    cover === COVER.back ? null : <Cover url={player.coverUrl} big={cover === COVER.big} />;
+    cover === COVER.back ? null : <Cover url={player.coverUrl} big={cover === COVER.big} link={player.link} />;
 
   const backdrop = cover === COVER.back ? <Backdrop url={player.coverUrl} /> : null;
 
@@ -361,9 +362,17 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
  * 80 %» у крупной — это потолок, а не размер: упрись картинка в него на
  * маленьком окне, и она вытолкнула бы кнопки за нижний край.
  */
-function Cover({ url, big }: { url: string | null; big: boolean }) {
+function Cover({ url, big, link }: { url: string | null; big: boolean; link: string | null }) {
+  const t = useText();
   const classes = ["player__art"];
   if (big) classes.push("player__art--big");
+  // Нажатие по обложке ведёт к треку в Spotify. Не кнопка: за обложку окно
+  // тянут, а сдвиг до отпускания `click` не даёт
+  const open = link === null ? {} : {
+    "data-link": true,
+    title: t("spotify.openTrack"),
+    onClick: () => openLink(link),
+  };
 
   if (url === null) {
     return (
@@ -376,7 +385,7 @@ function Cover({ url, big }: { url: string | null; big: boolean }) {
   }
 
   return (
-    <div className={classes.join(" ")}>
+    <div className={classes.join(" ")} {...open}>
       <img
         className="player__cover"
         src={url}
@@ -422,13 +431,38 @@ function Backdrop({ url }: { url: string | null }) {
  * нигде, кроме самого большого столбика, а её появление и исчезновение
  * двигало всё, что ниже.
  */
+/**
+ * Знак Spotify перед названием — и ссылка на трек.
+ *
+ * Политика разработчика Spotify (раздел II) требует у показанных обложки и
+ * метаданных знака по их брендбуку и ссылки обратно (`licenses.md`). Знак
+ * стоит у названия, а не на обложке: обложки нет в раскладке «фоном» и в
+ * квадрате GPT, а название есть всегда. Ссылки нет (трек вспомнен из старого
+ * файла) — знак остаётся подписью, не кнопкой.
+ */
+function TrackLink({ link }: { link: string | null }) {
+  const t = useText();
+  if (link === null) {
+    return <span className="player__brand" aria-hidden="true"><SpotifyMark /></span>;
+  }
+  return (
+    <button type="button" className="player__brand" data-drags title={t("spotify.openTrack")}
+      aria-label={t("spotify.openTrack")} onClick={() => openLink(link)}>
+      <SpotifyMark />
+    </button>
+  );
+}
+
 function Meta({ player, centered = false }: { player: Player; centered?: boolean }) {
   const classes = ["player__meta"];
   if (centered) classes.push("player__meta--centered");
 
   return (
     <div className={classes.join(" ")}>
-      <Marquee className="player__track" text={player.track} />
+      <div className="player__title">
+        <TrackLink link={player.link} />
+        <Marquee className="player__track" text={player.track} />
+      </div>
       <Marquee className="player__artists" text={player.artists} />
     </div>
   );

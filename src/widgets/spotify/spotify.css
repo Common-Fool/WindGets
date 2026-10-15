@@ -673,6 +673,59 @@
   font-weight: var(--weight-semibold);
 }
 
+/*
+ * Знак Spotify перед названием — ссылка на трек (`TrackLink`).
+ *
+ * ВАЖНО: **размер и цвет задаёт брендбук Spotify, а не наша шкала.** Знак не
+ * меньше 21 точки и только зелёный, белый или чёрный — серый из
+ * `--text-secondary` нарушал бы условия. Белый, а не фирменный зелёный: цвет в
+ * карточке занят данными. Строке высоты он не добавляет — лишнее съедают
+ * отрицательные поля, иначе сдвинулись бы замеренные высоты раскладок.
+ */
+.player__title {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--scale));
+  min-width: 0;
+}
+
+.player__title .player__track {
+  flex: 1;
+}
+
+.player__meta--centered .player__title {
+  justify-content: center;
+}
+
+.player__meta--centered .player__title .player__track {
+  flex: 0 1 auto;
+}
+
+.player__brand {
+  display: inline-flex;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #ffffff;
+  /* Не меньше 21 точки и при масштабе 90 %: минимум брендбука — абсолютный */
+  font-size: max(21px, calc(21px * var(--scale)));
+  line-height: 1;
+  margin-block: calc(-4px * var(--scale));
+}
+
+button.player__brand {
+  cursor: pointer;
+}
+
+button.player__brand:hover {
+  opacity: 0.8;
+}
+
+.player__art[data-link] {
+  cursor: pointer;
+}
+
 .player__artists {
   color: var(--text-secondary);
   font-size: var(--text-sm);

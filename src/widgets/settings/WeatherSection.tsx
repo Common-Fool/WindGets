@@ -2,6 +2,7 @@ import { Button } from "../../components/Button";
 import { usePlaceSearch } from "../../lib/places";
 import { setWeatherPlace, useSettings } from "../../lib/settings";
 import { useText } from "../../lib/i18n";
+import { WeatherSource } from "./DataSource";
 
 /*
  * Город виджета погоды.
@@ -73,6 +74,8 @@ export function WeatherSection() {
           </Button>
         </div>
       )}
+
+      <WeatherSource />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 /*
  * Подсказки окна настроек: пояснение к настройке всплывает при наведении, а не
@@ -28,6 +28,7 @@ const EDGE = 8;
 type Shown = { text: string; anchor: DOMRect };
 
 export function Hints() {
+  const id = useId();
   const [shown, setShown] = useState<Shown | null>(null);
   const [place, setPlace] = useState<{ left: number; top: number } | null>(null);
   const bubble = useRef<HTMLDivElement>(null);
@@ -38,8 +39,24 @@ export function Hints() {
 
     const hide = () => {
       window.clearTimeout(timer);
-      current = null;
+      if (current) {
+        current.removeAttribute("aria-describedby");
+        current = null;
+      }
       setShown(null);
+    };
+
+    const show = (target: HTMLElement) => {
+      current = target;
+      timer = window.setTimeout(() => {
+        const text = target.dataset.hint;
+        if (text === undefined || text === "" || !target.isConnected) return;
+        // Место считается заново: подсказка сперва встаёт в угол невидимой и
+        // меряется там — у края окна её ширину урезало бы
+        setPlace(null);
+        setShown({ text, anchor: target.getBoundingClientRect() });
+        target.setAttribute("aria-describedby", id);
+      }, DELAY);
     };
 
     const over = (event: PointerEvent) => {
@@ -50,15 +67,7 @@ export function Hints() {
       // С нажатой кнопкой тянут ползунок или окно — не до подсказок
       if (target === null || event.buttons !== 0) return;
 
-      current = target;
-      timer = window.setTimeout(() => {
-        const text = target.dataset.hint;
-        if (text === undefined || text === "" || !target.isConnected) return;
-        // Место считается заново: подсказка сперва встаёт в угол невидимой и
-        // меряется там — у края окна её ширину урезало бы
-        setPlace(null);
-        setShown({ text, anchor: target.getBoundingClientRect() });
-      }, DELAY);
+      show(target);
     };
 
     // Мышь ушла из окна: переходить ей больше не к кому
@@ -66,8 +75,40 @@ export function Hints() {
       if (event.relatedTarget === null) hide();
     };
 
+    // Фокус от нажатия мышью подсказку не показывает: нажатие её всегда
+    // прятало. Показывает только фокус с клавиатуры
+    let pointer = false;
+    const pressed = () => {
+      pointer = true;
+    };
+    const typed = () => {
+      pointer = false;
+    };
+
+    const onFocus = (event: FocusEvent) => {
+      if (pointer) return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-hint]") : null;
+      if (target === current) return;
+
+      hide();
+      if (target === null) return;
+
+      show(target);
+    };
+
+    const onBlur = (event: FocusEvent) => {
+      if (current === null) return;
+      const next = event.relatedTarget instanceof Element ? event.relatedTarget.closest<HTMLElement>("[data-hint]") : null;
+      if (next === current) return;
+      hide();
+    };
+
     document.addEventListener("pointerover", over);
     document.addEventListener("pointerout", out);
+    document.addEventListener("pointerdown", pressed, true);
+    document.addEventListener("keydown", typed, true);
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onBlur);
     // Нажатие, клавиша и прокрутка уводят внимание или саму настройку
     document.addEventListener("pointerdown", hide, true);
     document.addEventListener("keydown", hide, true);
@@ -76,14 +117,21 @@ export function Hints() {
 
     return () => {
       window.clearTimeout(timer);
+      if (current) {
+        current.removeAttribute("aria-describedby");
+      }
       document.removeEventListener("pointerover", over);
       document.removeEventListener("pointerout", out);
+      document.removeEventListener("pointerdown", pressed, true);
+      document.removeEventListener("keydown", typed, true);
+      document.removeEventListener("focusin", onFocus);
+      document.removeEventListener("focusout", onBlur);
       document.removeEventListener("pointerdown", hide, true);
       document.removeEventListener("keydown", hide, true);
       document.removeEventListener("scroll", hide, true);
       window.removeEventListener("blur", hide);
     };
-  }, []);
+  }, [id]);
 
   // Под настройкой, а не влезает — над ней; и не за край окна
   useLayoutEffect(() => {
@@ -103,6 +151,7 @@ export function Hints() {
 
   return (
     <div
+      id={id}
       ref={bubble}
       className="hint"
       role="tooltip"

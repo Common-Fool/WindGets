@@ -201,6 +201,7 @@ fn show(app: &AppHandle) {
             return;
         };
         windows::keep_frameless(&window);
+        windows::lock_browser(&window);
         if let Err(error) = crate::window_effects::apply_to(&window) {
             eprintln!("подложка у карточки напоминания не снялась: {error}");
         }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { GlassCard } from "../../components/GlassCard";
-import { copyToClipboard } from "../../lib/copy";
+import { copySecret } from "../../lib/copy";
 import { useWindowDrag } from "../../lib/drag";
 import { useText, type Text } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
@@ -8,7 +8,7 @@ import { useCardClick } from "../../lib/gestures";
 import { openWidgetSettings } from "../../lib/settings";
 import { useHeight } from "../../lib/size";
 import { useWidgetLayout, useWidgetView } from "../../lib/view";
-import { codesFor, grouped, useAccounts, type Code, type Codes, type Row } from "../../lib/totp";
+import { codesFor, emptyText, grouped, useAccounts, type Code, type Codes, type Row } from "../../lib/totp";
 import "./totp.css";
 import { TotpReference, type TotpCopyFeedback } from "./TotpReference";
 import "./totp-reference.css";
@@ -44,7 +44,8 @@ export function TotpWidget() {
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout();
 
-  const { accounts } = useAccounts();
+  const { accounts, trouble } = useAccounts();
+  const empty = emptyText(trouble);
   // Первый вид — скрытый: открытые коды не должны быть состоянием по умолчанию
   const hidden = useWidgetView() === 0;
 
@@ -184,7 +185,7 @@ export function TotpWidget() {
     setCurrent(id);
     const ticket = ++copyRequest.current;
     setCopyFeedback(null);
-    void copyToClipboard(code.code).then((done) => {
+    void copySecret(code.code).then((done) => {
       if (done) setCopied(id);
       // Результат предыдущего щелчка не отменяет новое действие в GPT.
       if (ticket === copyRequest.current) setCopyFeedback({ id, ok: done });
@@ -194,7 +195,7 @@ export function TotpWidget() {
   });
 
   if (reference) {
-    return <TotpReference t={t} accounts={accounts} answer={answer} current={current}
+    return <TotpReference t={t} accounts={accounts} empty={empty} answer={answer} current={current}
       feedback={copyFeedback} hidden={hidden} second={second} layout={layout} />;
   }
 
@@ -205,8 +206,8 @@ export function TotpWidget() {
           {/* Кнопкой намеренно: у пустой карточки одно действие, и место для
               перетаскивания вокруг неё остаётся */}
           <button type="button" className="totp__empty" data-drags onClick={() => openWidgetSettings("totp")}>
-            <span className="totp__empty-title">{t("totp.empty")}</span>
-            <span className="totp__empty-hint">{t("totp.emptyHint")}</span>
+            <span className="totp__empty-title">{t(empty.title)}</span>
+            <span className="totp__empty-hint">{t(empty.hint)}</span>
           </button>
         </GlassCard>
       </div>

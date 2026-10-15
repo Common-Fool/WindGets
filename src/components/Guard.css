@@ -1,0 +1,44 @@
+/* Карточка отказа окна: текст и две кнопки по центру всей площади. */
+.crashed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  height: 100%;
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.crashed__text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.crashed__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+/* Повтор без словаря: значок без подписи, нейтральный, как прочие значки */
+.crashed__retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  padding: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.crashed__retry:hover {
+  border-color: var(--border-control-hover);
+  color: var(--text-primary);
+}

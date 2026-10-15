@@ -11,12 +11,21 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 const FILE: &str = "mail.json";
+
+/// `mail.json` есть, но при запуске не прочитался.
+///
+/// ВАЖНО: **непрочитанный файл не переписывается.** Ящики на диске есть, мы их
+/// просто не видели, и первая же правка в настройках положила бы поверх пустой
+/// список — пароли пришлось бы заводить заново. Хранилище в памяти одно на
+/// процесс, поэтому и признак — статика.
+static UNREADABLE: AtomicBool = AtomicBool::new(false);
 
 /// Сколько ящиков можно завести.
 ///
@@ -31,6 +40,8 @@ pub const MAX_ACCOUNTS: usize = 5;
 pub struct Account {
     /// Ключ ящика: по нему карточка и настройки узнают его между запусками.
     pub id: String,
+    /// Версия реквизитов: прежние письма не могут действовать в новом ящике.
+    pub revision: String,
     /// Адрес IMAP-сервера (например, `imap.gmail.com`)
     pub host: Option<String>,
     /// Порт IMAP-сервера (по умолчанию 993)
@@ -135,6 +146,7 @@ impl OnDisk {
             Self::One(single) => {
                 let account = Account {
                     id: String::new(),
+                    revision: String::new(),
                     host: single.host,
                     port: single.port,
                     login: single.login,
@@ -255,10 +267,21 @@ impl Store {
     /// Раздельные «взять» и «положить» тут опасны: ящики правят и форма
     /// настроек, и галочка строки содержимого, и правка, уложившаяся между
     /// чтением и записью соседней, пропала бы целиком.
-    pub fn update<T>(&self, change: impl FnOnce(&mut Stored) -> T) -> (Stored, T) {
+    /// Публикует правку в памяти только после успешной записи, под тем же замком.
+    pub fn try_update<T>(
+        &self,
+        change: impl FnOnce(&mut Stored) -> Result<T, String>,
+        persist: impl FnOnce(&Stored) -> Result<(), String>,
+    ) -> Result<(Stored, T), String> {
         let mut stored = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let answer = change(&mut stored);
-        (stored.clone(), answer)
+        if UNREADABLE.load(Ordering::SeqCst) {
+            return Err(tr!("mail.error.unreadable"));
+        }
+        let mut next = stored.clone();
+        let answer = change(&mut next)?;
+        persist(&next)?;
+        *stored = next.clone();
+        Ok((next, answer))
     }
 }
 
@@ -270,7 +293,11 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join(FILE))
 }
 
-/// Читает ящики с диска. При любых ошибках возвращает пустое состояние.
+/// Читает ящики с диска.
+///
+/// Файла нет — ящиков нет. Файл не прочитался — ящиков в памяти нет, и правка
+/// запрещена до перезапуска (`UNREADABLE`). Файл не разобрался — он отложен
+/// рядом (`mail.bad.json`), как у настроек, и ящики заводятся заново.
 ///
 /// Прежний файл с одной записью переписывается нынешним сразу: ключ ящика,
 /// выданный при переезде, обязан пережить перезапуск.
@@ -278,9 +305,26 @@ pub fn load(app: &AppHandle) -> Stored {
     let Ok(path) = file_path(app) else {
         return Stored::default();
     };
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Stored::default();
+    let text = match crate::disk::read_existing(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Stored::default(),
+        Err(error) => {
+            eprintln!("почта: mail.json не прочитался, правка ящиков запрещена до перезапуска: {error}");
+            UNREADABLE.store(true, Ordering::SeqCst);
+            return Stored::default();
+        }
     };
+
+    if serde_json::from_str::<OnDisk>(&text).is_err() {
+        match crate::disk::set_aside(&path) {
+            Ok(aside) => eprintln!("почта: mail.json не разобрался, файл отложен в {}", aside.display()),
+            Err(error) => {
+                eprintln!("почта: mail.json не разобрался и не отложен, правка запрещена: {error}");
+                UNREADABLE.store(true, Ordering::SeqCst);
+            }
+        }
+        return Stored::default();
+    }
 
     let (stored, rewrite) = parse(&text);
     if rewrite {
@@ -311,12 +355,39 @@ mod tests {
     fn account(id: &str, login: &str) -> Account {
         Account {
             id: id.to_owned(),
+            revision: String::new(),
             host: Some("imap.example.org".into()),
             port: Some(993),
             login: Some(login.into()),
             secret: Some("c2VjcmV0".into()),
             mailbox: None,
         }
+    }
+
+    #[test]
+    fn failed_persistence_keeps_old_credentials() {
+        let before = Stored { accounts: vec![account("one", "old@example.org")], preview: false };
+        let store = Store::new(before.clone());
+        let changed = |next: &mut Stored| {
+            next.accounts[0].login = Some("new@example.org".into());
+            Ok(())
+        };
+        assert!(store.try_update(changed, |_| Err("диск заполнен".into())).is_err());
+        assert_eq!(store.get(), before);
+        let (saved, ()) = store.try_update(changed, |_| Ok(())).expect("запись прошла");
+        assert_eq!(store.get(), saved);
+        assert_eq!(saved.accounts[0].login(), Some("new@example.org"));
+    }
+
+    #[test]
+    fn rejected_change_is_not_persisted() {
+        let store = Store::new(Stored::default());
+        let result = store.try_update(|next| {
+            next.preview = true;
+            Err::<(), _>("отказ".into())
+        }, |_| panic!("отказавшую правку писать нельзя"));
+        assert!(result.is_err());
+        assert!(!store.get().preview);
     }
 
     /// Пустой или оборванный файл — ящиков нет, и это не повод переписывать.
@@ -385,6 +456,7 @@ mod tests {
     fn blank_strings_count_as_absent() {
         let blank = Account {
             id: "x".into(),
+            revision: String::new(),
             host: Some(String::new()),
             port: Some(0),
             login: Some("   ".to_string()),

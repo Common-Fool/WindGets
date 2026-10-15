@@ -30,6 +30,7 @@ import { MetricsSection } from "./MetricsSection";
 import { SpotifySection } from "./SpotifySection";
 import { TotpSection } from "./TotpSection";
 import { WeatherSection } from "./WeatherSection";
+import { SpeedtestSource } from "./DataSource";
 
 /*
  * Страница одного виджета: вид, обложка, готовый размер, своя плотность фона и
@@ -62,6 +63,7 @@ const OWN_SECTIONS: Record<string, ComponentType<{ id: string }>> = {
   gpu: MetricsSection,
   mail: MailBoxesSection,
   media: MediaSection,
+  speedtest: SpeedtestSource,
   spotify: SpotifySection,
   totp: TotpSection,
   weather: WeatherSection,

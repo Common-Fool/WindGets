@@ -10,8 +10,8 @@
 //!
 //! Ящиков бывает несколько (этап 53, слово пользователя): у каждого своё
 //! состояние, свой шаг опроса и свой счёт отказов, а наружу они едут одним
-//! снимком. Письмо опознаётся парой «ящик + UID»: UID уникален только внутри
-//! своего ящика.
+//! снимком. Письмо опознаётся ящиком, версией реквизитов, поколением папки
+//! UIDVALIDITY и UID: повторившийся UID нового поколения — другое письмо.
 
 pub mod imap;
 pub mod store;
@@ -21,7 +21,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+use std::task::Poll;
 
+use futures_util::future::{poll_fn, select, BoxFuture, Either};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Notify;
@@ -82,6 +84,7 @@ pub enum Trouble {
 #[serde(rename_all = "camelCase")]
 pub struct BoxView {
     pub id: String,
+    pub revision: String,
     /// Логин ящика: подсказка у точки вкладки и строка в дереве настроек.
     pub address: String,
     pub view: View,
@@ -101,6 +104,9 @@ pub struct MailView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Inbox {
+    /// Поколение UID папки; старый сервер может его не сообщить.
+    #[serde(default)]
+    pub uid_validity: Option<u32>,
     /// Общее число непрочитанных писем в папке.
     pub unseen: u32,
     /// Последние полученные письма (до 10 штук).
@@ -117,7 +123,13 @@ pub struct Letter {
     /// стоят одним списком, и действие над письмом обязано уйти в его ящик.
     #[serde(default)]
     pub account: String,
-    /// Идентификатор письма (UID) — уникален только внутри своего ящика.
+    /// Версия реквизитов, с которыми получено письмо.
+    #[serde(default)]
+    pub revision: String,
+    /// Поколение папки, с которым письмо было показано.
+    #[serde(default)]
+    pub uid_validity: Option<u32>,
+    /// Идентификатор письма (UID) — уникален только внутри поколения папки.
     pub uid: u32,
     /// Отправитель: имя из конверта, а если имени нет — адрес.
     pub from: String,
@@ -163,9 +175,11 @@ pub struct Attachment {
 }
 
 /// Помечает письма ключом их ящика.
-fn owned(mut inbox: Inbox, account: &str) -> Inbox {
+fn owned(mut inbox: Inbox, account: &str, revision: &str) -> Inbox {
     for letter in &mut inbox.letters {
         letter.account = account.to_owned();
+        letter.revision = revision.to_owned();
+        letter.uid_validity = inbox.uid_validity;
     }
     inbox
 }
@@ -188,11 +202,12 @@ fn rebuild(stored: &Stored, previous: &[BoxView]) -> Vec<BoxView> {
         .map(|account| {
             let view = previous
                 .iter()
-                .find(|kept| kept.id == account.id)
+                .find(|kept| kept.id == account.id && kept.revision == account.revision)
                 .map(|kept| kept.view.clone())
                 .unwrap_or_else(|| initial(account));
             BoxView {
                 id: account.id.clone(),
+                revision: account.revision.clone(),
                 address: account.address(),
                 view,
             }
@@ -266,17 +281,22 @@ struct Credentials {
     password: String,
     mailbox: Option<String>,
     preview: bool,
+    revision: String,
 }
 
 /// Готовит учётные данные ящика или отказывается, если его нет.
 ///
 /// Один на все действия над письмами. Копии этой дюжины строк начали бы
 /// расходиться при первой же правке, а расходиться им нельзя: они про пароль.
-fn credentials(store: &Store, id: &str) -> Result<Credentials, String> {
+fn credentials(store: &Store, id: &str, revision: Option<&str>) -> Result<Credentials, String> {
     let stored = store.get();
     let account = stored
         .account(id)
         .ok_or_else(|| "ящика с таким ключом нет".to_owned())?;
+
+    if revision.is_some_and(|expected| expected != account.revision) {
+        return Err(tr!("mail.error.changed"));
+    }
 
     let host = account
         .host()
@@ -300,6 +320,17 @@ fn credentials(store: &Store, id: &str) -> Result<Credentials, String> {
         password,
         mailbox: account.mailbox().map(str::to_owned),
         preview: stored.preview,
+        revision: account.revision.clone(),
+    })
+}
+
+/// Устаревший список требует внеочередного опроса, даже если окно скрыто.
+fn letter_result<T>(state: &Mail, answer: Result<T, imap::MailError>) -> Result<T, String> {
+    answer.map_err(|error| {
+        if matches!(error, imap::MailError::Stale) {
+            state.trigger_refresh();
+        }
+        error.to_string()
     })
 }
 
@@ -307,12 +338,10 @@ fn credentials(store: &Store, id: &str) -> Result<Credentials, String> {
 ///
 /// Отдельным походом и по нажатию: со списком оно не едет вовсе.
 #[tauri::command]
-pub async fn mail_body(state: State<'_, Mail>, account: String, uid: u32) -> Result<LetterBody, String> {
-    let on = credentials(&state.store, &account)?;
+pub async fn mail_body(state: State<'_, Mail>, account: String, uid: u32, revision: String, uid_validity: Option<u32>) -> Result<LetterBody, String> {
+    let on = credentials(&state.store, &account, Some(&revision))?;
 
-    imap::fetch_body(&on.host, on.port, &on.login, &on.password, uid)
-        .await
-        .map_err(|e| e.to_string())
+    letter_result(&state, imap::fetch_body(&on.host, on.port, &on.login, &on.password, uid, uid_validity).await)
 }
 
 /// Команда: поиск писем в одном ящике.
@@ -338,13 +367,14 @@ pub async fn mail_search(
                 .or_else(|| found.host().and_then(web::mailbox_url))
         });
         return Ok(Inbox {
+            uid_validity: None,
             unseen: 0,
             letters: Vec::new(),
             mailbox,
         });
     }
 
-    let on = credentials(&state.store, &account)?;
+    let on = credentials(&state.store, &account, None)?;
 
     let found = imap::search_inbox(
         &on.host,
@@ -361,17 +391,22 @@ pub async fn mail_search(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(owned(found, &account))
+    let generation_changed = state.locked().iter().any(|kept| {
+        kept.id == account && kept.revision == on.revision
+            && matches!(&kept.view, View::Ready { inbox, .. } if inbox.uid_validity != found.uid_validity)
+    });
+    if generation_changed {
+        state.trigger_refresh();
+    }
+    Ok(owned(found, &account, &on.revision))
 }
 
 /// Команда: помечает письма ящика прочитанными по UID.
 #[tauri::command]
-pub async fn mail_mark_read(state: State<'_, Mail>, account: String, uids: Vec<u32>) -> Result<(), String> {
-    let on = credentials(&state.store, &account)?;
+pub async fn mail_mark_read(state: State<'_, Mail>, account: String, uids: Vec<u32>, revision: String, uid_validity: Option<u32>) -> Result<(), String> {
+    let on = credentials(&state.store, &account, Some(&revision))?;
 
-    imap::mark_read(&on.host, on.port, &on.login, &on.password, &uids)
-        .await
-        .map_err(|e| e.to_string())?;
+    letter_result(&state, imap::mark_read(&on.host, on.port, &on.login, &on.password, &uids, uid_validity).await)?;
 
     state.trigger_refresh();
     Ok(())
@@ -379,8 +414,8 @@ pub async fn mail_mark_read(state: State<'_, Mail>, account: String, uids: Vec<u
 
 /// Команда: помечает все письма ящика прочитанными.
 #[tauri::command]
-pub async fn mail_mark_all_read(state: State<'_, Mail>, account: String) -> Result<(), String> {
-    let on = credentials(&state.store, &account)?;
+pub async fn mail_mark_all_read(state: State<'_, Mail>, account: String, revision: String) -> Result<(), String> {
+    let on = credentials(&state.store, &account, Some(&revision))?;
 
     imap::mark_all_read(&on.host, on.port, &on.login, &on.password)
         .await
@@ -392,12 +427,10 @@ pub async fn mail_mark_all_read(state: State<'_, Mail>, account: String) -> Resu
 
 /// Команда: удаляет письма ящика (переносит в корзину).
 #[tauri::command]
-pub async fn mail_delete(state: State<'_, Mail>, account: String, uids: Vec<u32>) -> Result<(), String> {
-    let on = credentials(&state.store, &account)?;
+pub async fn mail_delete(state: State<'_, Mail>, account: String, uids: Vec<u32>, revision: String, uid_validity: Option<u32>) -> Result<(), String> {
+    let on = credentials(&state.store, &account, Some(&revision))?;
 
-    imap::delete_letter(&on.host, on.port, &on.login, &on.password, &uids)
-        .await
-        .map_err(|e| e.to_string())?;
+    letter_result(&state, imap::delete_letter(&on.host, on.port, &on.login, &on.password, &uids, uid_validity).await)?;
 
     state.trigger_refresh();
     Ok(())
@@ -460,7 +493,7 @@ pub fn set_mail_account(
     };
     let mailbox = own_mailbox(&account.mailbox)?;
 
-    let (next, saved) = state.store.update(|stored| {
+    let (next, saved) = state.store.try_update(|stored| {
         let at = match id.as_deref() {
             Some(id) => match stored.accounts.iter().position(|kept| kept.id == id) {
                 Some(at) => at,
@@ -489,11 +522,9 @@ pub fn set_mail_account(
         if secret.is_some() {
             kept.secret = secret;
         }
+        kept.revision = crate::totp::store::new_id();
         Ok(kept.id.clone())
-    });
-    let saved = saved?;
-
-    store::save(&app, &next)?;
+    }, |next| store::save(&app, next))?;
 
     // Правленный ящик начинает сначала: прежний снимок был о прежнем сервере.
     // Выброшенный из снимка, он получит начальное состояние при пересборке
@@ -551,8 +582,10 @@ pub async fn mail_check(
 /// странице виджета, а ящики — на их собственных страницах.
 #[tauri::command]
 pub fn set_mail_preview(state: State<'_, Mail>, app: AppHandle, on: bool) -> Result<(), String> {
-    let (next, ()) = state.store.update(|stored| stored.preview = on);
-    store::save(&app, &next)?;
+    let (next, ()) = state.store.try_update(|stored| {
+        stored.preview = on;
+        Ok(())
+    }, |next| store::save(&app, next))?;
     publish_rebuilt(&app, &next);
 
     // Строка содержимого — это выборка тел, и приходит она с опросом: без
@@ -566,8 +599,10 @@ pub fn set_mail_preview(state: State<'_, Mail>, app: AppHandle, on: bool) -> Res
 /// Команда: удаляет ящик вместе с паролем.
 #[tauri::command]
 pub fn forget_mail_account(app: AppHandle, state: State<'_, Mail>, id: String) -> Result<(), String> {
-    let (next, ()) = state.store.update(|stored| stored.accounts.retain(|kept| kept.id != id));
-    store::save(&app, &next)?;
+    let (next, ()) = state.store.try_update(|stored| {
+        stored.accounts.retain(|kept| kept.id != id);
+        Ok(())
+    }, |next| store::save(&app, next))?;
 
     publish_rebuilt(&app, &next);
     state.nudge.notify_one();
@@ -647,11 +682,11 @@ fn after_failure(previous: &View, reason: String, failures: u32, kind: Trouble) 
 ///
 /// `always` — рассылать и неизменившееся: на нажатие кнопки обновления ответ
 /// обязан прийти, иначе значок в карточке крутился бы вечно.
-fn set_box(app: &AppHandle, id: &str, next: View, always: bool) {
+fn set_box(app: &AppHandle, account: &Account, next: View, always: bool) {
     let state = app.state::<Mail>();
     {
         let mut boxes = state.locked();
-        let Some(kept) = boxes.iter_mut().find(|kept| kept.id == id) else {
+        let Some(kept) = boxes.iter_mut().find(|kept| kept.id == account.id && kept.revision == account.revision) else {
             // Ящик удалили, пока шёл опрос: его ответ никому не нужен
             return;
         };
@@ -693,33 +728,83 @@ async fn rest(nudge: &Notify) {
     let _ = tokio::time::timeout(TICK, nudge.notified()).await;
 }
 
-async fn work(app: AppHandle) {
-    let nudge = app.state::<Mail>().nudge.clone();
-    let mut tracks: HashMap<String, Track> = HashMap::new();
+/// У каждого ящика свой незавершённый запрос и отложенное нажатие кнопки.
+/// Будущее хранится здесь, без отдельного spawn на каждый такт.
+struct Poller {
+    account: Account,
+    track: Track,
+    request: Option<BoxFuture<'static, Result<Inbox, imap::MailError>>>,
+    request_forced: bool,
+    forced: bool,
+}
 
-    loop {
-        let stored = app.state::<Mail>().store.get();
-
-        // Удалённые ящики забываются вместе со своим ходом опроса
-        tracks.retain(|id, _| stored.account(id).is_some());
-
-        // Кнопка — одна на все ящики: снимается один раз на круг
-        let forced = app
-            .state::<Mail>()
-            .forced
-            .swap(false, Ordering::Relaxed);
-        let watched = watched(&app);
-
-        for account in &stored.accounts {
-            poll(&app, account, stored.preview, tracks.entry(account.id.clone()).or_default(), watched, forced).await;
-        }
-
-        rest(&nudge).await;
+impl Poller {
+    fn new(account: Account) -> Self {
+        Self { account, track: Track::default(), request: None, request_forced: false, forced: false }
     }
 }
 
-/// Один ящик за один круг опроса: сходить, если пора, и разослать ответ.
-async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Track, watched: bool, forced: bool) {
+/// Удаление и смена реквизитов бросают прежний запрос вместе с его ходом.
+fn sync_pollers(pollers: &mut HashMap<String, Poller>, stored: &Stored, forced: bool) {
+    pollers.retain(|id, _| stored.account(id).is_some());
+    for account in &stored.accounts {
+        let poller = pollers.entry(account.id.clone()).or_insert_with(|| Poller::new(account.clone()));
+        if poller.account != *account {
+            *poller = Poller::new(account.clone());
+        }
+        // Пока ящик занят, кнопка ждёт его окончания и не создаёт второй запрос.
+        poller.forced |= forced;
+    }
+}
+
+/// Ждём ближайший ответ: остальные запросы остаются в работе и не держат круг.
+async fn completed(pollers: &mut HashMap<String, Poller>) -> (String, Result<Inbox, imap::MailError>) {
+    poll_fn(|context| {
+        for (id, poller) in pollers.iter_mut() {
+            if let Some(request) = &mut poller.request {
+                if let Poll::Ready(answer) = request.as_mut().poll(context) {
+                    return Poll::Ready((id.clone(), answer));
+                }
+            }
+        }
+        Poll::Pending
+    }).await
+}
+
+async fn work(app: AppHandle) {
+    let nudge = app.state::<Mail>().nudge.clone();
+    let mut pollers = HashMap::new();
+
+    loop {
+        let stored = app.state::<Mail>().store.get();
+        // Кнопка — одна на все ящики: снимается один раз на круг.
+        let forced = app.state::<Mail>().forced.swap(false, Ordering::Relaxed);
+        sync_pollers(&mut pollers, &stored, forced);
+        let watched = watched(&app);
+        for poller in pollers.values_mut() {
+            poll(&app, poller, stored.preview, watched);
+        }
+
+        let answer = match select(Box::pin(completed(&mut pollers)), Box::pin(rest(&nudge))).await {
+            Either::Left((answer, _)) => Some(answer),
+            Either::Right(_) => None,
+        };
+        if let Some((id, answer)) = answer {
+            let poller = pollers.get_mut(&id).expect("ящик завершённого запроса");
+            poller.request = None;
+            finish_poll(&app, &poller.account, &mut poller.track, answer, poller.request_forced);
+        }
+    }
+}
+
+/// Начинает только свободный ящик, если ему пора; сеть ждёт общий цикл.
+fn poll(app: &AppHandle, poller: &mut Poller, preview: bool, watched: bool) {
+    if poller.request.is_some() {
+        return;
+    }
+    let account = &poller.account;
+    let track = &mut poller.track;
+    let forced = std::mem::take(&mut poller.forced);
     let configured = account.is_configured();
 
     // Ящик дозаполнили или стёрли пароль — ход опроса начинается сначала
@@ -728,7 +813,7 @@ async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Tra
             configured,
             ..Track::default()
         };
-        set_box(app, &account.id, initial(account), false);
+        set_box(app, account, initial(account), false);
     }
 
     if forced {
@@ -765,15 +850,24 @@ async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Tra
                 reason: "не удалось расшифровать пароль".to_owned(),
                 kind: Trouble::Auth,
             };
-            set_box(app, &account.id, next, forced);
+            set_box(app, account, next, forced);
             return;
         }
     };
 
     track.last = Some(Instant::now());
 
-    let answer = imap::fetch_inbox(host, port, login, &password, account.mailbox(), preview).await;
+    let host = host.to_owned();
+    let login = login.to_owned();
+    let mailbox = account.mailbox().map(str::to_owned);
+    poller.request_forced = forced;
+    poller.request = Some(Box::pin(async move {
+        imap::fetch_inbox(&host, port, &login, &password, mailbox.as_deref(), preview).await
+    }));
+}
 
+/// Публикует один ответ сразу, не дожидаясь остальных ящиков.
+fn finish_poll(app: &AppHandle, account: &Account, track: &mut Track, answer: Result<Inbox, imap::MailError>, forced: bool) {
     // Пока шёл поход, ящик могли переправить или удалить: ответ прежнего
     // сервера лёг бы поверх нового ящика — чужими письмами или чужим отказом.
     // Такой ответ выбрасывается, новый ящик опросится своим чередом
@@ -787,10 +881,10 @@ async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Tra
             track.failures = 0;
             track.auth_failed = false;
             let next = View::Ready {
-                inbox: owned(inbox, &account.id),
+                inbox: owned(inbox, &account.id, &account.revision),
                 stale: false,
             };
-            set_box(app, &account.id, next, forced);
+            set_box(app, account, next, forced);
         }
         Err(err) => {
             track.failures = track.failures.saturating_add(1);
@@ -807,7 +901,7 @@ async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Tra
                 .unwrap_or(View::Loading);
             let kind = if is_auth { Trouble::Auth } else { Trouble::Network };
             let next = after_failure(&previous, err.to_string(), track.failures, kind);
-            set_box(app, &account.id, next, forced);
+            set_box(app, account, next, forced);
         }
     }
 }
@@ -815,6 +909,78 @@ async fn poll(app: &AppHandle, account: &Account, preview: bool, track: &mut Tra
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_slow_box_does_not_hold_this_or_the_next_fast_poll() {
+        let stored = Stored { accounts: vec![account("slow", true), account("fast", true)], preview: false };
+        let mut pollers = HashMap::new();
+        sync_pollers(&mut pollers, &stored, false);
+        let (release, waiting) = tokio::sync::oneshot::channel::<()>();
+        pollers.get_mut("slow").unwrap().request = Some(Box::pin(async move {
+            waiting.await.unwrap();
+            Ok(sample_inbox())
+        }));
+        for _ in 0..3 {
+            pollers.get_mut("fast").unwrap().request = Some(Box::pin(async { Ok(sample_inbox()) }));
+            let (id, answer) = tokio::time::timeout(Duration::from_secs(1), completed(&mut pollers)).await.unwrap();
+            assert_eq!(id, "fast");
+            assert!(answer.is_ok());
+            pollers.get_mut(&id).unwrap().request = None;
+            assert!(pollers["slow"].request.is_some());
+        }
+        release.send(()).unwrap();
+        let (id, _) = completed(&mut pollers).await;
+        assert_eq!(id, "slow");
+    }
+
+    #[test]
+    fn refresh_is_remembered_for_each_busy_box_without_another_request() {
+        let stored = Stored { accounts: vec![account("one", true), account("two", true)], preview: false };
+        let mut pollers = HashMap::new();
+        sync_pollers(&mut pollers, &stored, false);
+        for poller in pollers.values_mut() {
+            poller.request = Some(Box::pin(std::future::pending()));
+            poller.track.last = Some(Instant::now());
+        }
+        sync_pollers(&mut pollers, &stored, true);
+        sync_pollers(&mut pollers, &stored, false);
+        assert_eq!(pollers.len(), 2);
+        assert!(pollers.values().all(|poller| poller.forced && poller.request.is_some() && poller.track.last.is_some()));
+    }
+
+    #[test]
+    fn removed_or_changed_boxes_drop_requests_and_their_tracks() {
+        let mut stored = Stored { accounts: vec![account("one", true)], preview: false };
+        let mut pollers = HashMap::new();
+        sync_pollers(&mut pollers, &stored, false);
+        let (release, waiting) = tokio::sync::oneshot::channel::<()>();
+        let poller = pollers.get_mut("one").unwrap();
+        poller.track.failures = 2;
+        poller.track.auth_failed = true;
+        poller.track.configured = true;
+        poller.request = Some(Box::pin(async move { waiting.await.unwrap(); Ok(sample_inbox()) }));
+        stored.accounts[0].revision = "changed".into();
+        sync_pollers(&mut pollers, &stored, false);
+        assert!(release.is_closed(), "отменённый запрос отпустил транспорт");
+        assert!(pollers["one"].request.is_none());
+        assert_eq!(pollers["one"].track.failures, 0);
+        assert!(!pollers["one"].track.auth_failed);
+        assert!(!pollers["one"].track.configured);
+        stored.accounts.clear();
+        sync_pollers(&mut pollers, &stored, false);
+        assert!(pollers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_actions_nudge_an_unconditional_refresh() {
+        let state = Mail::default();
+        let answer: Result<(), String> = letter_result(&state, Err(imap::MailError::Stale));
+        assert!(answer.is_err());
+        assert!(state.forced.swap(false, Ordering::Relaxed));
+        assert!(matches!(futures_util::poll!(Box::pin(state.nudge.notified())), Poll::Ready(())));
+        let _: Result<(), String> = letter_result(&state, Err(imap::MailError::Network("нет сети".into())));
+        assert!(!state.forced.load(Ordering::Relaxed));
+    }
 
     fn moment(watched: bool, since: Option<Duration>, failing: bool) -> Moment {
         Moment {
@@ -829,9 +995,12 @@ mod tests {
 
     fn sample_inbox() -> Inbox {
         Inbox {
+            uid_validity: Some(77),
             unseen: 3,
             letters: vec![Letter {
                 account: String::new(),
+                revision: String::new(),
+                uid_validity: Some(77),
                 uid: 101,
                 from: "Иван".to_owned(),
                 from_address: Some("ivan@example.org".to_owned()),
@@ -849,6 +1018,7 @@ mod tests {
     fn account(id: &str, configured: bool) -> Account {
         Account {
             id: id.to_owned(),
+            revision: String::new(),
             host: Some("imap.example.org".to_owned()),
             port: Some(993),
             login: Some(format!("{id}@example.org")),
@@ -1010,8 +1180,29 @@ mod tests {
     /// действие уходит туда, откуда письмо.
     #[test]
     fn letters_carry_their_account() {
-        let inbox = owned(sample_inbox(), "abcd");
-        assert!(inbox.letters.iter().all(|letter| letter.account == "abcd"));
+        let mut source = sample_inbox();
+        source.letters[0].uid_validity = Some(12);
+        let inbox = owned(source, "abcd", "version");
+        assert!(inbox.letters.iter().all(|letter| letter.account == "abcd" && letter.revision == "version" && letter.uid_validity == Some(77)));
+    }
+
+    #[test]
+    fn a_missing_generation_deserializes_as_none() {
+        let mut value = serde_json::to_value(sample_inbox()).unwrap();
+        value.as_object_mut().unwrap().remove("uidValidity");
+        value["letters"][0].as_object_mut().unwrap().remove("uidValidity");
+        let inbox: Inbox = serde_json::from_value(value).unwrap();
+        assert_eq!(inbox.uid_validity, None);
+        assert_eq!(owned(inbox, "one", "version").letters[0].uid_validity, None);
+    }
+
+    #[test]
+    fn stale_letters_cannot_use_new_credentials() {
+        let mut changed = account("one", true);
+        changed.revision = "new".into();
+        let store = Store::new(Stored { accounts: vec![changed], preview: false });
+        let result = credentials(&store, "one", Some("old"));
+        assert!(result.is_err(), "прежняя версия отсекается до расшифровки и похода в сеть");
     }
 
     /// Снимок по файлу: прежние состояния живут, новые ящики начинают с
@@ -1025,11 +1216,13 @@ mod tests {
         let before = vec![
             BoxView {
                 id: "one".into(),
+                revision: String::new(),
                 address: "one@example.org".into(),
                 view: ready.clone(),
             },
             BoxView {
                 id: "gone".into(),
+                revision: String::new(),
                 address: "gone@example.org".into(),
                 view: View::Loading,
             },
@@ -1056,13 +1249,14 @@ mod tests {
         assert_eq!(loading, r#"{"status":"loading"}"#);
 
         let ready = serde_json::to_string(&View::Ready {
-            inbox: owned(sample_inbox(), "abcd"),
+            inbox: owned(sample_inbox(), "abcd", "version"),
             stale: false,
         })
         .expect("сериализуется");
         assert!(ready.contains(r#""status":"ready""#));
         assert!(ready.contains(r#""stale":false"#));
         assert!(ready.contains(r#""unseen":3"#));
+        assert!(ready.contains(r#""uidValidity":77"#));
         assert!(ready.contains(r#""account":"abcd""#));
         assert!(ready.contains(r#""mailbox":"https://example.com""#));
         assert!(ready.contains(r#""fromAddress":"ivan@example.org""#));
@@ -1110,6 +1304,7 @@ mod tests {
         let view = MailView {
             accounts: vec![BoxView {
                 id: "abcd".into(),
+                revision: String::new(),
                 address: "me@example.org".into(),
                 view: View::Loading,
             }],
@@ -1117,7 +1312,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_string(&view).expect("сериализуется"),
-            r#"{"accounts":[{"id":"abcd","address":"me@example.org","view":{"status":"loading"}}],"preview":true}"#
+            r#"{"accounts":[{"id":"abcd","revision":"","address":"me@example.org","view":{"status":"loading"}}],"preview":true}"#
         );
     }
 }

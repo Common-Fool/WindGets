@@ -403,6 +403,17 @@ mod imp {
 
     static MOVED: Mutex<Option<Moved>> = Mutex::new(None);
 
+    /// Снимает стражу размера с окна: его размер сейчас ставим мы сами.
+    pub fn release(window: &WebviewWindow) {
+        let Ok(hwnd) = window.hwnd() else {
+            return;
+        };
+        let mut moved = MOVED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if moved.as_ref().is_some_and(|m| m.window == hwnd.0 as isize) {
+            *moved = None;
+        }
+    }
+
     /// Всё, что живёт ровно одно перетаскивание.
     ///
     /// Тянут всегда одно окно, так что состояние общее: два окна сразу под
@@ -760,15 +771,20 @@ mod imp {
 
     /// Пишет позиции на диск.
     ///
-    /// Отдельным потоком: изнутри оконной процедуры это значило бы файловый
-    /// ввод-вывод и опрос окон, не выходя из модального цикла. К моменту
-    /// исполнения цикл уже закончится.
+    /// Не на месте: изнутри оконной процедуры это значило бы файловый
+    /// ввод-вывод и опрос окон, не выходя из модального цикла. Работа встаёт в
+    /// очередь главного потока, и к её исполнению цикл уже закончится.
     fn remember_places() {
         let Some(app) = APP.get().cloned() else {
             return;
         };
 
-        tauri::async_runtime::spawn_blocking(move || crate::windows::save_places(&app));
+        // ВАЖНО: **главным потоком, а не из пула.** Плагин window-state держит
+        // свой замок, пока спрашивает окна о месте, а спрошенное из пула окно
+        // ждёт главный поток. Главный же поток, разбирая `Moved` того же окна,
+        // ждёт этот замок — и оба стоят навсегда. Очередь главного потока
+        // дойдёт до записи уже после модального цикла перетаскивания
+        crate::windows::on_main(&app, |app| crate::windows::save_places(&app));
     }
 
     unsafe fn forget(window: HWND) {
@@ -795,6 +811,19 @@ pub fn attach(app: &AppHandle, window: &WebviewWindow, id: &str, chrome: bool) {
 
 #[cfg(not(windows))]
 pub fn attach(_app: &AppHandle, _window: &WebviewWindow, _id: &str, _chrome: bool) {}
+
+/// Снимает стражу от Snap перед размером, который ставит само приложение.
+///
+/// Стража запрещает окну менять размер секунду после переноса, не разбирая,
+/// кто его меняет, — и выбранный в меню размер в эту секунду молча
+/// отменялся бы, хотя номер его уже записан.
+#[cfg(windows)]
+pub fn release_size_guard(window: &WebviewWindow) {
+    imp::release(window);
+}
+
+#[cfg(not(windows))]
+pub fn release_size_guard(_window: &WebviewWindow) {}
 
 #[cfg(test)]
 mod tests {

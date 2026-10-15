@@ -49,6 +49,7 @@ export function Dots({ count, active, limit, onPick, onAdd, titles, disabled = f
           type="button"
           className="dots__dot"
           data-active={at === active}
+          aria-current={at === active ? "page" : undefined}
           disabled={disabled}
           title={titles?.[at] ?? t("pages.page", { number: at + 1 })}
           onClick={() => onPick(at)}

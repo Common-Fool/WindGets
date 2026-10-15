@@ -2,8 +2,9 @@ import { StrictMode, Suspense, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { resolveWidget, WIDGETS } from "./widgets/registry";
 import { initLook } from "./lib/look";
-import { initText, useText, useTextReady, type Key } from "./lib/i18n";
+import { initText, useText, useTextFailed, useTextReady, type Key } from "./lib/i18n";
 import { useWidgetMenu } from "./lib/gestures";
+import { Guard, TextFailed } from "./components/Guard";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/reference.css";
@@ -50,6 +51,7 @@ function Shell({ children }: { children: ReactNode }) {
   useWidgetMenu();
   const t = useText();
   const ready = useTextReady();
+  const failed = useTextFailed();
 
   useEffect(() => {
     if (ready && widget) document.title = t(TITLE_KEY);
@@ -57,9 +59,11 @@ function Shell({ children }: { children: ReactNode }) {
 
   // ВАЖНО: **пока словарь не приехал, окно не рисует ничего.** Иначе на
   // первом кадре стояли бы ключи вместо слов. Окна собираются спрятанными,
-  // и пустой миг никто не увидит
+  // и пустой миг никто не увидит. Не приехал вовсе — кнопка повтора, а не
+  // вечная пустота
+  if (failed) return <TextFailed />;
   if (!ready) return null;
-  return <>{children}</>;
+  return <Guard>{children}</Guard>;
 }
 
 const container = document.getElementById("root");

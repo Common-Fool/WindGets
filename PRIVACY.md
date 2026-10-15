@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: October 12, 2026_
+_Last updated: October 15, 2026_
 
 Windgets is a desktop app that runs entirely on your computer. It has no
 accounts, no telemetry, no analytics and no server of its own. The author
@@ -39,6 +39,29 @@ Tools (ffmpeg, yt-dlp, QuickJS, the PawnIO driver) are downloaded only after
 you agree.
 
 Each service handles your data under its own privacy policy, linked above.
+
+## Your rights (GDPR)
+
+If you are in the European Union or the European Economic Area:
+
+- **The author is not a controller of your data.** Windgets has no server and
+  the author receives nothing, so there is nothing the author could show,
+  correct or delete for you.
+- **Data on your computer is yours.** You can view, change or delete it at any
+  time: it lives in the two folders listed above, and uninstalling with
+  "Delete app data" removes both. Disconnecting Spotify in the widget settings
+  removes the sign-in and the last played track.
+- **Speedtest.** Pressing the speedtest button is your consent to the test;
+  the widget settings link to M-Lab's privacy policy and rules. Measurement
+  Lab is the controller of the published results. To exercise your rights over
+  them, contact M-Lab as described in its
+  [privacy policy](https://www.measurementlab.net/privacy/). Results already
+  published as open data may not be removable.
+- **Other services** (Open-Meteo, Spotify, GitHub, your mail provider) are
+  controllers of what they receive; contact them under their own policies,
+  linked above.
+- You also have the right to lodge a complaint with your local data
+  protection authority.
 
 ## Contact
 

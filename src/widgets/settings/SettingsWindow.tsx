@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { closeSettings, useSettings } from "../../lib/settings";
 import { useLook } from "../../lib/look";
 import { useWindowDrag } from "../../lib/drag";
@@ -100,12 +101,50 @@ function useTarget(onSection: (id: string) => void): [string, (id: string) => vo
   return [id, setId];
 }
 
+/**
+ * Показано ли окно. Спрятанное окно страницу не держит: закрытое на «Виджетах»
+ * или странице процессора, оно иначе круглые сутки разбирало бы снимок
+ * датчиков каждую секунду. Раздел и цель живут выше и переживают закрытие.
+ *
+ * Спрашиваем и слушаем разом; ответ на вопрос выбрасывается, если событие
+ * успело раньше — оно свежее.
+ */
+function useShown(): boolean {
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    let heard = false;
+    getCurrentWebviewWindow()
+      .isVisible()
+      .then((visible) => {
+        if (!heard) setShown(visible);
+      })
+      .catch(() => {
+        // Вне Tauri окно в браузере видно всегда — замеры раскладки там же
+        if (!heard) setShown(true);
+      });
+
+    const stop = listen<boolean>("settings-shown", (event) => {
+      heard = true;
+      setShown(event.payload);
+    }).catch(() => () => {});
+
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
+
+  return shown;
+}
+
 export function SettingsWindow() {
   // Блокировку положения окно настроек не слушает: в нём стоит её выключатель
   useWindowDrag(true);
   const t = useText();
   const settings = useSettings();
   const reference = useLook().effectiveDesign === "reference";
+
+  const shown = useShown();
 
   const [active, setActive] = useState<string>(SECTIONS[0].id);
   const [target, setTarget] = useTarget((id) => {
@@ -275,7 +314,7 @@ export function SettingsWindow() {
 
         <section className="settings__panel">
           <Navigate.Provider value={setTarget}>
-            {target === "" ? (
+            {!shown ? null : target === "" ? (
               <>
                 <h2 className="settings__heading caps">{t(section.title)}</h2>
                 <Content />

@@ -399,11 +399,23 @@ fn next_device(devices: &[Found], current: Option<&str>) -> Option<String> {
 fn work(app: AppHandle, inbox: Receiver<Action>) {
     use std::sync::mpsc::RecvTimeoutError;
 
-    let endpoints = match endpoints::Endpoints::open() {
-        Ok(endpoints) => endpoints,
-        Err(error) => {
-            eprintln!("[звук] устройства недоступны: {error}");
-            return;
+    // Не открылись — пробуем снова, а не выходим: на автозапуске аудиослужба
+    // бывает ещё не готова, и вышедший поток оставил бы виджет мёртвым до
+    // перезапуска приложения. Команды, пришедшие до этого, исполнять не на чем
+    let mut told = false;
+    let endpoints = loop {
+        match endpoints::Endpoints::open() {
+            Ok(endpoints) => break endpoints,
+            Err(error) => {
+                if !told {
+                    eprintln!("[звук] устройства недоступны, пробуем снова: {error}");
+                    told = true;
+                }
+            }
+        }
+        match inbox.recv_timeout(std::time::Duration::from_secs(5)) {
+            Err(RecvTimeoutError::Disconnected) => return,
+            _ => continue,
         }
     };
 

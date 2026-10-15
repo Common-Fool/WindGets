@@ -17,6 +17,7 @@
 //! Расплата: результаты уходят в открытый датасет M-Lab под CC0. Для виджета
 //! это неважно, но знать об этом надо.
 
+use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -222,6 +223,29 @@ pub struct Speedtest {
     /// Подобранные серверы и когда их подобрали.
     servers: Mutex<Option<(Instant, Vec<Server>)>>,
     running: AtomicBool,
+    /// Когда начинались замеры за последние сутки — ради предела M-Lab.
+    started: Mutex<VecDeque<Instant>>,
+}
+
+/// Сколько замеров M-Lab разрешает одному человеку за сутки.
+///
+/// Правила M-Lab для сторонних клиентов (AUP): интерактивному пользователю —
+/// не больше 40 в день. Счёт живёт в памяти: замер идёт только по кнопке, и
+/// упереться в предел можно лишь нарочно, а перезапуск ради лишнего замера —
+/// уже не наша забота.
+const DAILY_LIMIT: usize = 40;
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Есть ли ещё замер в суточном пределе; если есть — записывает его.
+fn take_slot(started: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while started.front().is_some_and(|at| now.duration_since(*at) >= DAY) {
+        started.pop_front();
+    }
+    if started.len() >= DAILY_LIMIT {
+        return false;
+    }
+    started.push_back(now);
+    true
 }
 
 impl Speedtest {
@@ -361,8 +385,17 @@ fn save_history(app: &AppHandle, history: &[Report]) {
 #[tauri::command]
 pub fn speedtest_start(app: AppHandle) -> Result<(), String> {
     // Второй заход поверх первого исказил бы оба: они делят один канал
-    if app.state::<Speedtest>().running.swap(true, Ordering::SeqCst) {
+    let state = app.state::<Speedtest>();
+    if state.running.swap(true, Ordering::SeqCst) {
         return Err(tr!("speedtest.error.busy"));
+    }
+    let allowed = take_slot(
+        &mut state.started.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+        Instant::now(),
+    );
+    if !allowed {
+        state.running.store(false, Ordering::SeqCst);
+        return Err(tr!("speedtest.error.dailyLimit"));
     }
 
     tauri::async_runtime::spawn(async move {
@@ -550,7 +583,7 @@ async fn locate() -> Result<Vec<Server>, String> {
     }
 
     if servers.is_empty() {
-        return Err(trouble.unwrap_or_else(|| "M-Lab offered no servers".to_owned()));
+        return Err(trouble.unwrap_or_else(|| tr!("speedtest.error.noServers")));
     }
 
     Ok(without_repeats(servers))
@@ -603,7 +636,7 @@ async fn locate_in(country: Option<&str>) -> Result<Vec<Server>, String> {
     };
 
     let answer: Answer = client()
-        .map_err(|error| format!("HTTP client failed: {error}"))?
+        .map_err(|error| tr!("speedtest.error.noAnswer", error = error))?
         .get(address)
         .send()
         .await
@@ -612,7 +645,11 @@ async fn locate_in(country: Option<&str>) -> Result<Vec<Server>, String> {
         .map_err(describe)?
         .json()
         .await
-        .map_err(|error| format!("M-Lab replied with nonsense: {error}"))?;
+        .map_err(|error| {
+            // Причина — разработчику, в карточку — понятное человеку
+            eprintln!("[спидтест] M-Lab ответил непонятно: {error}");
+            tr!("speedtest.error.noServers")
+        })?;
 
     Ok(read_servers(answer.results))
 }
@@ -750,6 +787,20 @@ type Socket = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
 >;
 
+/// Поток замера, который снимается вместе с хозяином.
+///
+/// ВАЖНО: **брошенный `JoinHandle` задачу не останавливает, а отпускает.**
+/// Этап, не уложившийся в срок, бросает свои потоки вместе с будущим, и без
+/// этой обёртки они продолжали бы лить и держать сокеты до таймаута TCP —
+/// мешая следующему замеру. Завершённой задаче `abort` ничего не делает.
+struct Stream<T>(tauri::async_runtime::JoinHandle<T>);
+
+impl<T> Drop for Stream<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Скачивание: сервер льёт двоичные сообщения, мы их считаем.
 ///
 /// Считаем у себя, а не по отчётам сервера: на приёме клиент видит ровно то,
@@ -762,13 +813,13 @@ async fn download(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<M
         let url = server.download.clone();
         let flow = Arc::clone(&flow);
 
-        streams.push(tauri::async_runtime::spawn(async move {
+        streams.push(Stream(tauri::async_runtime::spawn(async move {
             let outcome = pull(&url, &flow).await;
             // Считаться законченным поток обязан при любом исходе, иначе показ
             // скорости внизу ждал бы его вечно
             flow.done();
             outcome
-        }));
+        })));
     }
 
     // Пока льётся — показываем, сколько уже набежало по всем потокам разом
@@ -783,8 +834,8 @@ async fn download(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<M
     let mut trouble: Option<Trouble> = None;
     let mut worked = 0_usize;
 
-    for stream in streams {
-        match stream.await {
+    for mut stream in streams {
+        match (&mut stream.0).await {
             Ok(Ok(seen)) => {
                 worked += 1;
                 latency = quicker(latency, seen);
@@ -1022,13 +1073,13 @@ async fn upload(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<f64
         let url = server.upload.clone();
         let rates = Arc::clone(&rates);
 
-        streams.push(tauri::async_runtime::spawn(async move {
+        streams.push(Stream(tauri::async_runtime::spawn(async move {
             let outcome = push(&url, index, &rates).await;
             // Законченным поток обязан считаться при любом исходе, иначе показ
             // хода ждал бы его вечно — то же правило, что у скачивания
             rates.done();
             outcome
-        }));
+        })));
     }
 
     // Пока льётся — показываем сумму последних отчётов
@@ -1043,8 +1094,8 @@ async fn upload(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<f64
     let mut trouble: Option<Trouble> = None;
     let mut worked = 0_usize;
 
-    for stream in streams {
-        match stream.await {
+    for mut stream in streams {
+        match (&mut stream.0).await {
             Ok(Ok(rate)) => {
                 worked += 1;
                 total += rate;
@@ -1266,6 +1317,20 @@ mod tests {
         assert_eq!(quicker(None, None), None);
     }
 
+    /// Предел M-Lab: сорок замеров за скользящие сутки, сорок первый —
+    /// отказ, а через сутки после первого место освобождается.
+    #[test]
+    fn the_daily_limit_of_m_lab_holds() {
+        let start = Instant::now();
+        let mut started = VecDeque::new();
+        for _ in 0..DAILY_LIMIT {
+            assert!(take_slot(&mut started, start));
+        }
+        assert!(!take_slot(&mut started, start + Duration::from_secs(60)));
+        assert_eq!(started.len(), DAILY_LIMIT, "отказ не считается замером");
+        assert!(take_slot(&mut started, start + DAY));
+    }
+
     /// Причиной отказа остаётся первая беда — кроме протухшего токена: на нём
     /// замер повторяют, и потерять его среди «связь оборвалась» нельзя.
     #[test]
@@ -1288,6 +1353,9 @@ mod tests {
         assert_eq!(flow.rate(), None, "до первых данных скорости нет");
 
         flow.begin();
+        // Без паузы пуск часов и первый байт могут прийтись на один отсчёт
+        // `Instant`: время ноль, скорость ноль, и тест падал через раз
+        std::thread::sleep(Duration::from_millis(5));
         flow.add(1_000_000);
         flow.add(1_000_000);
 

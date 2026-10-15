@@ -117,7 +117,7 @@ fn pump(source: impl Read, dir: &Path, clock: impl Fn() -> String) {
         }
 
         written += 1;
-        if written % CHECK_EVERY == 0 {
+        if written.is_multiple_of(CHECK_EVERY) {
             let grown = file
                 .as_ref()
                 .and_then(|out| out.metadata().ok())
@@ -166,6 +166,19 @@ pub fn start(app: &AppHandle) {
 /// В разработке журнал не ведётся: вывод читают в терминале запуска.
 #[cfg(not(all(windows, not(debug_assertions))))]
 pub fn start(_app: &AppHandle) {}
+
+/// Сколько знаков отказа окна кладём в журнал: стек React бывает длинным, а
+/// петля отказов не должна раздуть файл до переезда в `.old` за минуту.
+const CRASH_LIMIT: usize = 4000;
+
+/// Отказ интерфейса окна (граница `Guard` во фронте): в собранном приложении
+/// консоли webview никто не видит, и без этого причина пустого окна пропала бы.
+#[tauri::command]
+pub fn report_crash(window: tauri::WebviewWindow, message: String, stack: String) {
+    let clip = |text: &str| text.chars().take(CRASH_LIMIT).collect::<String>();
+    eprintln!("[окно {}] интерфейс упал: {}
+{}", window.label(), clip(&message), clip(&stack));
+}
 
 #[cfg(test)]
 mod tests {

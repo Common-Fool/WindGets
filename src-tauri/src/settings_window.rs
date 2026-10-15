@@ -58,6 +58,12 @@ const SETTINGS_EVENT: &str = "settings";
 /// старта до выхода, перезагружать её ради другого виджета незачем.
 const TARGET_EVENT: &str = "settings-target";
 
+/// Показано ли окно настроек: спрятанное снимает страницу целиком, и вместе с
+/// ней — подписки на телеметрию и прочие потоки. Иначе окно, закрытое на
+/// «Виджетах» или «Процессоре», круглые сутки разбирало бы снимок датчиков
+/// каждую секунду, никому его не показывая.
+const SHOWN_EVENT: &str = "settings-shown";
+
 /// Ширина держится списком виджетов, а не разделами: в списке пять столбцов
 /// постоянной ширины, а имя виджета занимает остаток. Замер при кегле 100 %:
 /// самое длинное имя («Витрина компонентов») просит 154 точки, и на 680 ему
@@ -393,6 +399,8 @@ fn reveal(app: &AppHandle) {
         return;
     };
 
+    // До показа: страница успевает смонтироваться, пока окно выходит на экран
+    let _ = app.emit_to(LABEL, SHOWN_EVENT, true);
     let _ = window.show();
     let _ = window.set_focus();
 }
@@ -498,6 +506,7 @@ fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
     // Та же защита, что у виджетов, и так же первой: окну без рамки tao точно
     // так же возвращает заголовок при каждом показе
     keep_frameless(&window);
+    crate::windows::lock_browser(&window);
 
     // Место и размер помним наравне с виджетами: настройки открывают часто,
     // и каждый раз ловить окно посреди экрана — то ещё удовольствие
@@ -567,13 +576,11 @@ pub fn set_widget_option(app: AppHandle, id: String, option: String, value: bool
     };
 
     let state = app.state::<SettingsState>();
-    let mut own = state.get().widget(widget);
-
-    if !settings::apply_option(&mut own, &option, value, widget.interactive) {
+    let Some(own) = settings::update_widget(&app, &state, widget, |_, own| {
+        settings::apply_option(own, &option, value, widget.interactive)
+    }) else {
         return;
-    }
-
-    settings::update(&app, &state, |settings| settings.set_widget(&id, own));
+    };
     emit(&app);
 
     windows::on_main(&app, move |app| windows::apply_by_id(&app, &id, own));
@@ -601,23 +608,24 @@ pub fn set_widget_view(app: AppHandle, id: String, index: usize) {
     }
 
     let state = app.state::<SettingsState>();
-    let design = state.get().design;
-    let mut own = state.get().widget(widget);
-    if own.view == index {
+    let Some(own) = settings::update_widget(&app, &state, widget, |design, own| {
+        if own.view == index {
+            return false;
+        }
+        own.view = index;
+
+        // ВАЖНО: **набор размеров у нового вида может быть короче.** У пульта
+        // раскладка приносит свои четыре размера, и запись от версии с другим их
+        // числом оставила бы номер за краем набора: окно встало бы по первому
+        // размеру, а меню держало бы галочку на несуществующем пункте
+        let sizes = widget.presets_in(design, index).len();
+        if sizes > 0 && own.size >= sizes {
+            own.size = 0;
+        }
+        true
+    }) else {
         return;
-    }
-    own.view = index;
-
-    // ВАЖНО: **набор размеров у нового вида может быть короче.** У пульта
-    // раскладка приносит свои четыре размера, и запись от версии с другим их
-    // числом оставила бы номер за краем набора: окно встало бы по первому
-    // размеру, а меню держало бы галочку на несуществующем пункте
-    let sizes = widget.presets_in(design, index).len();
-    if sizes > 0 && own.size >= sizes {
-        own.size = 0;
-    }
-
-    settings::update(&app, &state, |settings| settings.set_widget(widget.id, own));
+    };
 
     // Тот же путь, что и у смены размера: окно узнаёт о новой высоте числом, а
     // фронт получает `widget-size` и сворачивает раскрытые панели
@@ -646,12 +654,12 @@ pub fn set_sound_mixer_collapsed(app: AppHandle, collapsed: bool) {
 pub fn set_widget_layout(app: AppHandle, id: String, index: usize) {
     let Some(widget) = widgets::find(&id) else { return; };
     let state = app.state::<SettingsState>();
-    let settings = state.get();
-    let mut own = settings.widget(widget);
-    if index >= widget.layout_choices(settings.design, own.view).len() { return; }
-    if own.layout == index { return; }
-    own.layout = index;
-    settings::update(&app, &state, |settings| settings.set_widget(widget.id, own));
+    let changed = settings::update_widget(&app, &state, widget, |design, own| {
+        if index >= widget.layout_choices(design, own.view).len() || own.layout == index { return false; }
+        own.layout = index;
+        true
+    });
+    if changed.is_none() { return; }
     let id = widget.id;
     windows::on_main(&app, move |app| windows::set_layout(&app, id));
     emit(&app);
@@ -671,13 +679,16 @@ pub fn set_widget_cover(app: AppHandle, id: String, index: usize) {
     }
 
     let state = app.state::<SettingsState>();
-    let mut own = state.get().widget(widget);
-    if own.cover == index {
+    let changed = settings::update_widget(&app, &state, widget, |_, own| {
+        if own.cover == index {
+            return false;
+        }
+        own.cover = index;
+        true
+    });
+    if changed.is_none() {
         return;
     }
-    own.cover = index;
-
-    settings::update(&app, &state, |settings| settings.set_widget(widget.id, own));
     emit(&app);
 }
 
@@ -689,7 +700,7 @@ pub fn set_widget_size(app: AppHandle, id: String, index: usize) {
     };
     let state = app.state::<SettingsState>();
     let settings = state.get();
-    let mut own = settings.widget(widget);
+    let own = settings.widget(widget);
     if !widget.size_choices(settings.design, own.view, own.layout).iter().any(|(available, _)| *available == index) {
         return;
     }
@@ -698,10 +709,13 @@ pub fn set_widget_size(app: AppHandle, id: String, index: usize) {
     }
     // Повторный выбор восстанавливает геометрию этих карточек даже после
     // старого оконного состояния, не создавая лишнюю запись настроек.
-    if own.size != index {
+    settings::update_widget(&app, &state, widget, |_, own| {
+        if own.size == index {
+            return false;
+        }
         own.size = index;
-        settings::update(&app, &state, |settings| settings.set_widget(widget.id, own));
-    }
+        true
+    });
 
     let id = widget.id;
     windows::on_main(&app, move |app| windows::set_size(&app, id, index));
@@ -738,7 +752,15 @@ pub fn set_flag(app: AppHandle, name: String, value: bool) {
             apply_flags(&app);
         }
         "autostart" => {
-            settings::set_autostart(&app, value);
+            // ВАЖНО: **не здесь, а в пуле.** Задачу планировщика ставит
+            // `schtasks`, и его ждут, а синхронная команда выполняется в главном
+            // потоке — на это время встал бы приём IPC во всех окнах
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                settings::set_autostart(&app, value);
+                emit(&app);
+            });
+            return;
         }
         _ => return,
     }
@@ -947,6 +969,7 @@ pub fn close_settings(app: AppHandle) {
 
         windows::save_places(&app);
         let _ = window.hide();
+        let _ = app.emit_to(LABEL, SHOWN_EVENT, false);
     });
 }
 
@@ -969,13 +992,12 @@ pub fn set_all_widget_option(app: AppHandle, option: String, value: bool) {
     settings::update(&app, &state, |settings| {
         // Служебные окна — только своей галочкой (12 октября, слово пользователя)
         for widget in widgets::shown().filter(|widget| !widget.chrome) {
-            let mut own = settings.widget(widget);
-            if !settings::apply_option(&mut own, &option, value, widget.interactive) {
-                continue;
+            let own = settings.edit_widget(widget, |own| {
+                settings::apply_option(own, &option, value, widget.interactive)
+            });
+            if let Some(own) = own {
+                touched.push((widget, own));
             }
-
-            settings.set_widget(widget.id, own);
-            touched.push((widget, own));
         }
     });
 

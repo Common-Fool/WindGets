@@ -1,6 +1,6 @@
 [package]
 name = "windgets"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Виджеты мониторинга железа"
 authors = ["CommonFool"]
@@ -136,6 +136,12 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["system"] 
 # и без прямой записи в зависимостях объявление IPolicyConfig не собирается.
 # Своей сборки не добавляет — он и так лежит в дереве под `windows`.
 windows-core = "0.61.2"
+# Ради настроек самого WebView2 (`windows::lock_browser`): меню движка
+# «Обновить / Печать» и его сочетания клавиш гасятся у каждого окна нативно,
+# до загрузки скрипта, а не только слушателем в `Shell`. Своей сборки не
+# добавляет: та же версия уже лежит в дереве под wry, и Tauri отдаёт её
+# контроллер в `with_webview`
+webview2-com = "0.38.2"
 windows = { version = "0.61.3", features = [
     "Foundation",
     "Media_Control",

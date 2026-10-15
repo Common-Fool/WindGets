@@ -60,7 +60,12 @@ type Listener = (state: View) => void;
 
 let current: View = EMPTY;
 const listeners = new Set<Listener>();
-let started = false;
+/**
+ * Снятие подписки; `null` — окно поток не слушает. Снимается, когда слушателей
+ * не осталось: раздел медиа в настройках иначе держал бы доставку в спрятанное
+ * окно до выхода (как у телеметрии, `telemetry.ts`).
+ */
+let unlisten: Promise<() => void> | null = null;
 
 function publish(next: View) {
   current = next;
@@ -68,8 +73,7 @@ function publish(next: View) {
 }
 
 function start() {
-  if (started) return;
-  started = true;
+  if (unlisten !== null) return;
 
   let heard = false;
 
@@ -84,10 +88,18 @@ function start() {
       // Вне Tauri сессий просто нет
     });
 
-  listen<View>("media", (event) => {
+  unlisten = listen<View>("media", (event) => {
     heard = true;
     publish(event.payload);
-  }).catch(() => {});
+  });
+  unlisten.catch(() => {});
+}
+
+function stopIfIdle() {
+  if (listeners.size > 0 || unlisten === null) return;
+  const pending = unlisten;
+  unlisten = null;
+  pending.then((stop) => stop()).catch(() => {});
 }
 
 function subscribe(listener: Listener): () => void {
@@ -95,6 +107,8 @@ function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+    // Не сразу: `StrictMode` и смена раздела снимают и тут же заводят подписку
+    setTimeout(stopIfIdle, 1000);
   };
 }
 

@@ -1,7 +1,7 @@
 import { useRef, type CSSProperties } from "react";
 import { GlassCard } from "../../components/GlassCard";
 import { DoneIcon, FailedIcon } from "../../components/Icons";
-import type { Text } from "../../lib/i18n";
+import type { Key, Text } from "../../lib/i18n";
 import { openWidgetSettings } from "../../lib/settings";
 import { useHeight } from "../../lib/size";
 import { grouped, titleOf, type Code, type Codes, type Row } from "../../lib/totp";
@@ -12,6 +12,8 @@ export type TotpCopyFeedback = { id: string; ok: boolean };
 type Props = {
   t: Text;
   accounts: Row[];
+  /** Что сказать пустой карточке: «записей нет» или беда с файлом. */
+  empty: { title: Key; hint: Key };
   answer: Codes | null;
   current: string | null;
   feedback: TotpCopyFeedback | null;
@@ -49,7 +51,7 @@ function codeText(t: Text, code: Code | undefined, row: Row, open: boolean): str
 }
 
 /** A/B — только визуал; коды, выбор и будильник принадлежат TotpWidget. */
-export function TotpReference({ t, accounts, answer, current, feedback, hidden, second, layout }: Props) {
+export function TotpReference({ t, accounts, empty, answer, current, feedback, hidden, second, layout }: Props) {
   const stacked = layout === 1;
   const space = useRef<HTMLDivElement>(null);
   const sample = useRef<HTMLLIElement>(null);
@@ -65,8 +67,8 @@ export function TotpReference({ t, accounts, answer, current, feedback, hidden, 
         <div className="totp-ref" data-layout={stacked ? "b" : "a"}>
           {accounts.length === 0 ? (
             <button type="button" className="totp-ref__empty" data-drags onClick={() => openWidgetSettings("totp")}>
-              <span>{t("totp.empty")}</span>
-              <span className="totp-ref__empty-hint">{t("totp.emptyHint")}</span>
+              <span>{t(empty.title)}</span>
+              <span className="totp-ref__empty-hint">{t(empty.hint)}</span>
             </button>
           ) : (
             <>

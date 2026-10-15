@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Key } from "./i18n";
 
 /*
  * Коды 2FA: список записей и сами коды.
@@ -22,9 +23,24 @@ export type Row = {
   period: number;
 };
 
+/**
+ * Беда с файлом записей: `unreadable` — файл есть, но не прочитался, и правка
+ * запрещена, пока он не прочитается; `setAside` — файл испорчен и отложен
+ * рядом как `totp.bad.json`.
+ */
+export type Trouble = "unreadable" | "setAside";
+
 export type View = {
   accounts: Row[];
+  trouble: Trouble | null;
 };
+
+/** Заголовок и подсказка пустой карточки: при беде с файлом — о ней, а не «записей нет». */
+export function emptyText(trouble: Trouble | null): { title: Key; hint: Key } {
+  if (trouble === "unreadable") return { title: "totp.trouble.unreadable", hint: "totp.trouble.unreadableHint" };
+  if (trouble === "setAside") return { title: "totp.trouble.setAside", hint: "totp.trouble.setAsideHint" };
+  return { title: "totp.empty", hint: "totp.emptyHint" };
+}
 
 /** Код одной записи. `code` пуст, если секрет не расшифровался. */
 export type Code = {
@@ -41,7 +57,7 @@ export type Codes = {
   clockSuspect: boolean;
 };
 
-const EMPTY: View = { accounts: [] };
+const EMPTY: View = { accounts: [], trouble: null };
 
 type Listener = (state: View) => void;
 

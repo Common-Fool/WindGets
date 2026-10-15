@@ -51,6 +51,12 @@ const PREVIEW_CHARS: usize = 200;
 /// двадцать таких держали бы в памяти неизвестно сколько.
 const MAX_CHARS: usize = 64 * 1024;
 
+/// Ищет конец текста до декодирования, читая не больше двух единиц на знак
+/// и завершающего нуля. Нет нуля в пределах — строку целиком не берём.
+fn bounded_text_length(wide: &[u16]) -> Option<usize> {
+    wide.iter().take(MAX_CHARS * 2 + 1).position(|unit| *unit == 0)
+}
+
 /// Запись, какой она лежит у нас: с полным текстом.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
@@ -364,6 +370,27 @@ pub async fn clipboard_control(state: State<'_, Clipboard>, action: Action) -> R
     outcome.await.map_err(|_| ControlError::Unavailable)?
 }
 
+/// Секрет копируется независимо от включения истории и видимости её окна.
+/// Ожидание занятого буфера и повторы идут в пуле, не в главном потоке.
+#[tauri::command]
+pub async fn clipboard_copy_secret(window: tauri::WebviewWindow, text: String) -> Result<(), ControlError> {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let owner = window.hwnd().map_err(|_| ControlError::Unavailable)?;
+            board::write_secret(&text, owner).map_err(|error| {
+                eprintln!("[буфер] секрет не скопирован: {error}");
+                ControlError::CopyFailed
+            })
+        }).await.map_err(|_| ControlError::Unavailable)?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, text);
+        Err(ControlError::Unavailable)
+    }
+}
+
 /// Поднимает поток буфера. Живёт до конца работы приложения.
 pub fn spawn(app: AppHandle) {
     let (orders, inbox) = mpsc::channel();
@@ -508,6 +535,33 @@ fn work(_app: AppHandle, _inbox: Receiver<Order>) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_length_requires_a_terminator_within_the_limit() {
+        assert_eq!(bounded_text_length(&[]), None);
+        assert_eq!(bounded_text_length(&[0, 65]), Some(0));
+        assert_eq!(bounded_text_length(&[65, 66, 0, 67]), Some(2));
+        assert_eq!(bounded_text_length(&[65, 66]), None);
+        let mut wide = vec![65; MAX_CHARS * 2 + 2];
+        wide[MAX_CHARS * 2 + 1] = 0;
+        assert_eq!(bounded_text_length(&wide), None, "ноль за потолком не читаем");
+        wide[MAX_CHARS * 2] = 0;
+        assert_eq!(bounded_text_length(&wide), Some(MAX_CHARS * 2));
+    }
+
+    #[test]
+    fn bounded_length_keeps_surrogate_pairs_at_the_character_limit() {
+        let text = "😀".repeat(MAX_CHARS);
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let length = bounded_text_length(&wide).expect("пары и ноль помещаются");
+        let decoded = String::from_utf16_lossy(&wide[..length]);
+        assert!(History::default().record(&decoded));
+        // Грубый предел в UTF-16 не подменяет точную проверку числа знаков.
+        let mut ascii = vec![65; MAX_CHARS + 1];
+        ascii.push(0);
+        let length = bounded_text_length(&ascii).expect("ограниченный проход допустил строку");
+        assert!(!History::default().record(&String::from_utf16_lossy(&ascii[..length])));
+    }
 
     fn filled(texts: &[&str]) -> History {
         let mut history = History::default();

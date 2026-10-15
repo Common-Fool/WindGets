@@ -29,7 +29,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dpapi;
 
-use self::store::{Account, Row, Store, Stored};
+use std::sync::Mutex;
+
+use self::store::{Account, Loaded, Row, Store, Stored, Trouble};
 
 /// Метка окна виджета в реестре: по ней команда узнаёт, смотрит ли кто-нибудь.
 const WIDGET: &str = "totp";
@@ -42,6 +44,10 @@ const TOTP_EVENT: &str = "totp";
 #[serde(rename_all = "camelCase")]
 pub struct View {
     pub accounts: Vec<Row>,
+    /// Беда с файлом записей: `unreadable` — файл не прочитался, правка
+    /// запрещена; `setAside` — файл испорчен и отложен рядом. Пусто — всё
+    /// в порядке.
+    pub trouble: Option<&'static str>,
 }
 
 /// Код одной записи.
@@ -77,13 +83,45 @@ pub struct Codes {
 /// Состояние виджета: записи в памяти плюс их же файл на диске.
 pub struct Totp {
     store: Store,
+    /// Что случилось при чтении файла. Пока он не прочитан
+    /// (`Trouble::Unreadable`), правки отвергаются: записи на диске есть, мы их
+    /// просто не видели, и первая же правка затёрла бы их.
+    trouble: Mutex<Option<Trouble>>,
 }
 
 impl Totp {
-    pub fn new(accounts: Stored) -> Self {
+    pub fn new(loaded: Loaded) -> Self {
         Self {
-            store: Store::new(accounts),
+            store: Store::new(loaded.stored),
+            trouble: Mutex::new(loaded.trouble),
         }
+    }
+
+    fn trouble(&self) -> Option<Trouble> {
+        *self.trouble.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Непрочитанный файл пробуем прочитать снова: занятым он бывает мгновение
+    /// (антивирус, синхронизация папки), и до перезапуска ждать незачем.
+    fn retry(&self, app: &AppHandle) {
+        let mut trouble = self.trouble.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *trouble != Some(Trouble::Unreadable) {
+            return;
+        }
+        let loaded = store::load(app);
+        if loaded.trouble != Some(Trouble::Unreadable) {
+            self.store.set(loaded.stored);
+            *trouble = loaded.trouble;
+        }
+    }
+
+    /// Правка разрешена, только если файл прочитан.
+    fn writable(&self, app: &AppHandle) -> Result<(), String> {
+        self.retry(app);
+        if self.trouble() == Some(Trouble::Unreadable) {
+            return Err(tr!("totp.error.unreadable"));
+        }
+        Ok(())
     }
 }
 
@@ -105,9 +143,13 @@ fn watched(app: &AppHandle) -> bool {
 }
 
 /// Список записей для окна.
-fn view(accounts: &Stored) -> View {
+fn view(accounts: &Stored, trouble: Option<Trouble>) -> View {
     View {
         accounts: accounts.accounts.iter().map(Account::row).collect(),
+        trouble: trouble.map(|trouble| match trouble {
+            Trouble::Unreadable => "unreadable",
+            Trouble::SetAside => "setAside",
+        }),
     }
 }
 
@@ -118,7 +160,7 @@ fn view(accounts: &Stored) -> View {
 fn commit(app: &AppHandle, state: &Totp, accounts: Stored) -> Result<(), String> {
     store::save(app, &accounts)?;
     state.store.set(accounts.clone());
-    let _ = app.emit(TOTP_EVENT, view(&accounts));
+    let _ = app.emit(TOTP_EVENT, view(&accounts, state.trouble()));
     Ok(())
 }
 
@@ -134,8 +176,9 @@ fn named(issuer: &str, label: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn totp_state(state: State<'_, Totp>) -> View {
-    view(&state.store.get())
+pub fn totp_state(app: AppHandle, state: State<'_, Totp>) -> View {
+    state.retry(&app);
+    view(&state.store.get(), state.trouble())
 }
 
 /// Коды для перечисленных записей; пустой список — коды для всех.
@@ -216,6 +259,7 @@ pub fn add_totp_account(
     issuer: String,
     label: String,
 ) -> Result<Row, String> {
+    state.writable(&app)?;
     let typed = input.trim();
     if typed.is_empty() {
         return Err(tr!("totp.error.nothing"));
@@ -281,6 +325,7 @@ pub fn rename_totp_account(
     issuer: String,
     label: String,
 ) -> Result<(), String> {
+    state.writable(&app)?;
     named(&issuer, &label)?;
 
     let mut accounts = state.store.get();
@@ -313,6 +358,7 @@ pub fn reorder_totp_accounts(
     state: State<'_, Totp>,
     ids: Vec<String>,
 ) -> Result<(), String> {
+    state.writable(&app)?;
     let mut accounts = state.store.get();
     accounts.accounts = arrange(accounts.accounts, &ids);
     commit(&app, &state, accounts)
@@ -340,6 +386,7 @@ pub fn remove_totp_account(
     state: State<'_, Totp>,
     id: String,
 ) -> Result<(), String> {
+    state.writable(&app)?;
     let mut accounts = state.store.get();
     let before = accounts.accounts.len();
     accounts.accounts.retain(|account| account.id != id);
@@ -375,7 +422,7 @@ mod tests {
         let accounts = Stored {
             accounts: vec![account(1)],
         };
-        let json = serde_json::to_string(&view(&accounts)).expect("вид сериализуется");
+        let json = serde_json::to_string(&view(&accounts, None)).expect("вид сериализуется");
 
         assert!(json.contains("\"accounts\""));
         assert!(json.contains("\"issuer\":\"GitHub\""));

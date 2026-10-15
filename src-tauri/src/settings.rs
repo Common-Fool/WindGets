@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -434,6 +435,12 @@ pub struct Settings {
     /// Версия индексов размеров пары после удаления «Без истории».
     #[serde(default)]
     pub hardware_layout_version: u8,
+    /// Версия умолчаний `enabled` в реестре. До 15 октября включены были все
+    /// виджеты, теперь только железо. Без поля файл старый: у кого записи о
+    /// виджете не было, тот жил с умолчанием «включён», и обновление не должно
+    /// молча закрыть ему окно.
+    #[serde(default)]
+    pub defaults_version: u8,
     /// Настройки по виджетам, ключ — `id` из реестра. Отсутствующий виджет
     /// означает «настроек не было», и значения берутся из реестра.
     pub widgets: BTreeMap<String, WidgetSettings>,
@@ -537,6 +544,7 @@ impl Default for Settings {
             design: Design::Reference,
             sound_layout_version: 1,
             hardware_layout_version: 1,
+            defaults_version: 1,
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::new(),
             language: None,
@@ -551,7 +559,7 @@ impl Default for Settings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WidgetSettings {
     /// Модуль включён: окно собрано, фоновые работы идут. Выключенный не
@@ -601,23 +609,6 @@ pub struct WidgetSettings {
     /// реестра и множит на СВОЙ масштаб, а не на общий, — разъехаться тут
     /// нечему, пока каждое окно помнит, при каком масштабе его мерили.
     pub scale: Option<f64>,
-}
-
-impl Default for WidgetSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            always_on_top: false,
-            click_through: false,
-            locked: false,
-            view: 0,
-            layout: 0,
-            cover: 0,
-            size: 0,
-            card_opacity: None,
-            scale: None,
-        }
-    }
 }
 
 impl Settings {
@@ -711,6 +702,35 @@ impl Settings {
     pub fn set_widget(&mut self, id: &str, value: WidgetSettings) {
         self.widgets.insert(id.to_owned(), value);
     }
+
+    /// Правит настройки виджета на месте и отдаёт их приведёнными, как их
+    /// видит окно. `change` вернул `false` — правки не было, запись не трогаем.
+    ///
+    /// ВАЖНО: **номер размера кладётся обратно сохранённым, а не приведённым.**
+    /// [`Self::widget`] сбрасывает размер, которого нет в наборе нынешнего
+    /// дизайна, — но это чтение: вернись человек в прежний дизайн, его выбор
+    /// обязан найтись. Положи правка галочки приведённую копию целиком — номер
+    /// обнулился бы навсегда от любого щелчка в настройках виджета.
+    pub fn edit_widget<F>(&mut self, widget: &Widget, change: F) -> Option<WidgetSettings>
+    where
+        F: FnOnce(&mut WidgetSettings) -> bool,
+    {
+        let stored_size = self.widgets.get(widget.id).map(|own| own.size);
+        let mut own = self.widget(widget);
+        let shown_size = own.size;
+        if !change(&mut own) {
+            return None;
+        }
+
+        let mut saved = own;
+        if own.size == shown_size {
+            if let Some(size) = stored_size {
+                saved.size = size;
+            }
+        }
+        self.set_widget(widget.id, saved);
+        Some(own)
+    }
 }
 
 /// Правит одну настройку виджета по имени столбца в окне настроек.
@@ -790,11 +810,31 @@ pub fn load(app: &AppHandle) -> Settings {
     let Ok(path) = file_path(app) else {
         return Settings::default();
     };
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Settings::default();
+    let text = match crate::disk::read_existing(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Settings::default(),
+        Err(error) => {
+            // Файл есть, но не прочитался: работаем на умолчаниях, но на диск
+            // их не пишем — иначе первая же галочка затёрла бы настоящие
+            // настройки, которых мы просто не видели
+            eprintln!("settings.json не прочитался, до перезапуска настройки не сохраняются: {error}");
+            UNREADABLE.store(true, Ordering::SeqCst);
+            return Settings::default();
+        }
     };
 
-    parse_settings(&text)
+    let (settings, whole) = parse_settings_checked(&text);
+    if !whole {
+        // Не разобрался — значит, первая же запись затёрла бы его умолчаниями
+        // целиком: город, ящики, выбор датчиков. Откладываем в сторону, чтобы
+        // было что восстановить руками
+        let aside = path.with_extension("bad.json");
+        match fs::rename(&path, &aside) {
+            Ok(()) => eprintln!("настройки не разобрались, файл отложен в {}", aside.display()),
+            Err(error) => eprintln!("настройки не разобрались и не отложены: {error}"),
+        }
+    }
+    settings
 }
 
 /// Разбор текста файла — отдельно от чтения ради тестов: они проверяют ровно
@@ -802,10 +842,18 @@ pub fn load(app: &AppHandle) -> Settings {
 ///
 /// Стекло и цвета режимов приводятся к годному ещё при разборе, в
 /// `deserialize_*`, — здесь только то, что разбор пропускает как есть.
+#[cfg(test)]
 fn parse_settings(text: &str) -> Settings {
+    parse_settings_checked(text).0
+}
+
+/// То же, плюс признак, разобрался ли файл целиком, а не стал умолчаниями.
+fn parse_settings_checked(text: &str) -> (Settings, bool) {
     // Новый ключ главнее прежнего даже при ошибочном значении. Alias дал бы
     // duplicate field при двух ключах и сбросил бы соседние настройки.
-    let mut value = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
+    let parsed = serde_json::from_str::<serde_json::Value>(text);
+    let mut whole = parsed.is_ok();
+    let mut value = parsed.unwrap_or_default();
     if let Some(object) = value.as_object_mut() {
         let legacy = object.remove("sound_style");
         if !object.contains_key("design") {
@@ -823,7 +871,13 @@ fn parse_settings(text: &str) -> Settings {
             profiles.entry("app").or_insert(serde_json::Value::Object(legacy));
         }
     }
-    let mut settings: Settings = serde_json::from_value(value).unwrap_or_default();
+    let mut settings: Settings = match serde_json::from_value(value) {
+        Ok(settings) => settings,
+        Err(_) => {
+            whole = false;
+            Settings::default()
+        }
+    };
     if settings.sound_layout_version == 0 {
         if let Some(sound) = settings.widgets.get_mut("sound") {
             sound.view = if sound.view == 1 { 1 } else { 0 };
@@ -838,6 +892,18 @@ fn parse_settings(text: &str) -> Settings {
             }
         }
         settings.hardware_layout_version = 1;
+    }
+    if settings.defaults_version == 0 {
+        // Старый файл: закрепляем прежнее умолчание записью, а не меняем
+        // смысл пустого места. Служебные окна и прежде были выключены
+        for widget in crate::widgets::shown().filter(|widget| !widget.chrome) {
+            if !settings.widgets.contains_key(widget.id) {
+                let mut own = settings.widget(widget);
+                own.enabled = true;
+                settings.set_widget(widget.id, own);
+            }
+        }
+        settings.defaults_version = 1;
     }
     if let Some(own) = settings.widgets.get_mut("spotify") { own.layout = 0; }
     for id in ["notes", "clipboard", "todo", "converter"] {
@@ -854,7 +920,7 @@ fn parse_settings(text: &str) -> Settings {
     settings.hidden_disks = sane_disks(settings.hidden_disks);
     settings.hidden_metrics = sane_metrics(settings.hidden_metrics);
     settings.sensor_picks = sane_picks(settings.sensor_picks);
-    settings
+    (settings, whole)
 }
 
 /// Незнакомый идентификатор из вручную исправленного файла заменяется выбором
@@ -941,19 +1007,60 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
         .map_err(|error| format!("не записать настройки: {error}"))
 }
 
+/// Очередь записи файла настроек.
+///
+/// ВАЖНО: **снимок для записи берётся под этим замком, а не при правке.**
+/// Пишут из главного потока и из пула разом; пиши каждый свой снимок, снятый
+/// при правке, — более старый мог бы лечь на диск позже свежего, и правка
+/// пропала бы при следующем запуске. Да и временный сосед у файла один на всех.
+static SAVING: Mutex<()> = Mutex::new(());
+
+/// `settings.json` есть, но при запуске не прочитался. Тогда на диск не пишем
+/// вовсе: умолчания, положенные поверх, стёрли бы настоящие настройки.
+static UNREADABLE: AtomicBool = AtomicBool::new(false);
+
+/// Пишет на диск нынешние настройки.
+fn persist(app: &AppHandle, state: &SettingsState) {
+    let _turn = SAVING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if UNREADABLE.load(Ordering::SeqCst) {
+        eprintln!("настройки не сохраняются: settings.json при запуске не прочитался");
+        return;
+    }
+
+    // Не записались — в памяти всё равно верно, приложение работает дальше
+    if let Err(error) = save(app, &state.get()) {
+        eprintln!("настройки не сохранились: {error}");
+    }
+}
+
 /// Меняет настройки и сразу пишет их на диск.
 pub fn update<F>(app: &AppHandle, state: &SettingsState, change: F) -> Settings
 where
     F: FnOnce(&mut Settings),
 {
     let settings = state.update_with(change);
-
-    // Не записались — в памяти всё равно верно, приложение работает дальше
-    if let Err(error) = save(app, &settings) {
-        eprintln!("настройки не сохранились: {error}");
-    }
-
+    persist(app, state);
     settings
+}
+
+/// Правит настройки одного виджета под замком и пишет их на диск — если
+/// правка состоялась. Отдаёт приведённые настройки виджета для его окна.
+///
+/// Чтение и правка идут под одним замком: копия, снятая заранее через
+/// `state.get()`, затёрла бы правку, уложившуюся между чтением и записью, —
+/// например, «Вкл.», которое модуль пишет из пула.
+pub fn update_widget<F>(app: &AppHandle, state: &SettingsState, widget: &Widget, change: F) -> Option<WidgetSettings>
+where
+    F: FnOnce(Design, &mut WidgetSettings) -> bool,
+{
+    let mut outcome = None;
+    state.update_with(|settings| {
+        let design = settings.design;
+        outcome = settings.edit_widget(widget, |own| change(design, own));
+    });
+    outcome?;
+    persist(app, state);
+    outcome
 }
 
 /// Автозапуск — задача планировщика с наивысшими правами.
@@ -1094,6 +1201,7 @@ mod tests {
             design: Design::App,
             sound_layout_version: 1,
             hardware_layout_version: 1,
+            defaults_version: 1,
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::from([("downloader".to_owned(), "D:\\Downloads".to_owned())]),
             language: Some("uk".to_owned()),
@@ -1140,6 +1248,48 @@ mod tests {
         assert_eq!(city.latitude, 47.0707);
     }
 
+    /// Правка галочки не обнуляет размер, которого нет в нынешнем дизайне:
+    /// вернись человек в прежний — выбор обязан найтись.
+    #[test]
+    fn an_edit_keeps_the_size_of_the_other_design() {
+        let mut found = None;
+        'search: for widget in widgets::shown() {
+            for view in 0..widget.views.len().max(1) {
+                let app = widget.presets_in(Design::App, view).len();
+                let reference = widget.presets_in(Design::Reference, view).len();
+                if app != reference {
+                    let (design, size) = if app < reference { (Design::App, reference - 1) } else { (Design::Reference, app - 1) };
+                    found = Some((widget, view, design, size));
+                    break 'search;
+                }
+            }
+        }
+        let Some((widget, view, design, size)) = found else {
+            return;
+        };
+
+        let mut settings = Settings { design, ..Settings::default() };
+        settings.set_widget(widget.id, WidgetSettings { view, size, ..WidgetSettings::default() });
+        let shown = settings.edit_widget(widget, |own| {
+            own.always_on_top = true;
+            true
+        });
+
+        assert_eq!(shown.expect("правка состоялась").size, 0, "окну — размер своего дизайна");
+        assert_eq!(settings.widgets[widget.id].size, size, "в файле — выбранный в другом");
+        assert!(settings.widgets[widget.id].always_on_top);
+        assert!(settings.edit_widget(widget, |_| false).is_none());
+    }
+
+    /// Неразобравшийся файл помечается: иначе первая запись затёрла бы его.
+    #[test]
+    fn a_broken_file_is_told_apart_from_a_whole_one() {
+        assert!(!parse_settings_checked("не json").1);
+        assert!(!parse_settings_checked(r#"{"poll_seconds":"часто"}"#).1);
+        assert!(parse_settings_checked(r#"{"autostart":true}"#).1);
+        assert!(parse_settings_checked("{}").1);
+    }
+
     /// Прежние B и C становятся мини-микшером; компактный пульт сохраняется.
     #[test]
     fn old_sound_layouts_migrate_once_without_losing_preferences() {
@@ -1166,8 +1316,7 @@ mod tests {
     /// Миграция звука не меняет современные настройки остальных модулей.
     #[test]
     fn sound_migration_preserves_other_widget_and_disk_preferences() {
-        let mut settings = Settings::default();
-        settings.sound_layout_version = 0;
+        let mut settings = Settings { sound_layout_version: 0, ..Settings::default() };
         settings.hidden_disks.push("disk-for-sound-migration-test".to_owned());
         for widget in widgets::shown() {
             let mut own = settings.widget(widget);
@@ -1233,6 +1382,31 @@ mod tests {
                 assert_eq!(first.widget(widget).view, again.widget(widget).view);
             }
         }
+    }
+
+    /// Новый человек получает только железо, а у обновившегося окна остаются:
+    /// старый файл без записи о виджете жил с умолчанием «включён».
+    #[test]
+    fn first_run_opens_hardware_but_an_update_keeps_every_window() {
+        let hardware = ["cpu", "gpu", "disks", "network"];
+        let fresh = Settings::default();
+        for widget in widgets::shown().filter(|widget| !widget.chrome) {
+            assert_eq!(fresh.widget(widget).enabled, hardware.contains(&widget.id), "{}", widget.id);
+        }
+
+        let old = parse_settings(r#"{"widgets":{"mail":{"enabled":false}}}"#);
+        for widget in widgets::shown() {
+            let expected = !widget.chrome && widget.id != "mail";
+            assert_eq!(old.widget(widget).enabled, expected, "{}", widget.id);
+        }
+        assert_eq!(old.defaults_version, 1);
+
+        // Повторное чтение уже переведённого файла ничего не включает заново
+        let mut saved = old.clone();
+        saved.widgets.remove("clipboard");
+        let again = parse_settings(&serde_json::to_string(&saved).unwrap());
+        let clipboard = widgets::find("clipboard").unwrap();
+        assert!(!again.widget(clipboard).enabled);
     }
 
     /// Общий дизайн переносит прежний выбор звука, не трогая соседние поля.
@@ -1720,8 +1894,7 @@ mod tests {
     }
     #[test]
     fn delayed_profile_edit_does_not_touch_the_active_design() {
-        let mut settings = Settings::default();
-        settings.design = Design::Reference;
+        let mut settings = Settings { design: Design::Reference, ..Settings::default() };
         let active = settings.appearance.reference.clone();
         settings.appearance_for_mut(Design::App).palette = palette_for_design("single".to_owned(), Design::App);
         assert_eq!(settings.appearance.reference, active);

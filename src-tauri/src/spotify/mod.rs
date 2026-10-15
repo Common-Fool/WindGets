@@ -283,11 +283,13 @@ impl Session {
         let _ = app.emit(EVENT, view);
     }
 
-    fn persist(&self, app: &AppHandle, credentials: Stored) {
-        self.store.set(credentials.clone());
-        if let Err(error) = store::save(app, &credentials) {
-            eprintln!("учётные данные Spotify не сохранились: {error}");
-        }
+    fn persist(&self, app: &AppHandle, change: impl FnOnce(&mut Stored) -> Result<(), String>) -> Result<Stored, String> {
+        self.store.try_update(change, |next| store::save(app, next))
+            .map(|(stored, ())| stored)
+            .map_err(|error| {
+                eprintln!("учётные данные Spotify не сохранились: {error}");
+                tr!("common.notSaved")
+            })
     }
 
     /// Токен доступа, при необходимости обновлённый.
@@ -309,20 +311,19 @@ impl Session {
 
         match auth::refresh(&self.client, client_id, refresh_token).await {
             Ok(tokens) => {
-                // При обновлении Spotify иногда выдаёт новый refresh token,
-                // и прежний в этот момент перестаёт работать
+                // Пока ответ был в сети, подключение могли сменить. Кеш и
+                // диск принимают ответ только для тех же реквизитов.
+                if !self.store.get().same_connection(&credentials) {
+                    return Err(TokenError::NeedsAuth);
+                }
                 if let Some(next) = tokens.refresh {
-                    // ВАЖНО: хранилище перечитываем, а не берём снятую до
-                    // запроса копию. За время похода в сеть могли нажать
-                    // «Отключить» — записать поверх новый токен значило бы
-                    // молча отменить отключение, и пульт остался бы
-                    // подключённым вопреки нажатой кнопке
-                    let current = self.store.get();
-                    if current.refresh_token().is_some() {
-                        let mut updated = current;
-                        updated.refresh_token = Some(next);
-                        self.persist(app, updated);
-                    }
+                    self.persist(app, |current| {
+                        if !current.same_connection(&credentials) {
+                            return Err(tr!("spotify.error.needsAuth"));
+                        }
+                        current.refresh_token = Some(next);
+                        Ok(())
+                    }).map_err(TokenError::Failed)?;
                 }
 
                 let value = tokens.access.value.clone();
@@ -332,10 +333,16 @@ impl Session {
             Err(AuthError::Rejected(detail)) => {
                 // Подключение отозвали — хранить мёртвый токен незачем
                 eprintln!("Spotify отверг подключение: {detail}");
-                let mut updated = self.store.get();
-                updated.refresh_token = None;
-                self.persist(app, updated);
                 *cached = None;
+                if self.store.get().same_connection(&credentials) {
+                    self.persist(app, |current| {
+                        if !current.same_connection(&credentials) {
+                            return Err(tr!("spotify.error.needsAuth"));
+                        }
+                        current.refresh_token = None;
+                        Ok(())
+                    }).map_err(TokenError::Failed)?;
+                }
                 Err(TokenError::NeedsAuth)
             }
             Err(AuthError::Transport(detail)) => Err(TokenError::Failed(detail)),
@@ -356,20 +363,21 @@ impl Session {
     /// иначе виджет досчитывал бы ползунок от давно прошедшего момента.
     fn remember(&self, app: &AppHandle, player: &Player) {
         let stored = self.store.get();
-
-        let same = stored.last_player.as_ref().is_some_and(|last| {
+        if stored.refresh_token().is_none() || stored.last_player.as_ref().is_some_and(|last| {
             last.track == player.track && last.artists == player.artists
-        });
-        if same {
+        }) {
             return;
         }
 
-        let mut updated = stored;
-        updated.last_player = Some(Player {
-            is_playing: false,
-            ..player.clone()
+        let _ = self.persist(app, |current| {
+            // Запоздалый опрос не возвращает трек после отключения или
+            // смены подключения; токен свежего снимка оставляем как есть.
+            if current.refresh_token().is_none() || current.client_id() != stored.client_id() {
+                return Err(tr!("spotify.error.needsAuth"));
+            }
+            current.last_player = Some(Player { is_playing: false, ..player.clone() });
+            Ok(())
         });
-        self.persist(app, updated);
     }
 
     /// Будит первое доступное устройство: без этого «играть» при закрытом
@@ -447,9 +455,13 @@ impl Session {
     async fn authorize(&self, app: &AppHandle, client_id: String) -> Result<(), String> {
         // Client ID сохраняем сразу: даже если вход сорвётся, набирать его
         // заново не придётся
-        let mut credentials = self.store.get();
-        credentials.client_id = Some(client_id.clone());
-        self.persist(app, credentials);
+        {
+            let _access = self.access.lock().await;
+            self.persist(app, |current| {
+                current.client_id = Some(client_id.clone());
+                Ok(())
+            })?;
+        }
 
         let callback = callback::bind().await?;
         let secrets = pkce::Pkce::generate()?;
@@ -487,11 +499,12 @@ impl Session {
             .refresh
             .ok_or_else(|| tr!("spotify.error.noRefresh"))?;
 
-        let mut credentials = self.store.get();
-        credentials.refresh_token = Some(refresh);
-        self.persist(app, credentials);
-
-        *self.access.lock().await = Some(tokens.access);
+        let mut access = self.access.lock().await;
+        self.persist(app, |current| {
+            current.refresh_token = Some(refresh);
+            Ok(())
+        })?;
+        *access = Some(tokens.access);
         Ok(())
     }
 }
@@ -985,16 +998,25 @@ pub async fn spotify_connect(
 }
 
 /// Забывает подключение, но оставляет Client ID: войти снова — одна кнопка.
+///
+/// Последний трек уходит вместе с токеном: политика разработчика Spotify
+/// (I.1.b) требует после отключения удалить данные пользователя, а что он
+/// слушал — именно они. Client ID — свой у человека, но это настройка, а не
+/// данные из Spotify.
 #[tauri::command]
 pub async fn spotify_disconnect(
     app: AppHandle,
     session: State<'_, Session>,
 ) -> Result<(), String> {
-    let mut credentials = session.store.get();
-    credentials.refresh_token = None;
-    session.persist(&app, credentials.clone());
-
-    *session.access.lock().await = None;
+    // Тот же порядок замков, что у обновления: access, затем Store.
+    // Отключение не даст запоздалому refresh снова наполнить кеш.
+    let mut access = session.access.lock().await;
+    let credentials = session.persist(&app, |current| {
+        current.refresh_token = None;
+        current.last_player = None;
+        Ok(())
+    })?;
+    *access = None;
     session.publish(&app, View::needs_auth(&credentials));
     Ok(())
 }

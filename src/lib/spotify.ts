@@ -9,6 +9,8 @@ export type Player = {
   artists: string;
   album: string;
   coverUrl: string | null;
+  /** Трек в Spotify: ссылку обратно требует их политика разработчика. */
+  link: string | null;
   isPlaying: boolean;
   progressMs: number;
   durationMs: number;
@@ -63,10 +65,12 @@ export type Snapshot = {
 
 type Listener = (snapshot: Snapshot) => void;
 
-// Подписка одна на окно — та же схема, что у телеметрии
+// Подписка одна на окно — та же схема, что у телеметрии, и так же снимается,
+// когда слушателей не осталось: раздел Spotify в настройках иначе держал бы
+// доставку каждого опроса в спрятанное окно до выхода
 let current: Snapshot = { view: { status: "needsClientId" }, at: Date.now() };
 const listeners = new Set<Listener>();
-let started = false;
+let unlisten: Promise<() => void> | null = null;
 
 function publish(view: SpotifyView) {
   current = { view, at: Date.now() };
@@ -74,8 +78,7 @@ function publish(view: SpotifyView) {
 }
 
 function start() {
-  if (started) return;
-  started = true;
+  if (unlisten !== null) return;
 
   invoke<SpotifyView>("spotify_view")
     .then(publish)
@@ -83,9 +86,17 @@ function start() {
       // До готовности бэкенда молчим — состояние придёт событием
     });
 
-  listen<SpotifyView>("spotify", (event) => publish(event.payload)).catch(() => {
+  unlisten = listen<SpotifyView>("spotify", (event) => publish(event.payload));
+  unlisten.catch(() => {
     // Вне Tauri (обычный браузер) событий просто нет
   });
+}
+
+function stopIfIdle() {
+  if (listeners.size > 0 || unlisten === null) return;
+  const pending = unlisten;
+  unlisten = null;
+  pending.then((stop) => stop()).catch(() => {});
 }
 
 function subscribe(listener: Listener): () => void {
@@ -93,6 +104,8 @@ function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+    // Не сразу: `StrictMode` и смена раздела снимают и тут же заводят подписку
+    setTimeout(stopIfIdle, 1000);
   };
 }
 

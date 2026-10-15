@@ -63,17 +63,31 @@ export function WidgetsSection() {
    * не попадает — решение разовое.
    */
   const [offered, setOffered] = useState<ModuleId[]>([]);
+  // Отказ включения: окно не собралось, и Rust вернул галочку назад. Очередь
+  // переходов держит Rust (`TRANSITION`), поэтому галочки на время перехода
+  // не гасятся — иначе мигали бы все разом на каждом нажатии
+  const [error, setError] = useState<string | null>(null);
 
-  const toggleModule = (id: string, on: boolean) => {
-    setModule(id, on);
-    const module = TOOL_MODULES.find((entry) => entry === id);
-    if (module === undefined) return;
-    setOffered((now) => (on ? now.filter((entry) => entry !== module) : [...new Set([...now, module])]));
+  const toggleModule = async (id: string, on: boolean) => {
+    setError(null);
+    try {
+      await setModule(id, on);
+      const module = TOOL_MODULES.find((entry) => entry === id);
+      if (module === undefined) return;
+      setOffered((now) => (on ? now.filter((entry) => entry !== module) : [...new Set([...now, module])]));
+    } catch (reason) {
+      setError(typeof reason === "string" ? reason : t("common.failed"));
+    }
   };
 
-  const toggleAllModules = (on: boolean) => {
-    setAllModules(on);
-    setOffered(on ? [] : [...TOOL_MODULES]);
+  const toggleAllModules = async (on: boolean) => {
+    setError(null);
+    try {
+      await setAllModules(on);
+      setOffered(on ? [] : [...TOOL_MODULES]);
+    } catch (reason) {
+      setError(typeof reason === "string" ? reason : t("common.failed"));
+    }
   };
 
   /*
@@ -246,6 +260,8 @@ export function WidgetsSection() {
         )}
         {service.map(row)}
       </div>
+
+      {error && <p className="note note--error" role="alert">{error}</p>}
 
       {offered.length > 0 && (
         <ToolsOffer modules={offered} settings={settings} onClose={() => setOffered([])} />

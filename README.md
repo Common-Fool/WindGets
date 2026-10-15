@@ -43,13 +43,28 @@ The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
 
 ## Privacy
 
-No accounts, no telemetry, no server. Settings and widget data live in
-`%APPDATA%\io.github.commonfool.windgets`. Mail passwords and 2FA secrets are
-encrypted for the current Windows user. Clipboard history is never written to
-disk. Network requests go only where a widget needs them: weather, Spotify,
-your mail server, ping targets, and Measurement Lab for the speedtest — note
-that M-Lab publishes speedtest results as an open dataset. Details are in the
-[Privacy Policy](PRIVACY.md).
+In short:
+
+- **No analytics, no metrics, no telemetry.** The app does not count, track or
+  report anything about you or how you use it.
+- **No ads, no purchases, no accounts.** Nothing to sign up for, nothing to
+  buy inside the app.
+- **No server of its own.** The author receives no data from the app at all.
+- **Your data stays on your computer**, in
+  `%APPDATA%\io.github.commonfool.windgets`. Mail passwords and 2FA secrets are
+  encrypted for your Windows user; clipboard history is never written to disk.
+- **The app goes online only for widgets you turn on**, and only to the
+  service that widget needs:
+  - Weather — Open-Meteo (the city you chose);
+  - Network — ping to Cloudflare, Google and OpenDNS;
+  - Speedtest — Measurement Lab, only when you press the button (M-Lab
+    publishes test results, including your IP address, as open data);
+  - Spotify — Spotify, with your own sign-in;
+  - Mail — your own mail server;
+  - Updates and optional tools — GitHub. The update check runs once a week
+    and can be turned off in Settings → General.
+
+Full details are in the [Privacy Policy](PRIVACY.md).
 
 ## Building from source
 
@@ -74,11 +89,31 @@ Installers are published on the
 [Releases](https://github.com/Common-Fool/WindGets/releases) page and built
 by GitHub Actions from this repository.
 
+### "Windows protected your PC"
+
+The installer is not code-signed yet, so on first run Windows shows two
+warnings. Both are expected:
+
+- **SmartScreen: "Windows protected your PC".** Click **More info**, then
+  **Run anyway**. SmartScreen warns about any program that has no paid
+  signing certificate and few downloads yet — it says nothing about what the
+  program does.
+- **User Account Control: "Unknown publisher".** Click **Yes**. The app needs
+  administrator rights to read hardware sensors (see Requirements); without a
+  certificate Windows cannot show a publisher name.
+
+Why trust it anyway:
+
+- The code is open — it is this repository.
+- Installers are built by GitHub Actions from this repository, not on someone's
+  computer; the build log is public on the
+  [Actions](https://github.com/Common-Fool/WindGets/actions) page.
+- Each release lists the SHA-256 of the installer. To compare, run in
+  PowerShell: `Get-FileHash .\Windgets_*_x64-setup.exe`.
+
 The project has applied for free code signing from the
-[SignPath Foundation](https://signpath.org). Until the application is
-approved, the installer is unsigned and Windows SmartScreen shows "Windows
-protected your PC": click **More info → Run anyway**. Once signing is in place,
-this section will say so.
+[SignPath Foundation](https://signpath.org). Once signing is in place, the
+warnings go away and this section will say so.
 
 ## Made with AI
 

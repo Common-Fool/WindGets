@@ -20,12 +20,12 @@ export function ReferenceLetterRow({ letter, onSelect, act, busy, picked, anyPic
         <>
           {!letter.seen && (
             <button type="button" className="mail-ref__button" title={t("mail.markRead")} aria-label={t("mail.markRead")}
-              onClick={(event) => { event.stopPropagation(); act(letter, markMailRead(letter.account, [letter.uid]), "not marked", "read"); }}>
+              onClick={(event) => { event.stopPropagation(); act(letter, markMailRead(letter.account, [letter.uid], letter.revision, letter.uidValidity), "not marked", "read"); }}>
               <CheckIcon />
             </button>
           )}
           <button type="button" className="mail-ref__button mail-ref__button--delete" title={t("mail.delete")} aria-label={t("mail.delete")}
-            onClick={(event) => { event.stopPropagation(); act(letter, deleteLetter(letter.account, [letter.uid]), "not deleted", "delete"); }}>
+            onClick={(event) => { event.stopPropagation(); act(letter, deleteLetter(letter.account, [letter.uid], letter.revision, letter.uidValidity), "not deleted", "delete"); }}>
             <EraseIcon />
           </button>
         </>
@@ -61,7 +61,7 @@ function ReferenceAddress({ label, value }: { label: string; value: string }) {
   );
 }
 
-type PopupContentProps = LetterPopupProps & { body: LetterBody | null; loading: boolean; failed: boolean };
+type PopupContentProps = LetterPopupProps & { body: LetterBody | null; loading: boolean; failed: string | null };
 
 /** Тело и загрузка живут в прежнем LetterPopup и переживают смену визуала. */
 export function ReferenceLetterPopupContent({ letter, onClose, busy, onMarkRead, body, loading, failed }: PopupContentProps) {
@@ -90,7 +90,7 @@ export function ReferenceLetterPopupContent({ letter, onClose, busy, onMarkRead,
           {letter.to.length > 0 && <ReferenceAddress label={t("mail.to")} value={letter.to.join(", ")} />}
           <div className="mail-ref__body">
             {loading ? <div className="mail-ref__body-state"><span className="spinner"><RefreshIcon /></span></div> : failed ? (
-              <div className="mail-ref__body-state">{t("mail.popupFailed")}</div>
+              <div className="mail-ref__body-state">{failed}</div>
             ) : body !== null && body.text !== null && body.text.trim() !== "" ? (
               <Linked text={body.text} />
             ) : <div className="mail-ref__body-state">{t("mail.popupEmpty")}</div>}

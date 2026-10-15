@@ -12,7 +12,8 @@
 //! город погоды, учётные данные почты, программы конвертера.
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
@@ -131,29 +132,33 @@ fn detach(id: &str) {
 /// вызванная из него она ждала бы сама себя — ровно так зависала синхронная
 /// команда (см. [`windows::create`]). Из обработчиков меню и событий окна зовут
 /// [`set_later`].
-pub fn set(app: &AppHandle, widget: &'static Widget, on: bool) {
+pub fn set(app: &AppHandle, widget: &'static Widget, on: bool) -> Result<(), String> {
     let _turn = TRANSITION
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let state = app.state::<SettingsState>();
-    let mut own = state.get().widget(widget);
-    own.enabled = on;
-    let settings = settings::update(app, &state, |settings| settings.set_widget(widget.id, own));
+    let settings = settings::update(app, &state, |settings| {
+        settings.edit_widget(widget, |own| {
+            own.enabled = on;
+            true
+        });
+    });
 
     // Сперва вид, потом окно: галочка не должна ждать сборки webview
     crate::settings_window::emit(app);
 
     if on {
-        load(app, widget, !settings.hidden_all);
+        enable(app, widget, !settings.hidden_all)
     } else {
         unload(app, widget.id);
+        Ok(())
     }
 }
 
 /// Все модули разом — строка «Все» в списке виджетов. Одна запись настроек на
 /// нажатие, а не по одной на каждый модуль.
-pub fn set_all(app: &AppHandle, on: bool) {
+pub fn set_all(app: &AppHandle, on: bool) -> Result<(), String> {
     let _turn = TRANSITION
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -166,66 +171,105 @@ pub fn set_all(app: &AppHandle, on: bool) {
     let mut touched: Vec<&'static Widget> = Vec::new();
     let settings = settings::update(app, &state, |settings| {
         for widget in widgets::shown() {
-            let mut own = settings.widget(widget);
             // Отладку и витрину включают только своей галочкой: «Все» —
             // это виджеты, а не служебные окна (12 октября, слово пользователя)
-            if own.enabled == on || widget.chrome || (no_gpu && widget.id == "gpu") {
+            if widget.chrome || (no_gpu && widget.id == "gpu") {
                 continue;
             }
-            own.enabled = on;
-            settings.set_widget(widget.id, own);
-            touched.push(widget);
+            let changed = settings.edit_widget(widget, |own| {
+                let changed = own.enabled != on;
+                own.enabled = on;
+                changed
+            });
+            if changed.is_some() {
+                touched.push(widget);
+            }
         }
     });
 
     if touched.is_empty() {
-        return;
+        return Ok(());
     }
     crate::settings_window::emit(app);
 
+    let mut errors = Vec::new();
     for widget in touched {
         if on {
-            load(app, widget, !settings.hidden_all);
+            if let Err(error) = enable(app, widget, !settings.hidden_all) {
+                errors.push(error);
+            }
         } else {
             unload(app, widget.id);
         }
     }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
 /// То же, что [`set`], но из главного потока: работа уходит в пул и
 /// возвращается сразу. Зовут меню виджета и крестик окна с рамкой.
 pub fn set_later(app: &AppHandle, widget: &'static Widget, on: bool) {
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || set(&app, widget, on));
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = set(&app, widget, on);
+    });
+}
+
+/// Неудавшееся включение откатывается и для одной галочки, и для «Все».
+fn enable(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(), String> {
+    if let Err(error) = load(app, widget, visible) {
+        eprintln!("модуль «{}» не включился: {error}", widget.id);
+        settings::update_widget(app, &app.state::<SettingsState>(), widget, |_, own| {
+            own.enabled = false;
+            true
+        });
+        crate::settings_window::emit(app);
+        // После таймаута окно могло уже собраться, но не пройти доводку.
+        // Разбираем его до следующего перехода, как при обычном выключении.
+        unload(app, widget.id);
+        return Err(tr!("settings.widgets.enableFailed", title = widget.title()));
+    }
+    Ok(())
 }
 
 /// Грузит модуль: собирает окно, если его нет, и запускает работы.
-fn load(app: &AppHandle, widget: &'static Widget, visible: bool) {
-    if let Some(window) = app.get_webview_window(widget.id) {
-        // Уже загружен — например, дважды нажатая галочка
+fn load(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(), String> {
+    let existing = app.get_webview_window(widget.id);
+    let fresh = existing.is_none();
+    let window = match existing {
+        Some(window) => window,
+        None => windows::create(app, widget)?,
+    };
+    // После таймаута доводка могла остаться в очереди главного потока.
+    // Запоздавшая работа не должна показать выключенный модуль.
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let pending = cancelled.clone();
+    let result = on_main_and_wait(app, move |app| {
+        if pending.load(Ordering::SeqCst) || app.get_webview_window(widget.id).is_none() {
+            return Err(format!("доводка окна «{}» отменена", widget.id));
+        }
+        // За время сборки могли нажать «Спрятать все».
+        let visible = visible && !app.state::<SettingsState>().get().hidden_all;
+        if fresh {
+            windows::finish(&app, &window, widget, false);
+        }
+        if pending.load(Ordering::SeqCst) {
+            return Err(format!("доводка окна «{}» отменена", widget.id));
+        }
         if visible {
-            on_main_and_wait(app, move |_| {
-                let _ = window.show();
-            });
+            window.show().map_err(|error| format!("окно «{}» не показалось: {error}", widget.id))?;
         }
-        return;
+        if fresh {
+            attach(&app, widget.id);
+        }
+        Ok(())
+    });
+    if result.is_err() {
+        cancelled.store(true, Ordering::SeqCst);
     }
-
-    match windows::create(app, widget) {
-        Ok(window) => {
-            let id = widget.id;
-            on_main_and_wait(app, move |app| {
-                windows::finish(&app, &window, widget, visible);
-                attach(&app, id);
-            });
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            return;
-        }
-    }
+    result?;
 
     start(app, widget.id);
+    Ok(())
 }
 
 /// Выгружает модуль: окно запоминает место и разбирается вместе с webview.
@@ -233,16 +277,26 @@ fn load(app: &AppHandle, widget: &'static Widget, visible: bool) {
 /// Возвращается, когда метка окна освободилась: следующий переход застанет
 /// честную картину.
 fn unload(app: &AppHandle, id: &'static str) {
-    on_main_and_wait(app, move |app| {
+    // Тот же путь, что у кнопки «Отмена»: рабочий поток гасит Job Object
+    // и убирает недописанное; загрузчик также прерывает обновление yt-dlp.
+    match id {
+        "converter" => crate::converter::converter_cancel(app.clone()),
+        "downloader" => crate::downloader::downloader_cancel(app.clone()),
+        _ => {}
+    }
+
+    if let Err(error) = on_main_and_wait(app, move |app| {
         let Some(window) = app.get_webview_window(id) else {
-            return;
+            return Ok(());
         };
 
         detach(id);
         // До разборки: разобранное окно координат уже не отдаёт
         windows::save_places(&app);
-        let _ = window.destroy();
-    });
+        window.destroy().map_err(|error| format!("окно «{id}» не разобралось: {error}"))
+    }) {
+        eprintln!("выгрузка модуля «{id}»: {error}");
+    }
 
     let started = Instant::now();
     while app.get_webview_window(id).is_some() {
@@ -258,18 +312,25 @@ fn unload(app: &AppHandle, id: &'static str) {
 ///
 /// Зовётся только из пула: из главного потока `run_on_main_thread` выполнил бы
 /// работу на месте, а сборку окна в главном потоке сюда не носят вовсе.
-fn on_main_and_wait<F>(app: &AppHandle, job: F)
+fn on_main_and_wait<F>(app: &AppHandle, job: F) -> Result<(), String>
 where
-    F: FnOnce(AppHandle) + Send + 'static,
+    F: FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 {
     let (done, finished) = std::sync::mpsc::channel();
     windows::on_main(app, move |app| {
-        job(app);
-        let _ = done.send(());
+        let _ = done.send(job(app));
     });
 
-    if finished.recv_timeout(MAIN_THREAD_WAIT).is_err() {
-        eprintln!("главный поток не ответил за {} с", MAIN_THREAD_WAIT.as_secs());
+    wait_for_main(finished, MAIN_THREAD_WAIT)
+}
+
+fn wait_for_main(finished: std::sync::mpsc::Receiver<Result<(), String>>, limit: Duration) -> Result<(), String> {
+    match finished.recv_timeout(limit) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(format!("главный поток не ответил за {} с", limit.as_secs()))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err("главный поток не принял работу".to_owned()),
     }
 }
 
@@ -281,18 +342,21 @@ where
 /// 28 сентября — десять кругов «выгрузить — собрать» и дребезг без пауз —
 /// прошла без единого зависания, новое окно отвечало за 150 мс.
 #[tauri::command]
-pub async fn set_module(app: AppHandle, id: String, on: bool) {
-    let Some(widget) = widgets::find(&id) else {
-        return;
-    };
-
-    let _ = tauri::async_runtime::spawn_blocking(move || set(&app, widget, on)).await;
+pub async fn set_module(app: AppHandle, id: String, on: bool) -> Result<(), String> {
+    let widget = widgets::find(&id).ok_or_else(|| tr!("common.failed"))?;
+    tauri::async_runtime::spawn_blocking(move || set(&app, widget, on)).await.map_err(|error| {
+        eprintln!("переключение модуля не завершилось: {error}");
+        tr!("common.failed")
+    })?
 }
 
 /// Все модули разом — строка «Все». Тоже async, по той же причине.
 #[tauri::command]
-pub async fn set_all_modules(app: AppHandle, on: bool) {
-    let _ = tauri::async_runtime::spawn_blocking(move || set_all(&app, on)).await;
+pub async fn set_all_modules(app: AppHandle, on: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_all(&app, on)).await.map_err(|error| {
+        eprintln!("переключение всех модулей не завершилось: {error}");
+        tr!("common.failed")
+    })?
 }
 
 #[cfg(test)]
@@ -310,6 +374,33 @@ mod tests {
             settings.set_widget(widget.id, own);
         }
         settings
+    }
+
+    /// Успех подтверждается ответом главного потока, отказ операции не теряется.
+    #[test]
+    fn main_thread_result_reaches_the_caller() {
+        for outcome in [Ok(()), Err("окно не показалось".to_owned())] {
+            let (done, finished) = std::sync::mpsc::channel();
+            done.send(outcome.clone()).unwrap();
+            assert_eq!(wait_for_main(finished, Duration::ZERO), outcome);
+        }
+    }
+
+    /// Отложенная доводка не считается удачным включением по истечении срока.
+    #[test]
+    fn main_thread_timeout_is_a_failure() {
+        let (done, finished) = std::sync::mpsc::channel();
+        let error = wait_for_main(finished, Duration::ZERO).unwrap_err();
+        assert!(error.contains("не ответил"));
+        assert!(done.send(Ok(())).is_err(), "запоздавший ответ уже не подтверждает включение");
+    }
+
+    /// Отказ постановки работы в очередь не превращается в успешное включение.
+    #[test]
+    fn a_dropped_main_thread_job_is_a_failure() {
+        let (done, finished) = std::sync::mpsc::channel();
+        drop(done);
+        assert!(wait_for_main(finished, MAIN_THREAD_WAIT).unwrap_err().contains("не принял"));
     }
 
     /// Сайдкар нужен, пока включён хоть один модуль железа, и только тогда.

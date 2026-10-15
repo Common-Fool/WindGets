@@ -158,13 +158,41 @@ const UPSTREAM = {
   "https://github.com/dropbox/rust-alloc-no-stdlib": ["rust-alloc-no-stdlib.txt"],
 };
 
+/**
+ * Лицензии частей пакета, лежащие не в корне. Корневой поиск их не видит, а
+ * требуют они своего текста в уведомлениях (проверка лицензий 15 октября).
+ */
+const NESTED = {
+  "regex-syntax": ["src/unicode_tables/LICENSE-UNICODE"],
+};
+
+/**
+ * Ветка «A OR B», текст которой пакет везёт сам. Общее правило выбирает по
+ * списку `PERMISSIVE`, а в уведомление кладутся файлы пакета — и у этих двух
+ * подпись разошлась бы с текстом: у dunce файл CC0, у brotli-decompressor —
+ * BSD-3-Clause (проверка лицензий 15 октября).
+ */
+const ELECTED = {
+  dunce: "CC0-1.0",
+  "brotli-decompressor": "BSD-3-Clause",
+};
+
+/**
+ * Правообладатель для шаблона MIT — из заголовков исходников, а не из поля
+ * `authors`: там «Stalwart Labs» без «LLC» и без года.
+ */
+const HOLDERS = {
+  "mail-parser": "2020 Stalwart Labs LLC <hello@stalw.art>",
+  hashify: "2025 Stalwart Labs LLC <hello@stalw.art>",
+};
+
 const normalRepo = (url) => (url ?? "").replace(/\.git$/, "").replace(/\/+$/, "");
 
 /** Лицензия крейта: его файлы, файлы его репозитория или стандартный текст по SPDX. */
 function crateTexts(p) {
   const dir = dirname(p.manifest_path);
   const expression = p.license ?? "";
-  const choice = elected(expression);
+  const choice = ELECTED[p.name] ?? elected(expression);
   let files = licenseFiles(dir, p.license_file ? [p.license_file] : []);
 
   // «Apache-2.0 OR GPL-2.0-only» и подобные: берём разрешительную ветку, и
@@ -172,6 +200,13 @@ function crateTexts(p) {
   // его по содержимому, а не по имени: у проектов GNU он зовётся COPYING
   if (PERMISSIVE.includes(choice) && /GPL/.test(expression)) {
     files = files.filter((name) => !/GNU (LESSER |AFFERO )?GENERAL PUBLIC LICENSE/.test(read(join(dir, name))));
+  }
+
+  // Лицензии частей, которые лежат не в корне пакета: у regex-syntax таблицы
+  // Unicode идут под своим соглашением Unicode (DFS-2016), и корневые MIT и
+  // Apache его не заменяют
+  for (const nested of NESTED[p.name] ?? []) {
+    if (existsSync(join(dir, nested))) files.push(nested);
   }
 
   if (files.length > 0) return { ids: files.map((name) => cite(read(join(dir, name)))), note: "" };
@@ -188,7 +223,7 @@ function crateTexts(p) {
   // уведомлении обязан стоять текст BSD, под которой пакет и используется.
   // AND и WITH (исключения вроде LLVM) шаблоном не описать — только руками
   const synthetic = " (standard text; the package ships no license file)";
-  const holder = p.authors?.length ? p.authors.join(", ") : `the ${p.name} authors`;
+  const holder = HOLDERS[p.name] ?? (p.authors?.length ? p.authors.join(", ") : `the ${p.name} authors`);
   const templates = {
     MIT: () => mit(holder),
     "Apache-2.0": () => standard("Apache-2.0.txt"),
@@ -343,10 +378,13 @@ function sidecar() {
   items.push(
     {
       name: "PawnIO.Modules (embedded in LibreHardwareMonitorLib)",
-      version: "as shipped in LibreHardwareMonitorLib 0.9.6",
+      // LHM 0.9.6 вшивает выпуск 0.2.2 (LibreHardwareMonitor#2174). Коммит
+      // обязателен: без него архив исходников к выпуску брал бы `HEAD`, а
+      // LGPL просит исходники именно той версии, что поставляется
+      version: "0.2.2 (as shipped in LibreHardwareMonitorLib 0.9.6)",
       license: "LGPL-2.1",
       url: "https://github.com/namazso/PawnIO.Modules",
-      source: "https://github.com/namazso/PawnIO.Modules",
+      source: "https://github.com/namazso/PawnIO.Modules (commit e12a858d952461ee2e919897cacbff7f905fe370)",
       ids: [cite(standard("LGPL-2.1.txt"))],
     },
     {
@@ -391,15 +429,22 @@ const PROGRAMS = [
     url: "https://ffmpeg.org/",
     note: "Essentials build by gyan.dev, downloaded from https://github.com/GyanD/codexffmpeg/releases. FFmpeg source code: https://ffmpeg.org/download.html. A copy already installed on the system is used as is.",
   },
-  { id: "ytdlp", name: "yt-dlp", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp", note: "Official yt-dlp.exe from https://github.com/yt-dlp/yt-dlp/releases; it ships its own third-party notices." },
+  {
+    id: "ytdlp",
+    name: "yt-dlp",
+    license: "GPL-3.0-or-later (PyInstaller build; yt-dlp's own code is Unlicense)",
+    brief: { license: "GPL-3.0+" },
+    url: "https://github.com/yt-dlp/yt-dlp",
+    note: "Official yt-dlp.exe from https://github.com/yt-dlp/yt-dlp/releases. yt-dlp's own code is released under the Unlicense; the PyInstaller-bundled executable includes GPLv3+ code and is distributed under GPLv3+, see its THIRD_PARTY_LICENSES.txt.",
+  },
   { id: "quickjs", name: "QuickJS-NG", license: "MIT", url: "https://github.com/quickjs-ng/quickjs", note: "Official qjs build from https://github.com/quickjs-ng/quickjs/releases, used by yt-dlp as its JavaScript runtime." },
   {
     id: "pawnio",
     name: "PawnIO",
-    license: "GPL-2.0-or-later with the PawnIO exception",
-    brief: { license: "GPL-2.0+" },
+    license: "Official binary: proprietary, redistributable (source: GPL-2.0-or-later with the PawnIO exception)",
+    brief: { license: "Proprietary" },
     url: "https://github.com/namazso/PawnIO",
-    note: "Kernel driver by namazso, installed only on the user's request by its official installer from https://github.com/namazso/PawnIO.Setup/releases and left unchanged. LibreHardwareMonitor talks to it solely through the device IO control interface, which the PawnIO license exception covers. Source code: https://github.com/namazso/PawnIO",
+    note: "Kernel driver by namazso, installed only on the user's request by its official installer from https://github.com/namazso/PawnIO.Setup/releases and left unchanged. The author licenses the official binary editions as proprietary with redistribution allowed; the published source code is GPL-2.0-or-later with the PawnIO exception. LibreHardwareMonitor talks to the driver solely through the device IO control interface. Source code: https://github.com/namazso/PawnIO",
   },
 ];
 
@@ -410,7 +455,7 @@ const SERVICES = [
     license: "CC BY 4.0 (weather data)",
     brief: { license: "CC BY 4.0" },
     url: "https://open-meteo.com/",
-    note: "Weather data by Open-Meteo.com, licensed under CC BY 4.0. Terms: https://open-meteo.com/en/terms",
+    note: "Weather data by Open-Meteo.com, licensed under CC BY 4.0. City search location data based on GeoNames (https://www.geonames.org/), licensed under CC BY 4.0. Terms: https://open-meteo.com/en/terms",
   },
   {
     id: "mlab",
@@ -474,7 +519,7 @@ function main() {
       name: p.name,
       version: p.version,
       license: p.license ?? "",
-      elected: elected(p.license ?? ""),
+      elected: ELECTED[p.name] ?? elected(p.license ?? ""),
       url: p.repository ?? `https://crates.io/crates/${p.name}`,
       direct: p.direct,
       note,

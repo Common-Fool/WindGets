@@ -8,7 +8,15 @@ import { listen } from "@tauri-apps/api/event";
 export type Letter = {
   /** Ключ ящика, из которого письмо: на вкладке «Все» ящики стоят вперемешку. */
   account: string;
-  /** UID — уникален только внутри своего ящика, поэтому письмо — это пара. */
+  /**
+   * Версия реквизитов ящика, с которыми письмо получено. Сменили человеку
+   * сервер или логин — прежние письма к новому ящику уже не относятся, и
+   * Rust откажет действию над ними, а не тронет письмо с тем же UID.
+   */
+  revision: string;
+  /** Поколение папки, с которым письмо показали; null — сервер его не сообщил. */
+  uidValidity: number | null;
+  /** UID — уникален только внутри одного поколения папки. */
   uid: number;
   from: string;
   subject: string;
@@ -43,6 +51,8 @@ export type LetterBody = {
  * Состояние входящих.
  */
 export type Inbox = {
+  /** UIDVALIDITY из EXAMINE, относится ко всему списку писем. */
+  uidValidity: number | null;
   unseen: number;
   letters: Letter[];
   /** Адрес веб-ящика в браузере. */
@@ -77,6 +87,8 @@ export type BoxState =
 /** Ящик в снимке. */
 export type MailBox = {
   id: string;
+  /** Версия реквизитов: сменилась — найденное прежде больше не его. */
+  revision: string;
   /** Логин ящика: подсказка у точки вкладки и строка в дереве настроек. */
   address: string;
   view: BoxState;
@@ -93,9 +105,9 @@ export type MailView = {
 /** Сколько ящиков можно завести — то же число, что `MAX_ACCOUNTS` в Rust. */
 export const MAX_ACCOUNTS = 5;
 
-/** Письмо целиком: ящик и UID. Им письма различают отметки, кружки и окно. */
+/** Ключ письма включает реквизиты и поколение: старый UID не подменится новым. */
 export function letterKey(letter: Letter): string {
-  return `${letter.account}:${letter.uid}`;
+  return `${letter.account}:${letter.revision}:${letter.uidValidity ?? "none"}:${letter.uid}`;
 }
 
 /**
@@ -181,7 +193,7 @@ export function useMail(): MailView | null {
  * списку на превью, видимый текст просто не попадает.
  */
 export function getMailBody(letter: Letter): Promise<LetterBody> {
-  return invoke<LetterBody>("mail_body", { account: letter.account, uid: letter.uid });
+  return invoke<LetterBody>("mail_body", { account: letter.account, uid: letter.uid, revision: letter.revision, uidValidity: letter.uidValidity });
 }
 
 /**
@@ -256,19 +268,19 @@ export function forgetMailAccount(id: string): Promise<void> {
   return invoke<void>("forget_mail_account", { id });
 }
 
-/** Пометить письма ящика прочитанными. */
-export function markMailRead(account: string, uids: number[]): Promise<void> {
-  return invoke<void>("mail_mark_read", { account, uids });
+/** Пометить письма ящика прочитанными. `revision` — версия, с которой их получили. */
+export function markMailRead(account: string, uids: number[], revision: string, uidValidity: number | null): Promise<void> {
+  return invoke<void>("mail_mark_read", { account, uids, revision, uidValidity });
 }
 
 /** Пометить все письма ящика прочитанными. */
-export function markAllMailRead(account: string): Promise<void> {
-  return invoke<void>("mail_mark_all_read", { account });
+export function markAllMailRead(box: MailBox): Promise<void> {
+  return invoke<void>("mail_mark_all_read", { account: box.id, revision: box.revision });
 }
 
 /** Удалить письма ящика (перенести в корзину). */
-export function deleteLetter(account: string, uids: number[]): Promise<void> {
-  return invoke<void>("mail_delete", { account, uids });
+export function deleteLetter(account: string, uids: number[], revision: string, uidValidity: number | null): Promise<void> {
+  return invoke<void>("mail_delete", { account, uids, revision, uidValidity });
 }
 
 /**

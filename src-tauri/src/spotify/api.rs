@@ -32,6 +32,9 @@ pub struct Player {
     pub artists: String,
     pub album: String,
     pub cover_url: Option<String>,
+    /// Трек или эпизод в Spotify. Политика разработчика требует ссылки
+    /// обратно у показанных обложки и названия — нажатие по обложке ведёт сюда
+    pub link: Option<String>,
     pub is_playing: bool,
     pub progress_ms: u64,
     pub duration_ms: u64,
@@ -52,6 +55,7 @@ impl Default for Player {
             artists: String::new(),
             album: String::new(),
             cover_url: None,
+            link: None,
             is_playing: false,
             progress_ms: 0,
             duration_ms: 0,
@@ -430,6 +434,11 @@ impl PlaybackDto {
             artists,
             album,
             cover_url: pick_cover(images),
+            // Только свой адрес: строка уходит в браузер, а пришла из сети
+            link: item
+                .external_urls
+                .and_then(|urls| urls.spotify)
+                .filter(|url| url.starts_with("https://open.spotify.com/")),
             is_playing: self.is_playing,
             progress_ms: self.progress_ms.unwrap_or(0),
             duration_ms: item.duration_ms.unwrap_or(0),
@@ -467,6 +476,14 @@ struct ItemDto {
     show: Option<ShowDto>,
     #[serde(default, deserialize_with = "images")]
     images: Vec<ImageDto>,
+    #[serde(default)]
+    external_urls: Option<ExternalUrlsDto>,
+}
+
+#[derive(Deserialize)]
+struct ExternalUrlsDto {
+    #[serde(default)]
+    spotify: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -730,7 +747,7 @@ mod tests {
         let error = classify_body(StatusCode::FORBIDDEN, body);
 
         assert!(matches!(error, ApiError::Restricted), "вышло {error:?}");
-        assert_eq!(error.message(), "Спотифай не разрешил это действие");
+        assert_eq!(error.message(), "Spotify не разрешил это действие");
     }
 
     #[test]
