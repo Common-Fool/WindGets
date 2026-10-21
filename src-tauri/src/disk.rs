@@ -57,11 +57,20 @@ pub fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
 /// поверх можно; непрочитанный — это записи, которых мы не видели, и первая же
 /// запись затёрла бы их пустым списком. Занятый на мгновение файл пробуем
 /// несколько раз, прежде чем сдаться.
+///
+/// Метку порядка байт UTF-8 в начале снимаем: её ставят Блокнот и
+/// PowerShell 5.1, а `serde_json` на ней спотыкается, и поправленный руками
+/// файл ушёл бы в `*.bad.json` целиком. Текст не в UTF-8 — это файл, который
+/// прочитался, но не разберётся: отдаём пустую строку, и он уходит в сторону
+/// дорогой испорченного, а не запирает запись до перезапуска.
 pub fn read_existing(path: &Path) -> io::Result<Option<String>> {
     let mut attempt = 1;
     loop {
-        match fs::read_to_string(path) {
-            Ok(text) => return Ok(Some(text)),
+        match fs::read(path) {
+            Ok(bytes) => {
+                let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+                return Ok(Some(String::from_utf8(bytes.to_vec()).unwrap_or_default()));
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) if attempt >= ATTEMPTS => return Err(error),
             Err(_) => {
@@ -72,10 +81,24 @@ pub fn read_existing(path: &Path) -> io::Result<Option<String>> {
     }
 }
 
+/// Сколько отложенных копий одного файла держим рядом.
+const ASIDE_LIMIT: u32 = 100;
+
 /// Откладывает неразобравшийся файл в сторону — рядом, с пометкой `bad`, — чтобы
 /// первая же запись не затёрла его и было что восстановить руками.
+///
+/// ВАЖНО: **прежнюю отложенную копию не затираем.** Переименование на Windows
+/// молча заменяет существующий файл, а в `totp.bad.json` бывают секреты,
+/// которых больше нет нигде: испортись файл второй раз, первая копия пропала
+/// бы. Вторая ложится в `*.bad-2.json`, третья — в `*.bad-3.json`.
 pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
-    let aside = path.with_extension("bad.json");
+    let aside = (1..=ASIDE_LIMIT)
+        .map(|number| match number {
+            1 => path.with_extension("bad.json"),
+            _ => path.with_extension(format!("bad-{number}.json")),
+        })
+        .find(|candidate| !candidate.exists())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, "отложенных копий слишком много"))?;
     fs::rename(path, &aside)?;
     Ok(aside)
 }
@@ -214,6 +237,41 @@ mod tests {
         write_atomically(&path, "{}").expect("файл пишется");
         assert_eq!(read_existing(&path).expect("читается").as_deref(), Some("{}"));
         fs::remove_file(&path).expect("прибирается");
+    }
+
+    /// Метка порядка байт снимается, а не-UTF-8 читается как неразборчивое.
+    #[test]
+    fn a_byte_order_mark_is_dropped_and_foreign_bytes_read_as_garbage() {
+        let path = scratch("read-existing-bom.json");
+        fs::write(&path, b"\xEF\xBB\xBF{\"a\":1}").expect("файл пишется");
+        assert_eq!(read_existing(&path).expect("читается").as_deref(), Some("{\"a\":1}"));
+
+        // «Грац» в cp1251 — не UTF-8
+        fs::write(&path, b"{\"city\":\"\xC3\xF0\xE0\xF6\"}").expect("файл пишется");
+        assert_eq!(read_existing(&path).expect("читается").as_deref(), Some(""));
+        fs::remove_file(&path).expect("прибирается");
+    }
+
+    /// Испорченный второй раз файл не затирает первую отложенную копию.
+    #[test]
+    fn setting_aside_twice_keeps_both_copies() {
+        let path = scratch("aside.json");
+        let first = path.with_extension("bad.json");
+        let second = path.with_extension("bad-2.json");
+        for leftover in [&path, &first, &second] {
+            let _ = fs::remove_file(leftover);
+        }
+
+        fs::write(&path, "первая порча").expect("файл пишется");
+        assert_eq!(set_aside(&path).expect("откладывается"), first);
+        fs::write(&path, "вторая порча").expect("файл пишется");
+        assert_eq!(set_aside(&path).expect("откладывается"), second);
+
+        assert_eq!(fs::read_to_string(&first).expect("читается"), "первая порча");
+        assert_eq!(fs::read_to_string(&second).expect("читается"), "вторая порча");
+        for leftover in [&first, &second] {
+            fs::remove_file(leftover).expect("прибирается");
+        }
     }
 
     /// Каталог вместо файла — настоящий отказ чтения, а не «файла нет».

@@ -93,17 +93,84 @@ pub fn lacks_graphics_card() -> bool {
     GRAPHICS.load(Ordering::Relaxed) == 2
 }
 
-/// Сайдкар не держим вовсе: идёт установка или удаление драйвера PawnIO
-/// (`pawnio.rs`). Открытый им драйвер установщик не заменит без перезагрузки,
-/// а удаление оставит наполовину.
-static HOLD: AtomicBool = AtomicBool::new(false);
+/// Запрос удержания и владение процессом меняются одним атомарным словом:
+/// между подтверждением «процесса нет» и запуском не пролезет новый сайдкар.
+struct SidecarControl(AtomicU8);
+
+impl SidecarControl {
+    const HOLD: u8 = 1;
+    const LIVE: u8 = 2;
+
+    const fn new() -> Self {
+        Self(AtomicU8::new(0))
+    }
+
+    fn hold(&self, on: bool) {
+        if on {
+            self.0.fetch_or(Self::HOLD, Ordering::SeqCst);
+        } else {
+            self.0.fetch_and(!Self::HOLD, Ordering::SeqCst);
+        }
+    }
+
+    fn holding(&self) -> bool {
+        self.0.load(Ordering::SeqCst) & Self::HOLD != 0
+    }
+
+    fn held(&self) -> bool {
+        self.0.load(Ordering::SeqCst) == Self::HOLD
+    }
+
+    fn starting(&self) -> bool {
+        self.0.compare_exchange(0, Self::LIVE, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    }
+
+    fn stopped(&self) {
+        self.0.fetch_and(!Self::LIVE, Ordering::SeqCst);
+    }
+}
+
+static CONTROL: SidecarControl = SidecarControl::new();
 
 /// Сайдкар перезапустить на следующем такте: LHM открывает драйвер один раз,
 /// при старте, и поставленный на ходу PawnIO сам не подхватит.
 static RESTART: AtomicBool = AtomicBool::new(false);
 
 pub fn hold(on: bool) {
-    HOLD.store(on, Ordering::SeqCst);
+    CONTROL.hold(on);
+}
+
+/// Запрошена пауза: её слышит и ожидание первого ответа сайдкара.
+pub fn holding() -> bool {
+    CONTROL.holding()
+}
+
+/// Процесса нет либо его выход уже подтверждён. Отсутствие самого потока
+/// опроса тоже безопасно: новый процесс не займёт место, пока поднят HOLD.
+pub fn held() -> bool {
+    CONTROL.held()
+}
+
+/// Неподтверждённый выход не теряет Child: следующий заход повторит остановку.
+fn stop_sensors(sensors: &mut Option<Sensors>) -> bool {
+    if sensors.as_mut().is_some_and(|sensors| !sensors.stop()) {
+        return false;
+    }
+    *sensors = None;
+    CONTROL.stopped();
+    true
+}
+
+/// Сон между тактами — кусками, чтобы `hold` и перезапуск не ждали шага
+/// целиком.
+fn nap(pause: Duration) {
+    let until = std::time::Instant::now() + pause;
+    while std::time::Instant::now() < until {
+        if holding() || RESTART.load(Ordering::SeqCst) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100).min(until.saturating_duration_since(std::time::Instant::now())));
+    }
 }
 
 pub fn restart() {
@@ -157,15 +224,23 @@ pub fn spawn(app: AppHandle) {
 
         let mut sensors: Option<Sensors> = None;
         let mut failures: u32 = 0;
+        let mut stopping = false;
+        let mut driver_update = false;
         let mut idle = false;
         // Роли, увиденные за запуск: живут дольше сайдкара, чтобы его
         // перезапуск после сбоя не убрал из карточек ни одного ряда
         let mut seen = Seen::default();
 
         loop {
+            if stopping {
+                if !stop_sensors(&mut sensors) {
+                    std::thread::sleep(IDLE_CHECK);
+                    continue;
+                }
+                stopping = false;
+            }
             if !crate::modules::sensors_needed(&app) {
-                // Процесс гасится вместе с `Sensors` — у него свой `Drop`
-                sensors = None;
+                stopping = !stop_sensors(&mut sensors);
                 failures = 0;
                 if !idle {
                     idle = true;
@@ -181,35 +256,53 @@ pub fn spawn(app: AppHandle) {
 
             // Драйвер ставят или удаляют: сайдкар гасится и ждёт. Карточки
             // честно говорят «подключаемся», а не держат последний снимок
-            if HOLD.load(Ordering::SeqCst) {
-                if sensors.take().is_some() {
+            if holding() {
+                let had = sensors.is_some();
+                stopping = !stop_sensors(&mut sensors);
+                if had {
                     publish(&app, SourceState::Connecting);
                 }
                 failures = 0;
                 std::thread::sleep(IDLE_CHECK);
                 continue;
             }
-            if RESTART.swap(false, Ordering::SeqCst) {
-                sensors = None;
-            }
             // Поставили драйвер мимо нас (сам LHM, FanControl) — заметить и
             // перезапустить сайдкар. Сам себе ставит срок, тут дёшево
-            crate::pawnio::watch(&app);
+            driver_update |= crate::pawnio::watch(&app);
+            // ВАЖНО: **сперва «подключаемся», потом «драйвер готов».** Готовый
+            // драйвер снимает замок с карточки процессора, а прежний сайдкар
+            // читал без него — нулями. Скажи окнам о драйвере раньше, они бы
+            // показали эти нули исправными показаниями до нового снимка
+            if RESTART.swap(false, Ordering::SeqCst) && sensors.is_some() {
+                stopping = !stop_sensors(&mut sensors);
+                publish(&app, SourceState::Connecting);
+                if stopping {
+                    continue;
+                }
+            }
+            if driver_update {
+                crate::pawnio::publish(&app);
+                driver_update = false;
+            }
 
             // Шаг отсчитываем от конца опроса, а не по расписанию: пропущенные
             // тики догонять пачкой всё равно было нечем
             let pause = step(&app);
 
             if sensors.is_none() {
+                if !CONTROL.starting() {
+                    continue;
+                }
                 match Sensors::start(&exe) {
                     Ok(started) => sensors = Some(started),
                     Err(reason) => {
+                        CONTROL.stopped();
                         failures = failures.saturating_add(1);
                         if failures >= FAILURES_BEFORE_ALARM {
                             publish(&app, SourceState::Unavailable { reason });
                         }
 
-                        std::thread::sleep(RESTART_AFTER);
+                        nap(RESTART_AFTER);
                         continue;
                     }
                 }
@@ -218,6 +311,12 @@ pub fn spawn(app: AppHandle) {
             let outcome = sensors
                 .as_mut()
                 .map_or_else(|| Err(tr!("source.sidecarDown")), Sensors::poll);
+
+            // Ответ, прерванный удержанием, не осечка источника. Сам процесс
+            // гасим до подтверждения в начале следующего захода.
+            if holding() {
+                continue;
+            }
 
             match outcome {
                 Ok(flat) => {
@@ -241,7 +340,7 @@ pub fn spawn(app: AppHandle) {
                 Err(reason) => {
                     // Сорванный разговор лечится только новым процессом:
                     // на середине ответа поток уже не синхронизировать
-                    sensors = None;
+                    stopping = !stop_sensors(&mut sensors);
 
                     failures = failures.saturating_add(1);
                     if failures >= FAILURES_BEFORE_ALARM {
@@ -250,7 +349,7 @@ pub fn spawn(app: AppHandle) {
                 }
             }
 
-            std::thread::sleep(pause);
+            nap(pause);
         }
     });
 }
@@ -442,5 +541,37 @@ mod tests {
             .filter(|reading| reading.path.ends_with("/Data/Data Downloaded"))
             .count();
         assert!(adapters >= 1, "сетевых адаптеров не найдено вовсе");
+    }
+
+    #[test]
+    fn no_poller_is_safe_but_an_opening_sidecar_is_not_stopped() {
+        let control = SidecarControl::new();
+        control.hold(true);
+        assert!(control.held());
+        assert!(!control.starting(), "удержание запрещает первый запуск");
+        control.hold(false);
+        assert!(control.starting());
+        control.hold(true);
+        assert!(control.holding());
+        assert!(!control.held(), "первый опрос ещё держит процесс");
+        control.stopped();
+        assert!(control.held());
+        assert!(!control.starting());
+        control.hold(false);
+        assert!(control.starting(), "после установки запускается новый процесс");
+    }
+
+    #[test]
+    fn releasing_a_failed_hold_does_not_forget_the_live_process() {
+        let control = SidecarControl::new();
+        assert!(control.starting());
+        control.hold(true);
+        assert!(!control.held());
+        control.hold(false);
+        assert!(!control.starting(), "старый процесс ещё не ушёл");
+        control.hold(true);
+        assert!(!control.held(), "следующее удержание тоже требует выхода");
+        control.stopped();
+        assert!(control.held());
     }
 }

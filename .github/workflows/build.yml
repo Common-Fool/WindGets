@@ -51,11 +51,16 @@ jobs:
       # Регрессии фронта без Tauri: доставка событий окнам, очереди панелей,
       # отказы буфера, волна звука
       - name: Front regressions
+        shell: pwsh
         run: |
           node scripts/check-appearance.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-clipboard.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-wave.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-widget-panels.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build installer
         run: npx tauri build

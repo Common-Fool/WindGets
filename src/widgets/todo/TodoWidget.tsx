@@ -85,6 +85,8 @@ export function TodoWidget() {
   const [editing, setEditing] = useState<number | null>(null);
   /** Правленый текст этого дела: в самом списке он меняется только по Enter. */
   const [draft, setDraft] = useState("");
+  // Размонтирование поля после Escape может прислать blur: отменённое не пишем.
+  const editCanceled = useRef(false);
 
   /**
    * Что лежит на диске прямо сейчас.
@@ -97,29 +99,37 @@ export function TodoWidget() {
   const latest = useRef<Board>(NOTHING);
   /** Доска последней начатой записи: по ней узнаётся отставший ответ. */
   const wanted = useRef<Board | null>(null);
+  /** Ответы IPC могут прийти в другом порядке, чем снимки легли на диск. */
+  const saving = useRef(0);
+  const saved = useRef(0);
 
   /**
    * Кладёт доску на диск.
    *
-   * ВАЖНО: **неудачная запись возвращает `stored` назад,** иначе повторить ту
-   * же попытку было бы нечем. Отвечает только самая свежая попытка (`wanted`):
-   * две записи внахлёст бывают, и отставшая, упав позже успевшей, сдвинула бы
-   * `stored` в прошлое.
+   * Ревизия в saveTasks сохраняет порядок снимков. stored — последний
+   * успешный снимок: два отказа подряд не должны объявлять первый сохранённым.
+   * Старый ответ не гасит предупреждение о более новой попытке.
    */
   const keep = useCallback((next: Board) => {
-    const before = stored.current;
-    if (before === null) return;
+    if (stored.current === null) return;
 
-    stored.current = next;
     wanted.current = next;
+    const attempt = ++saving.current;
 
     saveTasks(next).then(
       () => {
-        if (wanted.current === next) setAlarm(null);
+        if (attempt > saved.current) {
+          saved.current = attempt;
+          stored.current = next;
+        }
+        if (saving.current === attempt) {
+          wanted.current = null;
+          setAlarm(null);
+        }
       },
       () => {
-        if (wanted.current !== next) return;
-        stored.current = before;
+        if (saving.current !== attempt) return;
+        wanted.current = null;
         setAlarm("write");
       },
     );
@@ -269,6 +279,7 @@ export function TodoWidget() {
     );
     if (task === undefined) return;
 
+    editCanceled.current = false;
     setDraft(task.text);
     setEditing(id);
   }
@@ -348,7 +359,7 @@ export function TodoWidget() {
             limit={MAX_LISTS}
             onPick={pick}
             onAdd={addList}
-            disabled={reference && !ready}
+            disabled={!ready}
           />
 
           {reference && (
@@ -358,7 +369,7 @@ export function TodoWidget() {
           )}
 
           {tasks.length === 0 ? (
-            <p className="todo__empty">{reference && !ready ? alarm === "read" ? "" : t("common.loading") : t("todo.empty")}</p>
+            <p className="todo__empty">{!ready ? alarm === "read" ? "" : t("common.loading") : t("todo.empty")}</p>
           ) : (
             <ul className="todo__list hover-scrollbar" ref={list} tabIndex={0} aria-label={t("widget.todo")}>
               {tasks.map((task) => (
@@ -430,13 +441,21 @@ export function TodoWidget() {
                         spellCheck={false}
                         onChange={(event) => setDraft(event.target.value)}
                         onKeyDown={(event) => {
+                          // Enter и Escape посреди набора через IME принадлежат
+                          // ему: подтверждают или отменяют кандидата, а не правку
+                          if (event.nativeEvent.isComposing) return;
                           if (event.key === "Enter") commitEdit(task.id, draft);
                           // Побег без правки: строка остаётся какой была
-                          if (event.key === "Escape") setEditing(null);
+                          if (event.key === "Escape") {
+                            editCanceled.current = true;
+                            setEditing(null);
+                          }
                         }}
                         /* Уход из поля правку записывает: щелчок мимо — обычный
                            способ закончить, и терять на нём написанное нельзя */
-                        onBlur={() => commitEdit(task.id, draft)}
+                        onBlur={() => {
+                          if (!editCanceled.current) commitEdit(task.id, draft);
+                        }}
                       />
                     </span>
                   ) : (

@@ -471,6 +471,9 @@ pub fn search_url(query: &str) -> String {
 #[serde(default)]
 pub struct Hits {
     results: Vec<Hit>,
+    /// Отказ геокодер шлёт тем же телом: `{"error":true,"reason":…}`. Без
+    /// этого поля лимит запросов читался бы как «ничего не нашлось».
+    reason: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -568,6 +571,11 @@ pub async fn search(client: &reqwest::Client, query: &str) -> Result<Vec<Found>,
         .await
         .map_err(|error| describe(&error))?;
 
+    if let Some(reason) = &hits.reason {
+        // Текст сервиса английский и длинный — в поле поиска ему не место
+        eprintln!("[погода] геокодер отказал: {reason}");
+        return Err(tr!("weather.error.refused"));
+    }
     Ok(found(hits))
 }
 

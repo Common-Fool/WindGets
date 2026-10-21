@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
+// Снимок уходит сразу, даже если прежняя запись ещё ждёт диск: очередь
+// в webview погибла бы вместе с выключенным окном. Rust сравнит эти номера.
+let session = 0;
+let revision = 0;
+
 /*
  * Список дел: несколько списков в каталоге настроек.
  *
@@ -22,7 +27,13 @@ export type Board = {
 
 /** Что лежит на диске. Списков ещё не вели — ни одного. */
 export function loadTasks(): Promise<Board> {
-  return invoke<Board>("todo_lists");
+  return invoke<Board & { session: number }>("todo_lists").then(({ session: nextSession, ...board }) => {
+    if (nextSession > session) {
+      session = nextSession;
+      revision = 0;
+    }
+    return board;
+  });
 }
 
 /**
@@ -31,5 +42,5 @@ export function loadTasks(): Promise<Board> {
  * Отказ не глотаем: карточка обязана показать, что список не сохранился.
  */
 export function saveTasks(board: Board): Promise<void> {
-  return invoke("set_todo_lists", { board });
+  return invoke("set_todo_lists", { board, session, revision: ++revision });
 }

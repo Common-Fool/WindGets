@@ -42,6 +42,9 @@ const TOOLS_EVENT: &str = "tools";
 /// на стороне сайта сразу (см. загрузчик).
 pub const YTDLP_CHECK_EVERY: i64 = 86_400;
 
+/// Неудачную проверку без кнопки повторяем не раньше чем через час.
+const RETRY_AFTER_FAILURE: i64 = 60 * 60;
+
 /// Почему программа не встала. Код, а не текст: карточка говорит по-английски,
 /// настройки — по-русски, и каждая сторона переводит его сама.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -155,6 +158,10 @@ struct Inner {
     /// Годный ffmpeg из PATH, если нашёлся.
     system: Option<PathBuf>,
     probing: bool,
+    /// Когда в последний раз спрашивали GitHub без кнопки, удачно или нет.
+    /// Только в памяти: отказ не меняет `checked_at`, и без этой метки
+    /// недоступный GitHub спрашивали бы перед каждой загрузкой.
+    tried: std::collections::BTreeMap<Component, i64>,
 }
 
 pub struct Tools {
@@ -191,6 +198,7 @@ impl Tools {
                 notice: None,
                 system: None,
                 probing: true,
+                tried: Default::default(),
             }),
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
@@ -213,6 +221,8 @@ impl Tools {
         if let Some(own) = self.own(component).filter(|path| path.is_file()) {
             return Some(own);
         }
+        // Путь может вести на уснувший сетевой ресурс. Синхронные команды
+        // берут снимок поиска; отказ запуска обнаружит рабочий поток
         if spec(component).system.is_some() {
             return self.lock().system.clone();
         }
@@ -245,7 +255,9 @@ impl Tools {
     /// Пора ли спросить GitHub о свежей версии своей программы.
     pub fn update_due(&self, component: Component) -> bool {
         let own = self.own(component).is_some_and(|path| path.is_file());
-        own && github::check_due(self.lock().stored.entry(component).checked_at, now(), YTDLP_CHECK_EVERY)
+        let inner = self.lock();
+        let tried = inner.tried.get(&component).is_some_and(|at| now() - at < RETRY_AFTER_FAILURE);
+        own && !tried && github::check_due(inner.stored.entry(component).checked_at, now(), YTDLP_CHECK_EVERY)
     }
 
     /// Рабочая папка загрузчика: туда yt-dlp качает, оттуда файл переезжает
@@ -320,8 +332,11 @@ struct Busy(AppHandle);
 impl Drop for Busy {
     fn drop(&mut self) {
         if let Some(tools) = self.0.try_state::<Tools>() {
-            tools.busy.store(false, Ordering::SeqCst);
+            // Сперва ход работы, потом место: в обратном порядке следующая
+            // работа успевала занять место и выставить свой ход, а этот `drop`
+            // его стирал — и кнопка отмены пропадала посреди скачивания
             tools.set_job(None);
+            tools.busy.store(false, Ordering::SeqCst);
         }
         publish(&self.0);
     }
@@ -367,7 +382,7 @@ async fn install(app: &AppHandle, component: Component) -> Result<(), Failure> {
     publish(app);
 
     let client = client()?;
-    let release = github::latest(&client, spec(component).repo).await?;
+    let release = latest(&tools, &client, spec(component).repo).await?;
     install_release(app, component, &client, &release).await
 }
 
@@ -431,6 +446,13 @@ async fn install_release(
         }
     }
 
+    // Отмену могли нажать и на распаковке: флаг проверяет только скачивание,
+    // и без этой строки отменённая программа всё равно встала бы на место
+    if tools.cancel.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_file(dir.join(format!("{}.new", spec.file)));
+        return Err(Failure::Cancelled);
+    }
+
     swap(&dir, spec.file)?;
 
     let at = now();
@@ -461,6 +483,16 @@ fn swap(dir: &Path, file: &str) -> Result<(), Failure> {
     let old = dir.join(format!("{file}.old"));
 
     let _ = std::fs::remove_file(&old);
+    // Прежний `.old` ещё держит работающая загрузка (второе обновление за
+    // одну её жизнь) — старой версии нужно другое имя, а не отказ записи при
+    // целой программе. Все они уберутся при следующем запуске
+    let old = (1..100)
+        .map(|number| match number {
+            1 => old.clone(),
+            _ => dir.join(format!("{file}.old{number}")),
+        })
+        .find(|candidate| !candidate.exists())
+        .unwrap_or(old);
     if target.exists() {
         std::fs::rename(&target, &old).map_err(disk)?;
     }
@@ -496,11 +528,14 @@ pub async fn refresh(app: &AppHandle, component: Component, force: bool) -> Resu
         return Ok(false);
     }
 
+    if !force {
+        tools.lock().tried.insert(component, now());
+    }
     tools.set_job(Some(Job { component, stage: Stage::Checking, received: 0, total: None }));
     publish(app);
 
     let client = client()?;
-    let release = github::latest(&client, spec(component).repo).await?;
+    let release = latest(&tools, &client, spec(component).repo).await?;
 
     if entry.tag.as_deref() == Some(release.tag_name.as_str()) {
         let root = tools.root.clone();
@@ -526,14 +561,36 @@ pub async fn refresh(app: &AppHandle, component: Component, force: bool) -> Resu
     Ok(true)
 }
 
+/// Свежий выпуск с GitHub, но с отменой, слышной и на самом вопросе, а не
+/// только на скачивании: без ответа GitHub ждёт до сорока пяти секунд, и
+/// «Cancel» загрузчика или установки ждал бы их целиком.
+async fn latest(tools: &Tools, client: &reqwest::Client, repo: &str) -> Result<github::Release, Failure> {
+    let mut asked = std::pin::pin!(github::latest(client, repo));
+    loop {
+        if let Ok(answer) = tokio::time::timeout(Duration::from_millis(100), &mut asked).await {
+            return answer;
+        }
+        if tools.cancel.load(Ordering::SeqCst) {
+            return Err(Failure::Cancelled);
+        }
+    }
+}
+
 /// Проверка свежего yt-dlp перед загрузкой — из рабочего потока загрузчика.
 ///
 /// Место установки занято (человек как раз ставит программы) — проверку
 /// пропускаем: она несрочная, а ждать чужую установку загрузке незачем.
-pub fn refresh_blocking(app: &AppHandle, component: Component, force: bool) -> Result<bool, Failure> {
+///
+/// `stop` — отмена самого задания. Её смотрим уже после `occupy`: тот снимает
+/// флаг установки, и «Cancel», нажатый в миг между «обновляется» и занятием
+/// места, иначе пропадал бы, а отменённое задание качало бы yt-dlp до конца.
+pub fn refresh_blocking(app: &AppHandle, component: Component, force: bool, stop: &AtomicBool) -> Result<bool, Failure> {
     let Some(_busy) = occupy(app) else {
         return Ok(false);
     };
+    if stop.load(Ordering::SeqCst) {
+        return Err(Failure::Cancelled);
+    }
     let outcome = tauri::async_runtime::block_on(refresh(app, component, force));
     if let Err(code) = outcome {
         app.state::<Tools>().lock().failure = Some(Problem { component, code });
@@ -544,12 +601,15 @@ pub fn refresh_blocking(app: &AppHandle, component: Component, force: bool) -> R
 /// Убирает хвосты прерванных установок. Своим потоком: это диск, а зовут это
 /// из `setup`. Всегда, даже при выключенных конвертере и загрузчике: хвосты
 /// занимают место независимо от того, включён ли модуль.
-pub fn spawn(app: AppHandle) {
-    std::thread::spawn(move || {
-        if let Some(root) = &app.state::<Tools>().root {
-            clean(root);
-        }
-    });
+///
+/// ВАЖНО: **до запуска модулей, а не рядом с ними.** Своим потоком уборка
+/// гонялась с первым заданием: загрузчик успевал завести `tools/work/<id>`, а
+/// она удаляла его вместе с готовым файлом. Работа короткая — несколько
+/// недокачанных файлов и папка распаковки.
+pub fn clean_leftovers(app: &AppHandle) {
+    if let Some(root) = &app.state::<Tools>().root {
+        clean(root);
+    }
 }
 
 /// Ищет системный ffmpeg — один раз, по первому вопросу о программах.
@@ -576,6 +636,12 @@ fn ensure_probed(app: &AppHandle) {
     });
 }
 
+/// Готовая загрузка, которую не удалось перенести, не является мусором.
+pub(crate) const KEEP_WORK: &str = ".windgets-keep";
+
+/// Сколько держать такую загрузку, прежде чем уборка при запуске её снимет.
+const KEEP_WORK_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// Хвосты прерванных установок и загрузок: недокачанные файлы, недоставленные
 /// замены, старые версии, которые держала работающая программа, и рабочая
 /// папка загрузчика.
@@ -588,12 +654,32 @@ fn clean(root: &Path) {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".download") || name.ends_with(".new") || name.ends_with(".old") {
+            let old = name.rsplit_once(".old").is_some_and(|(_, number)| number.chars().all(|c| c.is_ascii_digit()));
+            if name.ends_with(".download") || name.ends_with(".new") || old {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
     }
-    let _ = std::fs::remove_dir_all(root.join("work"));
+    if let Ok(entries) = std::fs::read_dir(root.join("work")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Недоставленная загрузка ждёт человека неделю, а не вечно:
+                // путь к ней сказан в карточке, а гигабайты в папке программ
+                // копились бы молча
+                let kept = std::fs::metadata(path.join(KEEP_WORK))
+                    .and_then(|marker| marker.modified())
+                    .ok()
+                    .and_then(|at| at.elapsed().ok())
+                    .is_some_and(|age| age < KEEP_WORK_FOR);
+                if !kept {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            } else {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 }
 
 /// ffmpeg из PATH, если он есть и умеет то, что нужно.
@@ -786,6 +872,49 @@ pub fn tools_cancel(state: State<'_, Tools>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Системный путь уже проверил рабочий поток поиска. Вопрос о готовности
+    /// не должен снова трогать файл, даже если он уже исчез или недоступен.
+    #[test]
+    fn system_ffmpeg_is_read_from_the_probe_snapshot() {
+        let path = PathBuf::from("C:\\missing-tools\\ffmpeg.exe");
+        let tools = Tools {
+            root: None,
+            inner: Mutex::new(Inner {
+                stored: Default::default(),
+                job: None,
+                failure: None,
+                notice: None,
+                system: Some(path.clone()),
+                probing: false,
+                tried: Default::default(),
+            }),
+            busy: AtomicBool::new(false),
+            cancel: AtomicBool::new(false),
+            probed: AtomicBool::new(true),
+        };
+        assert_eq!(tools.locate(Component::Ffmpeg), Some(path));
+        assert_eq!(tools.presence(Component::Ffmpeg), Presence::System);
+        assert!(tools.ready(Module::Converter));
+        assert_eq!(tools.view().components.iter().find(|item| item.id == Component::Ffmpeg).unwrap().presence, Presence::System);
+        assert_eq!(tools.locate(Component::YtDlp), None);
+    }
+
+    #[test]
+    fn startup_cleanup_keeps_a_download_that_failed_to_move() {
+        let root = std::env::temp_dir().join(format!("hw-tools-keep-{}", std::process::id()));
+        let kept = root.join("work").join("0");
+        let partial = root.join("work").join("1");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(kept.join(KEEP_WORK), b"").unwrap();
+        std::fs::write(kept.join("clip.mp4"), b"downloaded").unwrap();
+        std::fs::write(partial.join("clip.part"), b"partial").unwrap();
+        clean(&root);
+        assert_eq!(std::fs::read(kept.join("clip.mp4")).unwrap(), b"downloaded");
+        assert!(!partial.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_program_is_found_in_the_first_folder_that_has_it() {

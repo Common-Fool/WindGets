@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 #[cfg(windows)]
-mod job;
+pub(crate) mod job;
 
 /// Окна у консольной программы быть не должно: иначе на каждом запуске поверх
 /// обоев моргал бы чёрный прямоугольник.
@@ -73,7 +73,7 @@ pub fn spawn(mut command: Command) -> Result<Spawned, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | job::CREATE_SUSPENDED);
     }
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
@@ -88,6 +88,14 @@ pub fn spawn(mut command: Command) -> Result<Spawned, String> {
             None
         }
     };
+
+    // Процесс спит с самого запуска: будим его, когда задание уже на месте
+    #[cfg(windows)]
+    if !job::resume(&child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("процесс не проснулся после запуска".to_owned());
+    }
 
     let (sender, lines) = mpsc::channel();
     if let Some(stdout) = child.stdout.take() {
@@ -152,6 +160,11 @@ impl Spawned {
         let _ = self.child.kill();
     }
 
+    /// Проверяет конец без ожидания: выход приложения не должен ждать процесс.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
     /// Ждёт конца и отдаёт код выхода. `None` — убита или код не узнать.
     pub fn wait(&mut self) -> Option<i32> {
         self.child.wait().ok().and_then(|status| status.code())
@@ -190,4 +203,20 @@ pub fn run(command: Command, limit: Duration) -> Result<(Option<i32>, Vec<Line>)
     }
 
     Ok((spawned.wait(), lines))
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Программа стартует спящей и будится уже в задании: проснуться она
+    /// обязана, иначе ffmpeg и yt-dlp стояли бы вечно.
+    #[test]
+    fn a_program_wakes_up_inside_its_job() {
+        let mut command = Command::new(crate::autostart::system_exe("System32\\cmd.exe"));
+        command.args(["/C", "echo", "woken"]);
+        let (code, lines) = run(command, Duration::from_secs(10)).expect("программа отработала");
+        assert_eq!(code, Some(0));
+        assert!(lines.iter().any(|line| line.text().trim() == "woken"), "{lines:?}");
+    }
 }

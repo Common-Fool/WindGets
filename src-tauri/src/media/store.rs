@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -121,12 +122,45 @@ impl Store {
     /// вернулась бы на место сама.
     ///
     /// Отдаёт и ответ правки, и копию списка после неё — ту, что пишут на диск.
-    pub fn update<R>(&self, change: impl FnOnce(&mut Stored) -> R) -> (R, Stored) {
+    ///
+    /// Запись — под тем же замком, а не после него: иначе две записи разом
+    /// (поток с новым источником и снятая галочка) ложились бы на диск в любом
+    /// порядке, и после перезапуска снятая галочка могла вернуться. Правка
+    /// отвечает парой: свой ответ и «список поменялся, пиши». Память меняется
+    /// всегда — время последней встречи копится в ней и на диск не идёт.
+    /// Правка одной памяти — для тестов: записи без приложения не бывает.
+    #[cfg(test)]
+    fn update<R>(&self, change: impl FnOnce(&mut Stored) -> R) -> (R, Stored) {
         let mut stored = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let answer = change(&mut stored);
         (answer, stored.clone())
     }
+
+    pub fn update_saving<R>(&self, app: &AppHandle, change: impl FnOnce(&mut Stored) -> (R, bool)) -> (R, Result<(), String>) {
+        let mut stored = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (answer, dirty) = change(&mut stored);
+        let saved = if dirty { save(app, &stored) } else { Ok(()) };
+        (answer, saved)
+    }
+
+    /// То же для правки человека: в памяти она остаётся только вслед за
+    /// удачной записью. Иначе галочка, отказавшая записью, тихо снялась бы
+    /// в памяти и вернулась после перезапуска — вопреки показанной ошибке.
+    pub fn try_update<R>(&self, app: &AppHandle, change: impl FnOnce(&mut Stored) -> (R, bool)) -> Result<R, String> {
+        let mut stored = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = stored.clone();
+        let (answer, dirty) = change(&mut next);
+        if dirty {
+            save(app, &next)?;
+        }
+        *stored = next;
+        Ok(answer)
+    }
 }
+
+/// `media.json` при запуске не прочитался: до перезапуска его не пишем —
+/// первая запись затёрла бы снятые галочки, которых мы просто не видели.
+static UNREADABLE: AtomicBool = AtomicBool::new(false);
 
 fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -136,20 +170,51 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join(FILE))
 }
 
-/// Читает медиаисточники с диска. При любой беде возвращает пустой список:
-/// потерянный файл — это «источников нет», а не повод не подняться.
+/// Читает медиаисточники с диска. Беда с файлом — не повод не подняться:
+/// список пустой. Но «файла нет» и «не прочитался» — разные исходы
+/// (`disk::read_existing`): непрочитанный до перезапуска не пишется, а
+/// неразобравшийся откладывается рядом как `media.bad.json`.
 pub fn load(app: &AppHandle) -> Stored {
     let Ok(path) = file_path(app) else {
         return Stored::default();
     };
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Stored::default();
+    let text = match crate::disk::read_existing(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Stored::default(),
+        Err(error) => {
+            eprintln!("[медиа] media.json не прочитался, до перезапуска не пишется: {error}");
+            UNREADABLE.store(true, Ordering::SeqCst);
+            return Stored::default();
+        }
     };
-    serde_json::from_str(&text).unwrap_or_default()
+    match serde_json::from_str(&text) {
+        Ok(stored) => stored,
+        Err(error) => {
+            match crate::disk::set_aside(&path) {
+                Ok(aside) => eprintln!("[медиа] media.json не разобрался ({error}), отложен в {}", aside.display()),
+                Err(failure) => {
+                    eprintln!("[медиа] media.json не разобрался и не отложился: {failure}");
+                    UNREADABLE.store(true, Ordering::SeqCst);
+                }
+            }
+            Stored::default()
+        }
+    }
 }
 
-/// Атомарно сохраняет медиаисточники на диск.
+/// Атомарно сохраняет медиаисточники на диск. Подробность отказа — в журнал,
+/// в окно — строка каталога.
 pub fn save(app: &AppHandle, sources: &Stored) -> Result<(), String> {
+    if UNREADABLE.load(Ordering::SeqCst) {
+        return Err(tr!("media.error.unreadable"));
+    }
+    write(app, sources).map_err(|error| {
+        eprintln!("[медиа] список источников не записан: {error}");
+        tr!("media.error.save")
+    })
+}
+
+fn write(app: &AppHandle, sources: &Stored) -> Result<(), String> {
     let path = file_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { Check } from "../../components/Check";
 import {
@@ -109,6 +109,11 @@ const lastChecks = new Map<string, MailCheck>();
  * на странице самой почты (`MailPreviewField`). Сохранение формы её не трогает.
  */
 export function MailAccountSection({ id }: { id: string }) {
+  // Другая страница — другой черновик, включая пароль и сохранённую проверку.
+  return <MailAccountForm key={id} id={id} />;
+}
+
+function MailAccountForm({ id }: { id: string }) {
   const t = useText();
   const go = useNavigate();
   const fresh = id === "new";
@@ -125,20 +130,29 @@ export function MailAccountSection({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const active = useRef(true);
   useEffect(() => {
-    if (fresh) return;
-    getMailAccount(id)
+    active.current = true;
+    let alive = true;
+    if (!fresh) getMailAccount(id)
+      // Поля доступны до ответа: то, что человек успел вписать, ответ не
+      // затирает — подставляется только в нетронутое
       .then((account) => {
-        setHost(account.host || "");
-        setPort(account.port || 993);
-        setLogin(account.login || "");
+        if (!alive) return;
+        setHost((was) => was || account.host || "");
+        setPort((was) => (was === 993 ? account.port || 993 : was));
+        setLogin((was) => was || account.login || "");
         setHasPassword(Boolean(account.hasPassword));
-        setMailbox(account.mailbox || "");
+        setMailbox((was) => was || account.mailbox || "");
         setMailboxHint(account.mailboxHint || "");
       })
-      .catch(() => {
-        // Вне Tauri поля остаются пустыми
+      .catch((reason: unknown) => {
+        if (alive) setError(String(reason));
       });
+    return () => {
+      alive = false;
+      active.current = false;
+    };
   }, [id, fresh]);
 
   const form = (): MailAccountConfig => ({
@@ -147,7 +161,7 @@ export function MailAccountSection({ id }: { id: string }) {
     login: login.trim(),
     mailbox: mailbox.trim(),
   });
-  const typed = (): string | null => (password.trim() === "" ? null : password.trim());
+  const typed = (): string | null => (password === "" ? null : password);
 
   /**
    * Проверить подключение и запомнить ответ. `key` — чей пароль брать, если
@@ -159,12 +173,13 @@ export function MailAccountSection({ id }: { id: string }) {
     try {
       const result = await checkMail(key, form(), pwd);
       if (key !== null) lastChecks.set(key, result);
-      setCheck(result);
+      if (active.current) setCheck(result);
     } catch (err: unknown) {
+      if (!active.current) return;
       setCheck(null);
       setCheckError(typeof err === "string" ? err : t("mail.check.failed"));
     } finally {
-      setChecking(false);
+      if (active.current) setChecking(false);
     }
   }
 
@@ -176,17 +191,18 @@ export function MailAccountSection({ id }: { id: string }) {
 
     try {
       const saved = await setMailAccount(fresh ? null : id, form(), passwordToSend);
+      if (!active.current) return;
       setPassword("");
       if (passwordToSend !== null) setHasPassword(true);
       // Сохранённое проверяем сразу: иначе о неверном пароле человек узнал бы
       // только по карточке, и то двумя словами
       await probe(saved, passwordToSend);
       // Новый ящик получил ключ — дальше это его страница
-      if (fresh) go(`mail/${saved}`);
+      if (active.current && fresh) go(`mail/${saved}`);
     } catch (err: unknown) {
-      setError(typeof err === "string" ? err : t("mail.settings.saveFailed"));
+      if (active.current) setError(typeof err === "string" ? err : t("mail.settings.saveFailed"));
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   }
 
@@ -196,8 +212,9 @@ export function MailAccountSection({ id }: { id: string }) {
 
     try {
       await forgetMailAccount(id);
-      go("mail");
+      if (active.current) go("mail");
     } catch (err: unknown) {
+      if (!active.current) return;
       setError(typeof err === "string" ? err : t("mail.settings.forgetFailed"));
       setBusy(false);
     }
@@ -288,7 +305,7 @@ export function MailAccountSection({ id }: { id: string }) {
       {error !== null && <p className="note note--error">{error}</p>}
 
       <div className="choices">
-        <Button busy={busy} disabled={host.trim() === "" || login.trim() === "" || checking} onClick={save}>
+        <Button busy={busy} disabled={host.trim() === "" || login.trim() === "" || checking || (fresh && typed() === null)} onClick={save}>
           {t(busy ? "common.saving" : "common.save")}
         </Button>
 
@@ -391,6 +408,7 @@ export function MailPreviewField() {
   const t = useText();
   const mail = useMail();
   const [draft, setDraft] = useState<boolean | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   // Своя правка стоит до ответа Rust: снимок с прежним значением мог быть в пути
   useEffect(() => setDraft(null), [mail?.preview]);
@@ -400,7 +418,11 @@ export function MailPreviewField() {
 
   const change = (next: boolean) => {
     setDraft(next);
-    setMailPreview(next).catch(() => setDraft(null));
+    setFailure(null);
+    setMailPreview(next).catch((reason: unknown) => {
+      setDraft(null);
+      setFailure(String(reason));
+    });
   };
 
   return (
@@ -409,6 +431,7 @@ export function MailPreviewField() {
         <span className="field__name">{t("mail.settings.preview")}</span>
         <Check checked={preview} label={t("mail.settings.previewShow")} quiet onChange={change} />
       </div>
+      {failure !== null && <p className="note note--error" role="alert">{failure}</p>}
     </div>
   );
 }

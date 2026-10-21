@@ -39,8 +39,13 @@ function resize(by: number, active: () => boolean): void {
 export type Growth = {
   /** Стоять на столько точек выше исходной высоты. */
   open: (by: number) => void;
-  /** Вернуться на исходную высоту. */
-  close: () => void;
+  /**
+   * Вернуться на исходную высоту. `force` — и при уходе со страницы: обычный
+   * возврат после размонтирования отменяется (смена дизайна ставит основу
+   * сама), а уход к выбору города основы не ставит, и окно осталось бы
+   * выросшим под почасовку.
+   */
+  close: (force?: boolean) => void;
 };
 
 /**
@@ -112,9 +117,9 @@ export function useWindowGrowth(): Growth {
     grown.current = by;
   }, []);
 
-  const close = useCallback(() => {
+  const close = useCallback((force = false) => {
     const revision = context.current.revision;
-    resize(-grown.current, () => context.current.alive && context.current.revision === revision);
+    resize(-grown.current, () => force || (context.current.alive && context.current.revision === revision));
     grown.current = 0;
   }, []);
 

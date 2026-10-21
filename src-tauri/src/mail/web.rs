@@ -40,7 +40,9 @@ pub fn mailbox_url(host: &str) -> Option<String> {
 /// выведенной, вело бы не туда ровно так же.
 pub fn letter_url(host: &str, message_id: Option<&str>, own_mailbox: Option<&str>) -> Option<String> {
     let base = own_mailbox
-        .map(|link| link.to_owned())
+        .map(str::trim)
+        .filter(|link| !link.is_empty())
+        .map(str::to_owned)
         .or_else(|| mailbox_url(host))?;
 
     let host_clean = host.trim().to_ascii_lowercase();
@@ -101,6 +103,15 @@ fn percent_encode(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blank_own_link_falls_back_to_host() {
+        for own in ["", "   ", "\t\n"] {
+            assert_eq!(letter_url("imap.example.org", None, Some(own)), mailbox_url("imap.example.org"));
+            assert_eq!(letter_url("", None, Some(own)), None);
+        }
+        assert_eq!(letter_url("imap.example.org", None, Some("  https://mail.example.org  ")), Some("https://mail.example.org".into()));
+    }
 
     #[test]
     fn own_link_wins_over_derived() {

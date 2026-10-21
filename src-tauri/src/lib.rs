@@ -22,6 +22,7 @@ mod notes;
 mod notices;
 mod output;
 mod pawnio;
+mod places;
 mod update;
 mod picker;
 mod ping;
@@ -66,6 +67,13 @@ pub fn run() {
         include_bytes!("../../src/assets/app-icons/widget-mosaic.rgba"), 32, 32,
     )));
 
+    // До плагина мест окон: он прочтёт файл при сборке приложения, и
+    // огрызок или каскад спящего монитора к тому времени надо уже заменить
+    // хорошей копией (`places.rs`)
+    if let Some(dir) = places::dir(&context.config().identifier) {
+        places::heal(&dir);
+    }
+
     let app = tauri::Builder::default()
         // Меню виджета по правой кнопке. Слушатель глобальный: событие меню
         // приходит всем сразу, и виджет опознаётся по идентификатору пункта
@@ -78,6 +86,13 @@ pub fn run() {
                 // finish дисков сам восстанавливает позицию и ставит пресет.
                 // Исключаем второе восстановление старого SIZE у дисков.
                 .skip_initial_state("disks")
+                // Напоминание о донатах место и размер считает при каждом
+                // показе само: прежний физический размер, возвращённый
+                // плагином поверх, после смены масштаба обрезал бы его кнопки
+                .with_denylist(&["support-reminder"])
+                // Основной файл не прочитался — плагин пишет в сторонний, а
+                // не поверх непрочитанного (`places::filename`)
+                .with_filename(places::filename())
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::SIZE,
@@ -239,6 +254,8 @@ pub fn run() {
             // Язык — до трея и окон: их подписи собираются на нём
             i18n::apply(settings.language.as_deref());
             app.manage(settings::SettingsState::new(settings));
+            // Галочка автозапуска против планировщика — в пуле: `schtasks` ждут
+            settings::reconcile_autostart(&handle);
             // Прилипание и блокировку оконная процедура читает из статики:
             // к настройкам из модального цикла перетаскивания не сходить
             settings_window::apply_flags(&handle);
@@ -291,6 +308,8 @@ pub fn run() {
             // окон: звук, процессы и прочие смотрят на видимость своего окна,
             // буферу окно служит владельцем, конвертеру — подложкой под
             // перетаскивание
+            // Хвосты прерванных установок — до работ модулей: см. `clean_leftovers`
+            tools::clean_leftovers(&handle);
             modules::boot(&handle);
             // Напоминание о донатах: свой поток, почти всё время спит. Пока
             // звать некуда (нет ни одной ссылки), не показывает ничего
@@ -298,7 +317,6 @@ pub fn run() {
             update::start(&handle);
             // Хвосты прерванных установок программ — всегда: место на диске
             // они занимают независимо от того, включён ли модуль
-            tools::spawn(handle);
             Ok(())
         })
         .build(context)
@@ -312,6 +330,12 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { api, .. } if !app.state::<Shutdown>().started() => {
                 api.prevent_exit();
             }
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                if converter::shutdown_later(app, code.unwrap_or(0)) {
+                    api.prevent_exit();
+                }
+            }
+            tauri::RunEvent::Exit => converter::shutdown(app),
             _ => {}
         }
     });

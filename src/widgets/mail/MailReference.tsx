@@ -1,10 +1,10 @@
 import { useText } from "../../lib/i18n";
+import { LetterBrowser, LetterIncomplete } from "./LetterBrowser";
 import { fileSize, formatLetterTime } from "../../lib/format";
 import { copyToClipboard } from "../../lib/copy";
-import { openLink } from "../../lib/links";
 import { deleteLetter, markMailRead, type LetterBody } from "../../lib/mail";
 import { Linked } from "../../components/Linked";
-import { BoxCheckedIcon, BoxIcon, CheckIcon, ClipIcon, CloseIcon, EraseIcon, ExternalLinkIcon, RefreshIcon } from "../../components/Icons";
+import { BoxCheckedIcon, BoxIcon, CheckIcon, ClipIcon, CloseIcon, EraseIcon, RefreshIcon } from "../../components/Icons";
 import type { LetterPopupProps, LetterRowProps } from "./MailWidget";
 
 /** A — колонки; B — тема и метаданные. Команды и ключи те же, что у Claude. */
@@ -76,8 +76,7 @@ export function ReferenceLetterPopupContent({ letter, onClose, busy, onMarkRead,
               <CheckIcon />
             </button>
           )}
-          {letter.link !== null && <button type="button" className="mail-ref__button" title={t("mail.openBrowser")} aria-label={t("mail.openBrowser")}
-            onClick={() => openLink(letter.link!)}><ExternalLinkIcon /></button>}
+          {letter.link !== null && !body?.truncated && <LetterBrowser link={letter.link} className="mail-ref__button" />}
           <button type="button" className="mail-ref__button mail-ref__close" title={t("settings.close")} aria-label={t("settings.close")} onClick={onClose}><CloseIcon /></button>
         </div>
         <div className="mail-ref__reader" data-no-drag>
@@ -104,6 +103,7 @@ export function ReferenceLetterPopupContent({ letter, onClose, busy, onMarkRead,
               </li>)}
             </ul>
           )}
+          {body?.truncated && <LetterIncomplete link={letter.link} />}
         </div>
       </div>
     </div>

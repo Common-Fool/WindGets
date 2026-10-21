@@ -213,18 +213,20 @@ fn occupy(app: &AppHandle) -> Option<Busy> {
     Some(Busy(app.clone()))
 }
 
-/// Спрашивает GitHub и запоминает, есть ли что новее. Метку пишет и при
-/// отказе: сеть, упавшая на неделе, — не повод спрашивать каждые шесть часов.
+/// Спрашивает GitHub и запоминает, есть ли что новее. Метку вопроса пишет и
+/// при отказе: сеть, упавшая на неделе, — не повод спрашивать каждые шесть
+/// часов. «Проверено» — только по ответу.
 async fn check(app: &AppHandle) -> Result<(), Code> {
     let updates = app.state::<Updates>();
     updates.set_job(Some(Job::Checking));
     publish(app);
 
     let state = app.state::<SettingsState>();
-    settings::update(app, &state, |settings| settings.update_checked_at = Some(now()));
+    settings::update(app, &state, |settings| settings.update_asked_at = Some(now()));
 
     let client = crate::tools::client().map_err(Code::from)?;
-    let release = latest(&client).await?;
+    let release = latest(&client, &updates.cancel).await?;
+    settings::update(app, &state, |settings| settings.update_checked_at = Some(now()));
     let offer = if newer(&release.tag_name, env!("CARGO_PKG_VERSION")) {
         let asset = github::pick_asset(&release, RULE)?;
         Some(Offer { version: release.tag_name.trim_start_matches('v').to_owned(), size: asset.size })
@@ -240,11 +242,23 @@ async fn check(app: &AppHandle) -> Result<(), Code> {
 
 /// Свежий выпуск. Ответ 404 тут — не «сборки нет», а «выпуска не видно»:
 /// закрытый репозиторий или ещё ни одного выпуска. Сеть, а не «нет установщика».
-async fn latest(client: &reqwest::Client) -> Result<github::Release, Code> {
-    github::latest(client, REPO).await.map_err(|failure| match failure {
-        Download::NoBuild => Code::Network,
-        other => Code::from(other),
-    })
+///
+/// Кнопка «Отмена» стоит и на проверке, поэтому вопрос отменяемый: флаг
+/// смотрится раз в десятую долю секунды, и брошенный запрос уходит вместе с
+/// будущим, а не ждёт ответа сети до своего срока.
+async fn latest(client: &reqwest::Client, cancel: &AtomicBool) -> Result<github::Release, Code> {
+    let mut asked = std::pin::pin!(github::latest(client, REPO));
+    loop {
+        if let Ok(answer) = tokio::time::timeout(Duration::from_millis(100), &mut asked).await {
+            return answer.map_err(|failure| match failure {
+                Download::NoBuild => Code::Network,
+                other => Code::from(other),
+            });
+        }
+        if cancel.load(Ordering::SeqCst) {
+            return Err(Code::Cancelled);
+        }
+    }
 }
 
 /// Скачивает установщик свежего выпуска, сверяет сумму и запускает его, а
@@ -258,7 +272,7 @@ async fn install(app: &AppHandle) -> Result<(), Code> {
     publish(app);
 
     let client = crate::tools::client().map_err(Code::from)?;
-    let release = latest(&client).await?;
+    let release = latest(&client, &updates.cancel).await?;
     if !newer(&release.tag_name, env!("CARGO_PKG_VERSION")) {
         updates.lock().available = None;
         return Ok(());
@@ -325,7 +339,9 @@ pub fn start(app: &AppHandle) {
         std::thread::sleep(SETTLE);
         loop {
             let settings = app.state::<SettingsState>().get();
-            if settings.update_auto && github::check_due(settings.update_checked_at, now(), EVERY) {
+            // Старый файл знает только удачную метку — она же и последний вопрос
+            let asked = settings.update_asked_at.max(settings.update_checked_at);
+            if settings.update_auto && github::check_due(asked, now(), EVERY) {
                 run_check(&app);
             }
             std::thread::sleep(TICK);

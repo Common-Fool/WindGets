@@ -142,18 +142,23 @@ function start() {
   if (started) return;
   started = true;
 
-  // Спрашиваем сразу: окно, открытое между тиками, иначе ждало бы полсекунды
-  invoke<SoundState>("sound_state")
+  // Спрашиваем сразу: окно, открытое между тиками, иначе ждало бы полсекунды.
+  // Но сперва подписка, потом вопрос (как в `live.ts`): событие, ушедшее до
+  // слушателя, пропало бы, а одинаковых снимков Rust повторно не шлёт — окно
+  // стояло бы на старом до следующей перемены
+  let heard = false;
+  listen<SoundState>("sound", (event) => {
+    heard = true;
+    publish(event.payload);
+  })
+    .then(() => invoke<SoundState>("sound_state"))
     .then((initial) => {
-      if (current === EMPTY) publish(initial);
+      if (!heard) publish(initial);
     })
     .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
+      // Вне Tauri (обычный браузер) звука нет; до готовности бэкенда молчим —
+      // состояние придёт событием
     });
-
-  listen<SoundState>("sound", (event) => publish(event.payload)).catch(() => {
-    // Вне Tauri (обычный браузер) звука просто нет
-  });
 }
 
 function subscribe(listener: Listener): () => void {

@@ -103,7 +103,9 @@ export function Marquee({ text, className, title }: Props) {
     };
     loop();
     return () => window.clearTimeout(timer);
-  }, [run, cycle]);
+    // Текст тоже: новое название того же переполнения иначе вставало бы
+    // сразу хвостом — ход прежнего продолжался бы с середины
+  }, [text, run, cycle]);
 
   const style =
     run > 0

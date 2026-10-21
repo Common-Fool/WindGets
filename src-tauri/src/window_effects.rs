@@ -246,9 +246,19 @@ pub fn preview_widget_scale_appearance(app: AppHandle, id: String, scale: Option
     preview_widget_scale(&app, &id, scale);
 }
 
+/// Приходят только числа, тронутые ползунком: остальные берутся нынешние, а
+/// не те, что окно видело в последнем событии. Иначе ползунок плотности,
+/// тронутый сразу после яркости, вернул бы яркость назад прежним числом из
+/// ещё не дошедшего события.
 #[tauri::command]
-pub fn preview_appearance(app: AppHandle, card_opacity: f64, scale: f64, vivid: f64) {
-    preview(&app, card_opacity, scale, vivid);
+pub fn preview_appearance(app: AppHandle, card_opacity: Option<f64>, scale: Option<f64>, vivid: Option<f64>) {
+    let now = app.state::<SettingsState>().get();
+    preview(
+        &app,
+        card_opacity.unwrap_or(now.card_opacity),
+        scale.unwrap_or(now.scale),
+        vivid.unwrap_or(now.vivid),
+    );
 }
 
 /// Цветовая тема. Общая на все окна, рассылка тоже общая.

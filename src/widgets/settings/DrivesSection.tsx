@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Check } from "../../components/Check";
 import { capacityOf, disks } from "../../lib/sensors";
 import { setDiskHidden, useSettings } from "../../lib/settings";
@@ -21,13 +22,33 @@ import { useText } from "../../lib/i18n";
 export function DrivesSection() {
   const t = useText();
   const telemetry = useTelemetry();
-  const { hiddenDisks } = useSettings();
+  const settings = useSettings();
+
+  /*
+   * Снятые, о которых Rust ещё не ответил снимком. Без них две галочки,
+   * снятые быстрее рассылки, обошли бы защиту последнего диска: вторая ещё
+   * считала бы первую показанной.
+   */
+  const [pending, setPending] = useState<string[]>([]);
+  useEffect(() => {
+    setPending((now) => now.filter((name) => !settings.hiddenDisks.includes(name)));
+  }, [settings.hiddenDisks]);
+  const hiddenDisks = [...settings.hiddenDisks, ...pending.filter((name) => !settings.hiddenDisks.includes(name))];
+
+  const toggle = (name: string, show: boolean) => {
+    setPending((now) => (show ? now.filter((entry) => entry !== name) : [...now, name]));
+    setDiskHidden(name, !show);
+  };
 
   const present = disks(telemetry).map((disk) => disk.name);
   // Скрытые, которых сейчас нет в выхлопе, тоже стоят в списке — иначе
   // вынутый и вставленный обратно диск вернуть было бы нечем
-  const names = [...present, ...hiddenDisks.filter((name) => !present.includes(name))];
+  const names = [...new Set(present), ...hiddenDisks.filter((name) => !present.includes(name))];
   const shown = present.filter((name) => !hiddenDisks.includes(name));
+  // Одинаковые модели делят имя и снимаются одной галочкой: «последняя»
+  // считается по именам, иначе два одинаковых диска давали две показанные
+  // строки, и снятие одной прятало оба — карточка оставалась пустой
+  const shownNames = new Set(shown);
 
   return (
     <div className="rows">
@@ -46,7 +67,7 @@ export function DrivesSection() {
           <div className="rows rows--tight">
             {names.map((name) => {
               const visible = present.includes(name) && !hiddenDisks.includes(name);
-              const last = visible && shown.length === 1;
+              const last = visible && shownNames.size === 1;
               const capacity = capacityOf(name);
               return (
                 <label key={name} className="switch" data-hint={last ? t("disks.settings.last") : undefined}>
@@ -55,7 +76,7 @@ export function DrivesSection() {
                     label={name}
                     quiet={last}
                     disabled={last}
-                    onChange={(next) => setDiskHidden(name, !next)}
+                    onChange={(next) => toggle(name, next)}
                   />
                   <span className="switch__text">
                     <span className="switch__name">{name}</span>

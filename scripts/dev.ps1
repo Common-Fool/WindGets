@@ -21,11 +21,23 @@ $ErrorActionPreference = 'Stop'
 # Корень проекта — на уровень выше этого файла
 $root = Split-Path -Parent $PSScriptRoot
 
-# Уже запущенное приложение вторым экземпляром не поднимаем: два набора окон
-# подерутся за сохранённые позиции
-$running = Get-Process windgets -ErrorAction SilentlyContinue
-if ($null -ne $running) {
-    Write-Host "Приложение уже работает (pid $($running[0].Id))." -ForegroundColor Yellow
+# Уже запущенную сборку разработки вторым экземпляром не поднимаем: два
+# набора окон подерутся за сохранённые позиции. Смотрим не на имя процесса —
+# так же зовётся и установленный Windgets, а соседство с ним разрешено, — а на
+# мьютекс сборки разработки из single.rs. Процесс повышен, и открыть его
+# мьютекс отсюда может не дать прав: отказ в доступе тоже значит «он есть»
+function Test-DevInstance {
+    $name = 'Local\io.github.commonfool.windgets.dev.instance'
+    $mutex = $null
+    try {
+        if ([System.Threading.Mutex]::TryOpenExisting($name, [ref]$mutex)) { $mutex.Dispose(); return $true }
+        return $false
+    } catch [System.UnauthorizedAccessException] {
+        return $true
+    }
+}
+if (Test-DevInstance) {
+    Write-Host 'Сборка разработки уже работает.' -ForegroundColor Yellow
     Write-Host 'Выход — через пункт меню в трее.'
     exit 1
 }

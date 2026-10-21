@@ -52,6 +52,9 @@ const controls = await load('src/lib/clipboard.ts', {
     return reply(args.action);
   } },
   '@tauri-apps/api/event': { listen: async () => () => {} },
+  // Стор снимка общий (`live.ts`) и здесь не проверяется: карточке ниже
+  // подставляется свой `useClipboard`
+  './live': { liveSnapshot: () => () => ({ entries: [], capacity: 0 }) },
 });
 const entry = { id: 1, preview: 'demo', formattedPreview: 'demo', chars: 4, lines: 1, current: true };
 const demo = { entries: [entry], capacity: 20 };

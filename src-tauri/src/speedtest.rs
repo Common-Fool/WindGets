@@ -104,8 +104,17 @@ const TRANSFER_BUDGET: Duration = Duration::from_secs(5);
 /// один заход.
 const STREAMS: usize = 8;
 
-/// Размер сообщения при отдаче.
+/// Наибольший размер сообщения при отдаче.
 const UPLOAD_MESSAGE: usize = 1 << 20;
+
+/// С какого размера сообщения отдача начинает.
+///
+/// ВАЖНО: **с малого, а не сразу с мегабайта** — так велит сам протокол ndt7:
+/// сообщение удваивается, когда отдано в шестнадцать раз больше его размера.
+/// Мегабайт на восемь потоков с первого же сообщения на канале в несколько
+/// мегабит не успевал уйти и за потолок этапа: отправка ждёт, пока буфер
+/// сольётся в сокет, и замер кончался отказом вместо медленной цифры.
+const UPLOAD_FIRST: usize = 1 << 13;
 
 /// Сколько сообщений держим в очереди сокета.
 ///
@@ -137,6 +146,19 @@ const SILENCE_LIMIT: Duration = Duration::from_secs(3);
 /// дойдёт вовсе. Потолок кончает такой замер отказом, а не вечно нажатой
 /// кнопкой.
 const STAGE_LIMIT: Duration = Duration::from_secs(30);
+
+/// Запас внешнего срока над потолком этапа: решает сам этап — он считает
+/// дошедшие потоки и гасит зависшие, — а внешний срок лишь страховка.
+const STAGE_MARGIN: Duration = Duration::from_secs(5);
+
+/// Между `done()` и возвратом задачи есть окно: счётчик уже снят, а результат
+/// ещё не готов. Даём задаче вернуться; восемь таких ожиданий помещаются в
+/// запас этапа [`STAGE_MARGIN`].
+const STREAM_FINISH_LIMIT: Duration = Duration::from_millis(250);
+
+/// Потолок на подбор серверов целиком: запросов в нём до трёх, у каждого
+/// свой срок, и вместе они держали бы кнопку минутами.
+const LOCATE_LIMIT: Duration = Duration::from_secs(40);
 
 /// Заведомо больше бюджета: обрывать замер по таймауту клиента незачем,
 /// он и так остановится сам.
@@ -225,6 +247,8 @@ pub struct Speedtest {
     running: AtomicBool,
     /// Когда начинались замеры за последние сутки — ради предела M-Lab.
     started: Mutex<VecDeque<Instant>>,
+    /// Идущий замер — чтобы выключенный модуль мог его снять ([`cancel`]).
+    task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 /// Сколько замеров M-Lab разрешает одному человеку за сутки.
@@ -282,7 +306,9 @@ impl Speedtest {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .as_ref()
                 .and_then(|(_, servers)| servers.first())
-                .map(|server| server.city.clone()),
+                .map(|server| server.city.clone())
+                // Площадка без города — города и не пишем
+                .filter(|city| !city.is_empty()),
         }
     }
 
@@ -354,17 +380,43 @@ fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Читает историю. Любая беда — считаем, что замеров ещё не было: из-за
 /// диаграммы приложение стартовать не откажется.
+/// Не прочиталась история — до перезапуска её не пишем: первый же замер
+/// затёр бы прежние тридцать одним (то же правило, что у настроек).
+static HISTORY_UNREADABLE: AtomicBool = AtomicBool::new(false);
+
 pub fn load_history(app: &AppHandle) -> Vec<Report> {
     let Ok(path) = history_path(app) else {
         return Vec::new();
     };
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Vec::new();
+    let text = match crate::disk::read_existing(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Vec::new(),
+        Err(error) => {
+            eprintln!("история замеров не прочиталась, до перезапуска не пишется: {error}");
+            HISTORY_UNREADABLE.store(true, Ordering::SeqCst);
+            return Vec::new();
+        }
     };
-    serde_json::from_str(&text).unwrap_or_default()
+    match serde_json::from_str(&text) {
+        Ok(history) => history,
+        Err(error) => {
+            // Испорченный файл — в сторону, рядом: вернуть его можно руками
+            match crate::disk::set_aside(&path) {
+                Ok(aside) => eprintln!("история замеров не разобралась ({error}), отложена в {}", aside.display()),
+                Err(failure) => {
+                    eprintln!("история замеров не разобралась и не отложилась: {failure}");
+                    HISTORY_UNREADABLE.store(true, Ordering::SeqCst);
+                }
+            }
+            Vec::new()
+        }
+    }
 }
 
 fn save_history(app: &AppHandle, history: &[Report]) {
+    if HISTORY_UNREADABLE.load(Ordering::SeqCst) {
+        return;
+    }
     let write = || -> Result<(), String> {
         let path = history_path(app)?;
         if let Some(parent) = path.parent() {
@@ -398,12 +450,32 @@ pub fn speedtest_start(app: AppHandle) -> Result<(), String> {
         return Err(tr!("speedtest.error.dailyLimit"));
     }
 
-    tauri::async_runtime::spawn(async move {
-        let _busy = Busy(app.clone());
-        run(&app).await;
+    // Страж — до задачи, а не в ней: снятая до первого шага задача иначе
+    // ушла бы, не опустив признак, и кнопка заперлась бы до перезапуска
+    let busy = Busy(app.clone());
+    let task = tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let _busy = busy;
+            run(&app).await;
+        }
     });
+    *state.task.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(task);
 
     Ok(())
+}
+
+/// Снимает идущий замер: модуль выключили. Потоки замера уходят вместе с
+/// задачей (`Stream` гасит их в `Drop`), а признак «идёт» и вид покоя
+/// возвращает `Busy` — недомеренное в историю не попадает.
+pub fn cancel(app: &AppHandle) {
+    let Some(state) = app.try_state::<Speedtest>() else {
+        return;
+    };
+    let task = state.task.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
+    if let Some(task) = task {
+        task.abort();
+    }
 }
 
 /// Поднятый признак «идёт замер», опускающийся сам.
@@ -420,6 +492,13 @@ impl Drop for Busy {
         // падать в чужом `Drop`
         if let Some(state) = self.0.try_state::<Speedtest>() {
             state.running.store(false, Ordering::SeqCst);
+            // Задачу сняли посреди замера (выключили модуль) или она упала:
+            // «идёт замер» остался бы на экране навсегда. Здесь — потому что
+            // `Drop` случается, когда задача уже не опубликует ничего
+            let running = matches!(*state.view.lock().unwrap_or_else(|poisoned| poisoned.into_inner()), View::Running { .. });
+            if running {
+                publish(&self.0, View::Idle);
+            }
         }
     }
 }
@@ -455,6 +534,13 @@ async fn run(app: &AppHandle) {
     publish(app, View::Done { report });
 }
 
+/// Подбор серверов под общим потолком [`LOCATE_LIMIT`].
+async fn located(app: &AppHandle) -> Result<Vec<Server>, String> {
+    tokio::time::timeout(LOCATE_LIMIT, pick_servers(app))
+        .await
+        .map_err(|_| tr!("speedtest.error.timeout"))?
+}
+
 /// Скачивание, а на непринятом пропуске — второй заход с новым подбором.
 ///
 /// ВАЖНО: **токен в ссылке привязан к адресу и ко времени.** Список серверов мы
@@ -466,7 +552,7 @@ async fn measure_download(app: &AppHandle, report: Report) -> Result<Measured, S
     let mut retried = false;
 
     loop {
-        let servers = pick_servers(app).await?;
+        let servers = located(app).await?;
         publish(app, View::Running { stage: Stage::Download, report });
 
         // Потолок этапа нужен и здесь: молчание сервера ловит `SILENCE_LIMIT`
@@ -474,7 +560,7 @@ async fn measure_download(app: &AppHandle, report: Report) -> Result<Measured, S
         // соединения. Сервер, глотающий SYN, держит `connect_async` до
         // таймаута TCP у системы, и весь этап ждёт вместе с ним
         let outcome = tokio::time::timeout(
-            STAGE_LIMIT,
+            STAGE_LIMIT + STAGE_MARGIN,
             download(&servers, |rate| {
                 let partial = Report { download: Some(rate), ..report };
                 publish(app, View::Running { stage: Stage::Download, report: partial });
@@ -484,7 +570,11 @@ async fn measure_download(app: &AppHandle, report: Report) -> Result<Measured, S
 
         let outcome = match outcome {
             Ok(outcome) => outcome,
-            Err(_) => return Err(tr!("speedtest.error.downloadTimeout")),
+            Err(_) => {
+                // Не дождались — сервер не годится и для следующего замера
+                app.state::<Speedtest>().forget_servers();
+                return Err(tr!("speedtest.error.downloadTimeout"));
+            }
         };
 
         match outcome {
@@ -511,10 +601,11 @@ async fn measure_upload(app: &AppHandle, report: Report) -> Result<f64, String> 
     let mut retried = false;
 
     loop {
-        let servers = pick_servers(app).await?;
+        let servers = located(app).await?;
+        publish(app, View::Running { stage: Stage::Upload, report });
 
         match tokio::time::timeout(
-            STAGE_LIMIT,
+            STAGE_LIMIT + STAGE_MARGIN,
             upload(&servers, |rate| {
                 let partial = Report { upload: Some(rate), ..report };
                 publish(app, View::Running { stage: Stage::Upload, report: partial });
@@ -528,11 +619,15 @@ async fn measure_upload(app: &AppHandle, report: Report) -> Result<f64, String> 
 
                 if trouble.stale() && !retried {
                     retried = true;
+                    publish(app, View::Running { stage: Stage::Locate, report });
                     continue;
                 }
                 return Err(trouble.reason());
             }
-            Err(_) => return Err(tr!("speedtest.error.uploadTimeout")),
+            Err(_) => {
+                app.state::<Speedtest>().forget_servers();
+                return Err(tr!("speedtest.error.uploadTimeout"));
+            }
         }
     }
 }
@@ -636,7 +731,7 @@ async fn locate_in(country: Option<&str>) -> Result<Vec<Server>, String> {
     };
 
     let answer: Answer = client()
-        .map_err(|error| tr!("speedtest.error.noAnswer", error = error))?
+        .map_err(|error| logged("сервер не ответил", tr!("speedtest.error.noAnswer"), &error))?
         .get(address)
         .send()
         .await
@@ -664,7 +759,7 @@ fn read_servers(results: Vec<Found>) -> Vec<Server> {
         .filter_map(|found| {
             let place = found.location.unwrap_or_default();
             Some(Server {
-                city: place.city.unwrap_or_else(|| "unknown".to_owned()),
+                city: place.city.unwrap_or_default(),
                 country: place.country.unwrap_or_default(),
                 download: found.urls.get("wss:///ndt/v7/download")?.clone(),
                 upload: found.urls.get("wss:///ndt/v7/upload")?.clone(),
@@ -755,7 +850,7 @@ fn stale_status(status: u16) -> bool {
 async fn connect(url: &str) -> Result<Socket, Trouble> {
     let mut request = url
         .into_client_request()
-        .map_err(|error| Trouble::Broken(tr!("speedtest.error.badLink", error = error)))?;
+        .map_err(|error| Trouble::Broken(logged("не разобрать ссылку сервера", tr!("speedtest.error.badLink"), &error)))?;
 
     // Без этого заголовка сервер закрывает соединение сразу после рукопожатия
     request.headers_mut().insert(
@@ -780,7 +875,7 @@ fn refused(error: tokio_tungstenite::tungstenite::Error) -> Trouble {
         }
     }
 
-    Trouble::Broken(tr!("speedtest.error.noAnswer", error = error))
+    Trouble::Broken(logged("сервер не ответил", tr!("speedtest.error.noAnswer"), &error))
 }
 
 type Socket = tokio_tungstenite::WebSocketStream<
@@ -794,6 +889,12 @@ type Socket = tokio_tungstenite::WebSocketStream<
 /// этой обёртки они продолжали бы лить и держать сокеты до таймаута TCP —
 /// мешая следующему замеру. Завершённой задаче `abort` ничего не делает.
 struct Stream<T>(tauri::async_runtime::JoinHandle<T>);
+
+impl<T> Stream<T> {
+    async fn finish(&mut self) -> Result<tauri::Result<T>, tokio::time::error::Elapsed> {
+        tokio::time::timeout(STREAM_FINISH_LIMIT, &mut self.0).await
+    }
+}
 
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
@@ -822,8 +923,10 @@ async fn download(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<M
         })));
     }
 
-    // Пока льётся — показываем, сколько уже набежало по всем потокам разом
-    while flow.running() {
+    // Пока льётся — показываем, сколько уже набежало по всем потокам разом.
+    // Не дольше потолка этапа: см. [`STAGE_LIMIT`] и ниже
+    let deadline = Instant::now() + STAGE_LIMIT;
+    while flow.running() && Instant::now() < deadline {
         tokio::time::sleep(PROGRESS_INTERVAL).await;
         if let Some(rate) = flow.rate() {
             progress(rate);
@@ -835,14 +938,20 @@ async fn download(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<M
     let mut worked = 0_usize;
 
     for mut stream in streams {
-        match (&mut stream.0).await {
-            Ok(Ok(seen)) => {
+        // ВАЖНО: **один зависший поток не роняет весь этап.** Сервер, глотающий
+        // рукопожатие, держит своё соединение до таймаута TCP системы; семь
+        // дошедших при этом уже намеряли канал. Прежде потолок висел над этапом
+        // целиком и отказывал замеру, не глядя на дошедших. Недошедший гасится
+        // вместе с `Stream`
+        match stream.finish().await {
+            Ok(Ok(Ok(seen))) => {
                 worked += 1;
                 latency = quicker(latency, seen);
             }
-            Ok(Err(cause)) => trouble = keep(trouble, cause),
+            Ok(Ok(Err(cause))) => trouble = keep(trouble, cause),
             // Задача сорвалась — это отказ, но с непонятной причиной
-            Err(_) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.brokeOff"))),
+            Ok(Err(_)) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.brokeOff"))),
+            Err(_) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.downloadTimeout"))),
         }
     }
 
@@ -918,15 +1027,25 @@ impl Flow {
         })
     }
 
-    /// Считает пришедшее и отмечает, что приём дошёл до этой минуты.
+    /// Считает только байты внутри общего бюджета передачи.
     fn add(&self, bytes: usize) {
-        self.received.fetch_add(bytes as u64, Ordering::Relaxed);
-
         let mut clock = self
             .clock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        clock.last = Some(Instant::now());
+        let Some(started) = clock.started else {
+            return;
+        };
+        let now = Instant::now();
+        let deadline = started + TRANSFER_BUDGET;
+
+        // Поздний поток не удлиняет замер и не добавляет к пятисекундным
+        // байтам то, что пришло уже после бюджета. Конец бюджета отмечаем
+        // всё равно: `pull` должен увидеть его и закрыть своё соединение.
+        clock.last = Some(now.min(deadline));
+        if now <= deadline {
+            self.received.fetch_add(bytes as u64, Ordering::Relaxed);
+        }
     }
 
     fn done(&self) {
@@ -964,7 +1083,7 @@ async fn pull(url: &str, flow: &Flow) -> Result<Option<f64>, Trouble> {
         };
 
         let message =
-            incoming.map_err(|error| Trouble::Broken(tr!("speedtest.error.droppedWith", error = error)))?;
+            incoming.map_err(|error| Trouble::Broken(logged("соединение оборвалось", tr!("speedtest.error.droppedWith"), &error)))?;
 
         match message {
             Message::Binary(chunk) => {
@@ -1082,8 +1201,10 @@ async fn upload(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<f64
         })));
     }
 
-    // Пока льётся — показываем сумму последних отчётов
-    while rates.running() {
+    // Пока льётся — показываем сумму последних отчётов. Не дольше потолка
+    // этапа, по тому же правилу, что у скачивания
+    let deadline = Instant::now() + STAGE_LIMIT;
+    while rates.running() && Instant::now() < deadline {
         tokio::time::sleep(PROGRESS_INTERVAL).await;
         if let Some(rate) = rates.total() {
             progress(rate);
@@ -1095,13 +1216,14 @@ async fn upload(servers: &[Server], mut progress: impl FnMut(f64)) -> Result<f64
     let mut worked = 0_usize;
 
     for mut stream in streams {
-        match (&mut stream.0).await {
-            Ok(Ok(rate)) => {
+        match stream.finish().await {
+            Ok(Ok(Ok(rate))) => {
                 worked += 1;
                 total += rate;
             }
-            Ok(Err(cause)) => trouble = keep(trouble, cause),
-            Err(_) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.uploadBrokeOff"))),
+            Ok(Ok(Err(cause))) => trouble = keep(trouble, cause),
+            Ok(Err(_)) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.uploadBrokeOff"))),
+            Err(_) => trouble = keep(trouble, Trouble::Broken(tr!("speedtest.error.uploadTimeout"))),
         }
     }
 
@@ -1124,12 +1246,19 @@ async fn push(url: &str, stream: usize, rates: &Rates) -> Result<f64, Trouble> {
     let started = Instant::now();
     let mut rate: Option<f64> = None;
     let mut queued = 0usize;
+    let mut size = UPLOAD_FIRST;
+    let mut sent = 0usize;
 
     while started.elapsed() < TRANSFER_BUDGET {
         socket
-            .feed(Message::Binary(payload.clone()))
+            .feed(Message::Binary(payload.slice(..size)))
             .await
-            .map_err(|error| Trouble::Broken(tr!("speedtest.error.uploadDropped", error = error)))?;
+            .map_err(|error| Trouble::Broken(logged("отдача оборвалась", tr!("speedtest.error.uploadDropped"), &error)))?;
+
+        sent += size;
+        if size < UPLOAD_MESSAGE && sent >= 16 * size {
+            size *= 2;
+        }
 
         queued += 1;
         if queued >= UPLOAD_QUEUE {
@@ -1137,7 +1266,7 @@ async fn push(url: &str, stream: usize, rates: &Rates) -> Result<f64, Trouble> {
             socket
                 .flush()
                 .await
-                .map_err(|error| Trouble::Broken(tr!("speedtest.error.uploadDropped", error = error)))?;
+                .map_err(|error| Trouble::Broken(logged("отдача оборвалась", tr!("speedtest.error.uploadDropped"), &error)))?;
         }
 
         // Отчёты сервера разбираем по ходу, но ждать их не станем
@@ -1209,7 +1338,7 @@ fn throughput(report: &str) -> Option<f64> {
     let bytes = info.bytes_received?;
     let elapsed = info.elapsed?;
 
-    (elapsed > 0).then(|| megabits(bytes, Duration::from_micros(elapsed)))
+    (bytes > 0 && elapsed > 0).then(|| megabits(bytes, Duration::from_micros(elapsed)))
 }
 
 /// Клиент только для замера, общий с телеметрией не годится: там таймаут
@@ -1256,10 +1385,22 @@ fn describe(error: reqwest::Error) -> String {
 
     match error.status().map(|status| status.as_u16()) {
         Some(429) => tr!("speedtest.error.tooMany"),
-        Some(403) => tr!("speedtest.error.cloudflare"),
+        Some(403) => tr!("speedtest.error.forbidden"),
         Some(status) => tr!("speedtest.error.status", status = status),
         None => tr!("speedtest.error.dropped"),
     }
+}
+
+/// Текст отказа для карточки — словами каталога, а сама ошибка библиотеки — в
+/// журнал. Прежде она стояла прямо в строке: английская, с текстом Windows на
+/// языке системы и длиной в абзац, она растила карточку и ничего не объясняла.
+fn failure_log(event: &str, error: &dyn std::fmt::Display) -> String {
+    format!("[спидтест] {event}: {error}")
+}
+
+fn logged(event: &str, text: String, error: &dyn std::fmt::Display) -> String {
+    eprintln!("{}", failure_log(event, error));
+    text
 }
 
 fn publish(app: &AppHandle, view: View) {
@@ -1288,6 +1429,125 @@ fn remember(app: &AppHandle, report: Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Счётчик снимается раньше возврата задачи. Принудительно держим задачу
+    /// в этом окне: результат скачивания не должен стать таймаутом.
+    #[tokio::test]
+    async fn a_counted_download_stream_can_still_return_its_result() {
+        let flow = Arc::new(Flow::new(1));
+        let worker_flow = Arc::clone(&flow);
+        let (done, counted) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let mut stream = Stream(tauri::async_runtime::JoinHandle::Tokio(tokio::spawn(async move {
+            worker_flow.done();
+            done.send(()).unwrap();
+            wait.await.unwrap();
+            Ok::<_, Trouble>(Some(12.0))
+        })));
+
+        counted.await.unwrap();
+        assert!(!flow.running());
+        assert!(!stream.0.inner().is_finished());
+        let resume = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            release.send(()).unwrap();
+        });
+        assert!(matches!(stream.finish().await, Ok(Ok(Ok(Some(12.0))))));
+        resume.await.unwrap();
+    }
+
+    /// Отдача снимает свой счётчик тем же способом, но возвращает скорость.
+    #[tokio::test]
+    async fn a_counted_upload_stream_can_still_return_its_result() {
+        let rates = Arc::new(Rates::new(1));
+        let worker_rates = Arc::clone(&rates);
+        let (done, counted) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let mut stream = Stream(tauri::async_runtime::JoinHandle::Tokio(tokio::spawn(async move {
+            worker_rates.done();
+            done.send(()).unwrap();
+            wait.await.unwrap();
+            Ok::<_, Trouble>(80.0)
+        })));
+
+        counted.await.unwrap();
+        assert!(!rates.running());
+        assert!(!stream.0.inner().is_finished());
+        let resume = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            release.send(()).unwrap();
+        });
+        assert!(matches!(stream.finish().await, Ok(Ok(Ok(80.0)))));
+        resume.await.unwrap();
+    }
+
+    /// Настоящее зависание по-прежнему ограничено сроком, а брошенная
+    /// обёртка гасит задачу, чтобы та не мешала следующему замеру.
+    #[tokio::test]
+    async fn an_unreported_stream_times_out_and_is_aborted() {
+        let mut stream = Stream(tauri::async_runtime::JoinHandle::Tokio(tokio::spawn(
+            std::future::pending::<()>(),
+        )));
+        let abort = stream.0.inner().abort_handle();
+        assert!(stream.finish().await.is_err());
+        drop(stream);
+        tokio::task::yield_now().await;
+        assert!(abort.is_finished());
+    }
+
+    /// Отставший поток через пятнадцать секунд не добавляет байты и не
+    /// растягивает пятисекундный замер втрое.
+    #[test]
+    fn late_download_bytes_stay_outside_the_transfer_budget() {
+        let flow = Flow::new(2);
+        let started = Instant::now() - Duration::from_secs(15);
+        *flow.clock.lock().unwrap() = Clock {
+            started: Some(started),
+            last: Some(started + TRANSFER_BUDGET),
+        };
+        flow.received.store(5_000_000, Ordering::Relaxed);
+
+        flow.add(10_000_000);
+
+        assert_eq!(flow.received.load(Ordering::Relaxed), 5_000_000);
+        assert_eq!(flow.elapsed(), Some(TRANSFER_BUDGET));
+        assert_eq!(flow.rate(), Some(8.0));
+    }
+
+    /// Когда данных до бюджета не было, поздний кусок не создаёт замер.
+    /// Часы доходят до потолка, чтобы соединение могло закрыться в `pull`.
+    #[test]
+    fn late_first_download_bytes_do_not_create_a_rate() {
+        let flow = Flow::new(1);
+        flow.clock.lock().unwrap().started = Some(Instant::now() - Duration::from_secs(15));
+
+        flow.add(1_000_000);
+
+        assert_eq!(flow.rate(), None);
+        assert_eq!(flow.elapsed(), Some(TRANSFER_BUDGET));
+    }
+
+    /// Нулевой счётчик сервера — ещё не удачная отдача. Пропущенные поля
+    /// и нулевое время тоже не должны создавать измеренную скорость.
+    #[test]
+    fn upload_reports_need_received_bytes_and_elapsed_time() {
+        assert_eq!(throughput(r#"{"TCPInfo":{"BytesReceived":0,"ElapsedTime":5000000}}"#), None);
+        assert_eq!(throughput(r#"{"TCPInfo":{"BytesReceived":1000000,"ElapsedTime":0}}"#), None);
+        assert_eq!(throughput(r#"{"TCPInfo":{"ElapsedTime":5000000}}"#), None);
+        assert_eq!(throughput(r#"{"TCPInfo":{"BytesReceived":1000000}}"#), None);
+        assert_eq!(throughput(r#"{"TCPInfo":{"BytesReceived":5000000,"ElapsedTime":5000000}}"#), Some(8.0));
+    }
+
+    /// Язык карточки не попадает в журнал: там русское событие и сырая ошибка.
+    #[test]
+    fn localized_failures_keep_russian_log_events() {
+        let raw = "connection refused";
+        let card = "Server did not answer".to_owned();
+        assert_eq!(logged("сервер не ответил", card.clone(), &raw), card);
+        assert_eq!(failure_log("сервер не ответил", &raw),
+            "[спидтест] сервер не ответил: connection refused");
+        assert!(!failure_log("сервер не ответил", &raw).contains(&card));
+    }
 
     /// Отказ по токену обязан отличаться от прочих: на нём замер повторяют с
     /// новым подбором, а не показывают отказ. Раньше включённый VPN давал 401
@@ -1438,8 +1698,8 @@ mod tests {
         assert_eq!(servers[1].country, "GB");
     }
 
-    /// Места в ответе может не быть вовсе — это не повод падать и не повод
-    /// показать пустоту вместо города.
+    /// Места в ответе может не быть вовсе — это не повод падать. Города тогда
+    /// и не пишем: прежнее «unknown» стояло английским словом на любом языке.
     #[test]
     fn a_server_without_a_place_still_counts() {
         let answer: Answer = serde_json::from_str(
@@ -1451,7 +1711,7 @@ mod tests {
 
         let servers = read_servers(answer.results);
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].city, "unknown");
+        assert_eq!(servers[0].city, "");
         assert_eq!(servers[0].country, "");
     }
 

@@ -100,6 +100,11 @@ let queue: Promise<unknown> = Promise.resolve();
 function ordered(command: string, args: Record<string, unknown>): void {
   queue = queue.then(() => invoke(command, args)).catch(() => {});
 }
+
+/** Когда уйдут все правки вида, поставленные в очередь до этого вызова. */
+export function lookSettled(): Promise<unknown> {
+  return queue;
+}
 const listeners = new Set<() => void>();
 let started = false;
 let appearanceVersion = 0;
@@ -128,7 +133,8 @@ function adopt(received: Look) {
   appearanceVersion += 1;
   // Старый backend не знает дизайн: показываем Claude, а не ложный выбор GPT.
   const next: Look = { ...received,
-    design: received.design ?? "app", effectiveDesign: received.effectiveDesign ?? "app" };
+    design: received.design ?? "app", effectiveDesign: received.effectiveDesign ?? "app",
+    customColors: received.customColors ?? DEFAULT_CUSTOM_COLORS };
   if (!FIXED_LOOK) {
     // Правим корень документа, а не карточку: подписчиков у переменных много
     const style = document.documentElement.style;
@@ -242,14 +248,16 @@ export function useLook(): LookControl {
 
   const preview = useCallback(
     (next: Partial<Sliders>) => {
-      // Своё состояние не трогаем: оно приедет событием, одинаково во все окна
+      // Своё состояние не трогаем: оно приедет событием, одинаково во все окна.
+      // Только тронутое: недостающее Rust возьмёт нынешним, а не тем, что
+      // окно видело в последнем событии, — оно могло не доехать
       ordered("preview_appearance", {
-        cardOpacity: next.cardOpacity ?? value.cardOpacity,
-        scale: next.scale ?? value.scale,
-        vivid: next.vivid ?? value.vivid,
+        cardOpacity: next.cardOpacity ?? null,
+        scale: next.scale ?? null,
+        vivid: next.vivid ?? null,
       });
     },
-    [value.cardOpacity, value.scale, value.vivid],
+    [],
   );
 
   return { ...value, preview, commit: commitLook };

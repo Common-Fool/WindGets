@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Language } from "./i18n";
+import { lookSettled } from "./look";
 
 /*
  * Настройки приложения для их собственного окна.
@@ -125,6 +126,10 @@ export type SettingsView = {
   version: string;
   /** «Напоминать реже» у напоминания о донатах: раз в полгода, а не в месяц. */
   supportRare: boolean;
+  /** Последний снимок датчиков сказал, что дискретной видеокарты нет. */
+  noGpu: boolean;
+  /** `settings.json` не прочитался при запуске: правки не сохраняются. */
+  unsaved: boolean;
 };
 
 /** Ряды карточек процессора и видеокарты, которые можно снять. Повторяет `settings::METRICS`. */
@@ -162,6 +167,8 @@ const EMPTY: SettingsView = {
   sensorPicks: {},
   version: "",
   supportRare: false,
+  noGpu: false,
+  unsaved: false,
 };
 
 let current: SettingsView = EMPTY;
@@ -177,12 +184,19 @@ function start() {
   if (started) return;
   started = true;
 
-  // Снимок и подписка идут разом, и порядок ответов не гарантирован: правка,
-  // случившаяся сразу после открытия окна, придёт событием, а следом опоздавший
-  // снимок откатил бы её назад. То же правило, что у вида в `look.ts`
+  // Сперва подписка, потом снимок: правка, разосланная до того, как слушатель
+  // встал, иначе пропала бы, а снимок мог быть снят ещё до неё — и окно стояло
+  // бы на прежних флагах до следующей рассылки (как в `live.ts`). Порядок
+  // ответа и событий всё равно не гарантирован: правка, случившаяся сразу
+  // после открытия окна, придёт событием, а следом опоздавший снимок откатил
+  // бы её назад. То же правило, что у вида в `look.ts`
   let heard = false;
 
-  invoke<SettingsView>("settings_view")
+  listen<SettingsView>("settings", (event) => {
+    heard = true;
+    publish(event.payload);
+  })
+    .then(() => invoke<SettingsView>("settings_view"))
     .then((first) => {
       if (heard) return;
       publish(first);
@@ -190,11 +204,6 @@ function start() {
     .catch(() => {
       // Вне Tauri настроек нет — окно останется с пустым списком
     });
-
-  listen<SettingsView>("settings", (event) => {
-    heard = true;
-    publish(event.payload);
-  }).catch(() => {});
 }
 
 function subscribe(listener: () => void): () => void {
@@ -358,7 +367,11 @@ export function openLogDir(): void {
 /**
  * Закрывает окно настроек. Через команду, а не `window.close()`: место окна
  * пишется на диск на стороне Rust, и закрытое из JS окно туда бы не попало.
+ *
+ * В хвост очереди вида, а не мимо неё: `close_settings` запоминает накрученное
+ * ползунками, и обгони он последние `preview` — на диск ушло бы число на шаг
+ * раньше, а окна остались бы не пересчитаны под последнее.
  */
 export function closeSettings(): void {
-  void invoke("close_settings");
+  void lookSettled().then(() => invoke("close_settings"));
 }

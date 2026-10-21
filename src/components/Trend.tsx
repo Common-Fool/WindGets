@@ -203,12 +203,25 @@ function levels(low: number, high: number, step: number): number[] {
   // то есть подвесил бы окно целиком
   if (!(step > 0)) return [];
 
+  // Сетка гуще сотни линий не читается, а бесконечные границы не имеют шкалы
+  if (!Number.isFinite(low) || !Number.isFinite(high) || (high - low) / step > MAX_LEVELS) return [];
+
   const first = Math.ceil(low / step) * step;
   const rows: number[] = [];
 
-  for (let value = first; value < high; value += step) rows.push(value);
+  for (let value = first; value < high && rows.length < MAX_LEVELS;) {
+    rows.push(value);
+    // У больших чисел прибавка шага округляется к прежнему значению, даже
+    // если размах шкалы небольшой: без продвижения окно зависло бы
+    const next = value + step;
+    if (!(next > value)) break;
+    value = next;
+  }
   return rows;
 }
+
+/** Больше линий сетки шкала не рисует: гуще их уже не различить. */
+const MAX_LEVELS = 100;
 
 /**
  * Оставляет те подписи, что попадают в шкалу и не налезают друг на друга.

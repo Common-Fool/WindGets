@@ -29,7 +29,7 @@ export function ConverterReferenceHeader({ view }: { view: ConverterView }) {
       <span className="conv-ref__summary tabular" title={summary}>{summary}</span>
       <Button variant="outline" icon={<PlusIcon />} label={t("converter.add")} disabled={view.running} onClick={() => void pickFiles()} />
       <Button variant="outline" icon={<CloseIcon />} label={t("converter.clearList")} disabled={view.running} onClick={() => void clearFiles()} />
-      <Button variant="outline" icon={<FolderIcon />} label={t("converter.openFolder")} disabled={view.running} onClick={() => void openOutputDir("converter")} />
+      <Button variant="outline" icon={<FolderIcon />} label={t("converter.openFolder")} disabled={view.running} onClick={() => void openOutputDir("converter").catch(() => {})} />
     </div>
   );
 }

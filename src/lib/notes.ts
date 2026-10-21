@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
+// Снимок уходит сразу, даже если прежняя запись ещё ждёт диск: очередь
+// в webview погибла бы вместе с выключенным окном. Rust сравнит эти номера.
+let session = 0;
+let revision = 0;
+
 /*
  * Заметки: несколько страниц текста в каталоге настроек.
  *
@@ -17,7 +22,13 @@ export type Book = {
 
 /** Что лежит на диске. Заметок ещё не вели — ни одной страницы. */
 export function loadNotes(): Promise<Book> {
-  return invoke<Book>("notes_pages");
+  return invoke<Book & { session: number }>("notes_pages").then(({ session: nextSession, ...book }) => {
+    if (nextSession > session) {
+      session = nextSession;
+      revision = 0;
+    }
+    return book;
+  });
 }
 
 /**
@@ -28,5 +39,5 @@ export function loadNotes(): Promise<Book> {
  * весь текст английский.
  */
 export function saveNotes(book: Book): Promise<void> {
-  return invoke("set_notes_pages", { book });
+  return invoke("set_notes_pages", { book, session, revision: ++revision });
 }

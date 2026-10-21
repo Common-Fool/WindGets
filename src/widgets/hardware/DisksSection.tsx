@@ -16,6 +16,7 @@ import "./sections.css";
 import { useText } from "../../lib/i18n";
 
 function DiskRow({ disk }: { disk: Disk }) {
+  const t = useText();
   const free = showReading(disk.free);
   const total = showReading(disk.total);
   const life = showReading(disk.life);
@@ -36,11 +37,13 @@ function DiskRow({ disk }: { disk: Disk }) {
       <div className="disk__head">
         <span className="disk__name">
           <span className="disk__full"><MetricLabel icon={<DriveIcon />} badge>{disk.name}</MetricLabel></span>
-          {capacity !== undefined && <span className="disk__brief"><MetricLabel icon={<DriveIcon />}>{capacity}</MetricLabel></span>}
+          {/* Объёма в модели нет — в тесной карточке остаётся сама модель, а
+              не пустой заголовок, по которому два диска не различить */}
+          <span className="disk__brief"><MetricLabel icon={<DriveIcon />}>{capacity ?? disk.name}</MetricLabel></span>
         </span>
         <span className="disk__size tabular">
           <span className="disk__full">
-            {free && total ? `${free} of ${total}` : NO_VALUE}
+            {free && total ? t("disks.freeOf", { free, total }) : NO_VALUE}
           </span>
           {/* В тесной карточке остаётся одно свободное место: «из всего» и так
               стоит слева объёмом накопителя */}

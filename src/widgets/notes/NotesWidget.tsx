@@ -124,33 +124,39 @@ export function NotesWidget() {
   const latest = useRef<Book>(NOTHING);
   /** Книга последней начатой записи: по ней узнаётся отставший ответ. */
   const wanted = useRef<Book | null>(null);
+  /** Ответы IPC могут прийти в другом порядке, чем снимки легли на диск. */
+  const saving = useRef(0);
+  const saved = useRef(0);
 
   /**
    * Кладёт книгу на диск, если она отличается от лежащей там.
    *
-   * ВАЖНО: **неудачная запись возвращает `stored` назад.** Иначе повторить ту
-   * же попытку было бы нечем: сравнение с `stored` пропускало бы её как уже
-   * записанную, и уход из поля, который для того и заведён, ничего бы не
-   * делал.
-   *
-   * Отвечает только самая свежая попытка (`wanted`): две записи внахлёст
-   * бывают — полсекунды тишины и уход из поля идут подряд, — и отставшая, упав
-   * позже успевшей, сдвинула бы `stored` в прошлое.
+   * Ревизия в saveNotes сохраняет порядок снимков, а stored меняется только
+   * после успеха: после двух отказов он не должен указывать на несохранённое.
+   * wanted подавляет повтор уже ожидающего снимка; старый ответ не гасит
+   * предупреждение о более новой попытке.
    */
   const keep = useCallback((next: Book) => {
     const before = stored.current;
-    if (before === null || same(before, next)) return;
+    if (before === null || same(wanted.current ?? before, next)) return;
 
-    stored.current = next;
     wanted.current = next;
+    const attempt = ++saving.current;
 
     saveNotes(next).then(
       () => {
-        if (wanted.current === next) setAlarm(null);
+        if (attempt > saved.current) {
+          saved.current = attempt;
+          stored.current = next;
+        }
+        if (saving.current === attempt) {
+          wanted.current = null;
+          setAlarm(null);
+        }
       },
       () => {
-        if (wanted.current !== next) return;
-        stored.current = before;
+        if (saving.current !== attempt) return;
+        wanted.current = null;
         setAlarm("write");
       },
     );
@@ -164,12 +170,17 @@ export function NotesWidget() {
    * перебросил бы на страницу, открытую тогда.
    */
   const apply = useCallback(
-    (next: Book) => {
+    (next: Book, now = false) => {
       forget();
       latest.current = next;
       setBook(next);
+      // Отложенная запись нужна набору, а не страницам, корзине и возврату:
+      // выключенный следом модуль разбирает окно без уборки, и полсекунды
+      // правки, сделанной не в поле, уходили вместе с ним — `onBlur` у поля
+      // без фокуса не придёт
+      if (now) keep(next);
     },
-    [forget],
+    [forget, keep],
   );
 
   useEffect(() => {
@@ -201,11 +212,15 @@ export function NotesWidget() {
    * что окно опять не тянется.
    */
   useEffect(() => {
-    const lock = () => setWriting(false);
+    const lock = () => {
+      // Уход из окна завершает набор, даже если blur самого поля не пришёл.
+      keep(latest.current);
+      setWriting(false);
+    };
 
     window.addEventListener("blur", lock);
     return () => window.removeEventListener("blur", lock);
-  }, []);
+  }, [keep]);
 
   const settled = useDebounced(book, SAVE_DELAY);
   useEffect(() => {
@@ -239,7 +254,7 @@ export function NotesWidget() {
    */
   const unread = () => stored.current === null;
 
-  function edit(next: string) {
+  function edit(next: string, saveNow = false) {
     if (unread()) return;
     const now = latest.current;
     const pages =
@@ -247,7 +262,7 @@ export function NotesWidget() {
         ? [next]
         : now.pages.map((page, at) => (at === now.active ? next : page));
 
-    apply({ pages, active: Math.min(now.active, pages.length - 1) });
+    apply({ pages, active: Math.min(now.active, pages.length - 1) }, saveNow);
   }
 
   function pick(at: number) {
@@ -255,7 +270,7 @@ export function NotesWidget() {
     // Страницу переключают, чтобы посмотреть другую: правку при этом запираем,
     // иначе окно перестало бы тянуться за заметку, которую даже не трогали
     setWriting(false);
-    apply({ ...latest.current, active: at });
+    apply({ ...latest.current, active: at }, true);
   }
 
   function add() {
@@ -265,7 +280,7 @@ export function NotesWidget() {
     const pages = [...(now.pages.length === 0 ? [""] : now.pages), ""];
     if (pages.length > MAX_PAGES) return;
 
-    apply({ pages, active: pages.length - 1 });
+    apply({ pages, active: pages.length - 1 }, true);
 
     // Новую страницу заводят, чтобы писать: запертой она означала бы ещё одно
     // двойное нажатие сразу после нажатия «плюс»
@@ -370,7 +385,7 @@ export function NotesWidget() {
         document.execCommand("delete");
       }
 
-      edit("");
+      edit("", true);
       // После самой правки, а не до: `apply` снимает предложение вернуть, и
       // снимок, положенный раньше, тут же был бы выброшен
       remember(before);
@@ -380,13 +395,13 @@ export function NotesWidget() {
     if (alone) return;
 
     const pages = before.pages.filter((_, at) => at !== before.active);
-    apply({ pages, active: Math.min(before.active, pages.length - 1) });
+    apply({ pages, active: Math.min(before.active, pages.length - 1) }, true);
     remember(before);
   }
 
   function rollback() {
     if (undo === null) return;
-    apply(undo);
+    apply(undo, true);
   }
 
   return (
@@ -415,6 +430,12 @@ export function NotesWidget() {
             /* Подсказка только у запертой: у разрешённой она врала бы */
             title={writing ? undefined : t("notes.editHint")}
             onDoubleClick={unlock}
+            /* Запертое поле мыши не видит, и колесо прокручивало бы ничего:
+               длинную заметку нельзя было дочитать без разрешения правки */
+            onWheel={(event) => {
+              if (writing || field.current === null) return;
+              field.current.scrollTop += event.deltaY;
+            }}
           >
             {/*
               Подложка с текстом и ссылками. Прокрутку ей задаёт поле: своей у
@@ -425,7 +446,7 @@ export function NotesWidget() {
               подложка уезжала бы вверх на строку.
             */}
             <div className="notes__ghost" ref={ghost} aria-hidden="true">
-              <Linked text={text} live={!writing} />
+              <Linked text={text} live={!writing} verbatim />
               {"\n"}
             </div>
 

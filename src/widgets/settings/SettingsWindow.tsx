@@ -184,10 +184,18 @@ export function SettingsWindow() {
     setTarget("");
   };
 
-  // Esc закрывает — привычка любого окна настроек
+  // Esc закрывает — привычка любого окна настроек. Но не из поля ввода: там
+  // Esc первым делом отпускает поле. Закрытое окно размонтирует страницу, и
+  // недосохранённый пароль ящика, секрет 2FA или запрос города пропали бы
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeSettings();
+      if (event.key !== "Escape") return;
+      const field = event.target;
+      if (field instanceof HTMLElement && (field.isContentEditable || field.matches("input:not([type=range]):not([type=checkbox]), textarea, select"))) {
+        field.blur();
+        return;
+      }
+      closeSettings();
     };
 
     document.addEventListener("keydown", escape);

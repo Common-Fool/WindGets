@@ -130,6 +130,13 @@ impl Media {
         }
     }
 
+    fn retain_art(&self, tracks: &[Track]) {
+        // Закрытый источник больше не нужен ни карточке, ни кешу: иначе
+        // каждая ушедшая сессия оставляла бы мегабайты до выхода.
+        self.art.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|source, _| tracks.iter().any(|track| track.source == *source));
+    }
+
     fn snapshot(&self) -> View {
         // Отравленный мьютекс не повод падать: данные внутри осмысленные
         self.latest
@@ -190,12 +197,14 @@ pub fn set_media_source(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let (found, stored) = state.store.update(|stored| stored.set_enabled(&id, enabled));
+    let found = state.store.try_update(&app, |stored| {
+        let found = stored.set_enabled(&id, enabled);
+        (found, found)
+    })?;
     if !found {
-        return Err("такого источника нет в списке".to_owned());
+        return Err(tr!("media.error.noSource"));
     }
 
-    store::save(&app, &stored)?;
     publish(&app, &state);
     Ok(())
 }
@@ -241,29 +250,34 @@ fn watched(app: &AppHandle) -> bool {
 }
 
 /// Собирает снимок из нынешнего состояния и рассылает, если он поменялся.
+///
+/// ВАЖНО: **сборка, запись и рассылка — под одним замком `latest`.** Собирают
+/// двое: поток опроса и команды (галочка, выбор). Собранный до снятия галочки
+/// снимок потока, записанный и разосланный после снимка команды, вернул бы
+/// снятый источник на карточку до следующего опроса.
 fn publish(app: &AppHandle, state: &Media) {
+    let mut latest = state.latest.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let next = {
         let all = state.all.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let picked = state
+        let mut picked = state
             .picked
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        compose(&all, picked.as_deref(), &state.store.get())
+        let next = compose(&all, picked.as_deref(), &state.store.get());
+        // Выбранный источник ушёл с карточки — выбор забывается, а не ждёт
+        // его возвращения: вернувшийся плеер перебил бы играющий
+        if next.current.is_none() {
+            *picked = None;
+        }
+        next
     };
 
-    {
-        let mut stored = state
-            .latest
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        // Ничего не поменялось — молчим: рассылка раз в секунду во все окна
-        // впустую стоит дороже этого сравнения
-        if *stored == next {
-            return;
-        }
-        *stored = next.clone();
+    // Ничего не поменялось — молчим: рассылка раз в секунду во все окна
+    // впустую стоит дороже этого сравнения
+    if *latest == next {
+        return;
     }
+    *latest = next.clone();
 
     // Неудачу рассылки глотаем: окно могли спрятать прямо в этот момент
     let _ = app.emit(MEDIA_EVENT, next);
@@ -288,7 +302,14 @@ fn compose(all: &[Track], picked: Option<&str>, stored: &Stored) -> View {
     View {
         sessions,
         current,
-        sources: stored.sources.clone(),
+        // Время последней встречи окну не нужно, а меняется оно каждый опрос:
+        // с ним снимок не совпадал бы с прошлым никогда и рассылался бы раз в
+        // секунду — вопреки правилу «только когда поменялся»
+        sources: stored
+            .sources
+            .iter()
+            .map(|source| Source { seen_at: 0, ..source.clone() })
+            .collect(),
     }
 }
 
@@ -529,20 +550,18 @@ fn handle(app: &AppHandle, sessions: &session::Sessions, order: Order) {
 /// источник или новое имя. Время последней встречи копится в памяти.
 #[cfg(windows)]
 fn remember(app: &AppHandle, state: &Media, tracks: &[Track], now: i64) {
-    let (changed, stored) = state.store.update(|stored| {
+    let ((), saved) = state.store.update_saving(app, |stored| {
         // Циклом, а не `any`: тот остановился бы на первом новом источнике, и
         // остальные попали бы в список только на следующем такте
         let mut changed = false;
         for track in tracks {
             changed |= stored.remember(&track.source, &track.title, now);
         }
-        changed
+        ((), changed)
     });
-
-    if changed {
-        if let Err(error) = store::save(app, &stored) {
-            eprintln!("[медиа] список источников не записан: {error}");
-        }
+    // Подробность уже в журнале (`store::save`); тут только отметка, откуда
+    if saved.is_err() {
+        eprintln!("[медиа] новый источник остался только в памяти");
     }
 }
 
@@ -553,28 +572,31 @@ fn remember(app: &AppHandle, state: &Media, tracks: &[Track], now: i64) {
 /// следующий опрос попробует снова. Плееры в браузере кладут обложку в сессию
 /// позже названия, и одна попытка теряла бы её до смены трека.
 #[cfg(windows)]
+///
+/// ВАЖНО: **сама загрузка — без замка карты.** Обложка у части плееров —
+/// ссылка, и чтение идёт в сеть; `media_art` — синхронная команда, то есть
+/// главный поток, и ждал бы он этот замок вместе с приёмом IPC всех окон.
 fn fetch_art(sessions: &session::Sessions, state: &Media, tracks: &mut [Track]) {
-    let mut art = state.art.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.retain_art(tracks);
+    let art = || state.art.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     for track in tracks.iter_mut() {
         let Some(key) = track.art.clone() else {
-            art.remove(&track.source);
+            art().remove(&track.source);
             continue;
         };
 
-        let known = art
-            .get(&track.source)
-            .is_some_and(|(have, _)| *have == key);
+        let known = art().get(&track.source).is_some_and(|(have, _)| *have == key);
         if known {
             continue;
         }
 
         match sessions.thumbnail(&track.source) {
             Some(url) => {
-                art.insert(track.source.clone(), (key, url));
+                art().insert(track.source.clone(), (key, url));
             }
             None => {
-                art.remove(&track.source);
+                art().remove(&track.source);
                 track.art = None;
             }
         }
@@ -604,6 +626,25 @@ mod tests {
             measured_at: 1_700_000_000_000,
             art: None,
         }
+    }
+
+    #[test]
+    fn art_cache_keeps_only_sources_in_the_current_sessions() {
+        let media = Media::new(Stored::default());
+        {
+            let mut art = media.art.lock().unwrap();
+            art.insert("active".into(), ("key-a".into(), "data:image/png;base64,AA==".into()));
+            art.insert("gone".into(), ("key-b".into(), "data:image/png;base64,AQ==".into()));
+        }
+        media.retain_art(&[track("active", false)]);
+        {
+            let art = media.art.lock().unwrap();
+            assert_eq!(art.len(), 1);
+            assert!(art.contains_key("active"), "пауза не удаляет обложку");
+            assert!(!art.contains_key("gone"));
+        }
+        media.retain_art(&[]);
+        assert!(media.art.lock().unwrap().is_empty());
     }
 
     fn stored_with(id: &str, enabled: bool) -> Stored {

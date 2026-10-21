@@ -1352,3 +1352,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Подтверждённое удаление 2FA необратимо, поэтому кнопка берёт цвет отказа. */
+.settings .totp-remove .btn,
+.settings .totp-remove .btn:hover:not(:disabled) {
+  color: var(--status-danger);
+  border-color: var(--status-danger);
+}

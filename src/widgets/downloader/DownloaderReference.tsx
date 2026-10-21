@@ -89,7 +89,7 @@ export function DownloaderReference(props: Props) {
         <div className="dl-a__utilities">
           <span className="dl-a__folder">
             <Button variant="outline" icon={<FolderIcon />} label={t("downloader.openFolder")}
-              onClick={() => void openOutputDir("downloader")} />
+              onClick={() => void openOutputDir("downloader").catch(() => {})} />
           </span>
           {view.history.length > 0 && (
             <span className="dl-a__history-toggle" data-open={shown}>

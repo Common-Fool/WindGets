@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../../components/Button";
 import {
   addAccount,
+  emptyText,
   removeAccount,
   renameAccount,
   reorderAccounts,
@@ -18,7 +19,7 @@ import { useText } from "../../lib/i18n";
  * недоделка, а то же правило, что и у почты.
  */
 export function TotpSection() {
-  const { accounts } = useAccounts();
+  const { accounts, trouble } = useAccounts();
   const t = useText();
 
   const [input, setInput] = useState("");
@@ -26,6 +27,9 @@ export function TotpSection() {
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draftIssuer, setDraftIssuer] = useState("");
@@ -79,11 +83,16 @@ export function TotpSection() {
   }
 
   async function remove(id: string) {
+    if (deleting) return;
+    setDeleting(true);
     setError(null);
     try {
       await removeAccount(id);
+      setRemoving(null);
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -145,12 +154,28 @@ export function TotpSection() {
           <span className="field__value">{accounts.length}</span>
         </div>
 
-        {accounts.length === 0 ? (
+        {accounts.length === 0 && trouble !== null ? (
+          // Не «записей пока нет»: файл не прочитался или отложен как
+          // испорченный, и прежние секреты, возможно, лежат в `totp.bad.json`
+          <p className="note note--error" role="alert">
+            {t(emptyText(trouble).title)}. {t(emptyText(trouble).hint)}
+          </p>
+        ) : accounts.length === 0 ? (
           <p className="note">{t("totp.settings.none")}</p>
         ) : (
           <div className="rows rows--tight">
             {accounts.map((row) =>
-              editing === row.id ? (
+              removing === row.id ? (
+                <div key={row.id} className="field" data-no-drag>
+                  <p className="note" role="alert">{t("totp.settings.removeConfirm", { name: titleOf(row) })}</p>
+                  <div className="choices">
+                    <span className="totp-remove">
+                      <Button disabled={deleting} onClick={() => void remove(row.id)}>{t("menu.task.remove")}</Button>
+                    </span>
+                    <Button disabled={deleting} onClick={() => setRemoving(null)}>{t("common.cancel")}</Button>
+                  </div>
+                </div>
+              ) : editing === row.id ? (
                 /* Пока строку правят, тянуть её нельзя: поле ввода и
                    перетаскивание спорили бы за одно и то же движение мыши */
                 <div key={row.id} className="field">
@@ -217,7 +242,7 @@ export function TotpSection() {
                     >
                       {t("common.rename")}
                     </Button>
-                    <Button onClick={() => void remove(row.id)}>{t("menu.task.remove")}</Button>
+                    <Button disabled={deleting} onClick={() => setRemoving(row.id)}>{t("menu.task.remove")}</Button>
                   </span>
                 </div>
               ),

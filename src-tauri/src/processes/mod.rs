@@ -16,7 +16,7 @@
 #[cfg(windows)]
 mod memory;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -177,13 +177,18 @@ fn top_by_memory(groups: &[Group]) -> Vec<Group> {
 /// Память спрашиваем сами, а не берём у sysinfo: у него это рабочий набор
 /// целиком, вместе с общими страницами, и группа из тридцати вкладок считает
 /// одни и те же библиотеки тридцать раз. Подробности — в `memory.rs`.
-fn collect(system: &System) -> Vec<Sample> {
+///
+/// Процесс, встреченный меньше трёх раз, не берётся: заводка счёта нужна каждому
+/// процессу своя, а не одна на опрос ([`WARMUP`]). Появившийся после неё
+/// процесс иначе два захода показывался бы нулём и средним с загрузки машины.
+fn collect(system: &System, ages: &HashMap<u32, u32>) -> Vec<Sample> {
     system
         .processes()
         .iter()
         // Процесс простоя иначе стоит первой строкой с почти сотней процентов,
         // и виджет не показывает ровно ничего
         .filter(|(pid, _)| pid.as_u32() != 0)
+        .filter(|(pid, _)| ages.get(&pid.as_u32()).is_some_and(|age| *age > WARMUP))
         .map(|(pid, process)| Sample {
             name: process.name().to_string_lossy().into_owned(),
             cpu: process.cpu_usage(),
@@ -287,6 +292,9 @@ fn work(app: AppHandle) {
     // Сколько заходов заводки уже сделано: проценты считаются от прошлого
     // опроса, и первые числа выходят враньём
     let mut warmed = 0;
+    // Сколько раз встречен каждый процесс, — его собственная заводка
+    let mut ages: HashMap<u32, u32> = HashMap::new();
+    let mut shown = false;
 
     loop {
         if !watched(&app) {
@@ -294,11 +302,26 @@ fn work(app: AppHandle) {
             // измерение после показа размажет нагрузку по всему времени, что
             // окно было закрыто, и покажет ровную скуку вместо всплеска.
             warmed = 0;
+            ages.clear();
+            // И последний список уходит: показанное снова окно без этого
+            // секунды три выдавало бы его, часовой давности, за нынешний, а
+            // не «Собираем…»
+            if shown {
+                shown = false;
+                publish(&app, View::default());
+            }
             std::thread::sleep(STEP);
             continue;
         }
+        shown = true;
 
         system.refresh_processes_specifics(ProcessesToUpdate::All, true, wanted);
+        let alive: std::collections::HashSet<u32> = system.processes().keys().map(|pid| pid.as_u32()).collect();
+        ages.retain(|pid, _| alive.contains(pid));
+        for pid in alive {
+            let age = ages.entry(pid).or_insert(0);
+            *age = (*age + 1).min(WARMUP + 1);
+        }
 
         if warmed < WARMUP {
             warmed += 1;
@@ -306,7 +329,7 @@ fn work(app: AppHandle) {
             continue;
         }
 
-        publish(&app, view(&collect(&system), cores));
+        publish(&app, view(&collect(&system, &ages), cores));
         std::thread::sleep(STEP);
     }
 }
@@ -481,7 +504,9 @@ mod tests {
             burn(PRIME);
         }
 
-        let samples = collect(&system);
+        // Все, кто есть, прожили заводку целиком
+        let ages: HashMap<u32, u32> = system.processes().keys().map(|pid| (pid.as_u32(), WARMUP + 1)).collect();
+        let samples = collect(&system, &ages);
         assert!(samples.len() > 50, "процессов нашлось {}", samples.len());
         // Частный рабочий набор всегда меньше рабочего набора целиком, но не
         // нулевой: ноль означал бы, что вызов не прошёл ни разу

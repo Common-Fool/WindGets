@@ -84,9 +84,12 @@ fn rotate(dir: &Path) -> io::Result<()> {
 }
 
 /// Открывает журнал на дописывание, переложив разросшийся.
+///
+/// Не переложился — дописываем в прежний: его держит открытым кто-то чужой
+/// (блокнот, индексатор), и это не повод терять строки до перезапуска.
 fn open(dir: &Path) -> io::Result<File> {
     fs::create_dir_all(dir)?;
-    rotate(dir)?;
+    let _ = rotate(dir);
     OpenOptions::new().create(true).append(true).open(dir.join(FILE))
 }
 
@@ -105,8 +108,17 @@ fn pump(source: impl Read, dir: &Path, clock: impl Fn() -> String) {
     loop {
         buffer.clear();
         match reader.read_until(b'\n', &mut buffer) {
-            Ok(0) | Err(_) => return,
+            // Пишущий конец закрыт — писать больше некому
+            Ok(0) => return,
             Ok(_) => {}
+            // ВАЖНО: **уходить на ошибке чтения нельзя.** Брошенная труба
+            // обрывается у пишущего конца, а `eprintln!` на оборванной трубе
+            // паникует — то есть погиб бы не журнал, а всё приложение на
+            // первой же строке лога
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
         }
         let text = String::from_utf8_lossy(&buffer);
         let text = text.trim_end_matches(['\r', '\n']);
@@ -122,8 +134,9 @@ fn pump(source: impl Read, dir: &Path, clock: impl Fn() -> String) {
                 .as_ref()
                 .and_then(|out| out.metadata().ok())
                 .is_some_and(|meta| meta.len() > LIMIT);
-            if grown {
-                // Открытый файл Windows переименовать не даст — сперва закрыть
+            if grown || file.is_none() {
+                // Открытый файл Windows переименовать не даст — сперва закрыть.
+                // Не открылся прошлый раз — пробуем снова, а не молчим до выхода
                 drop(file.take());
                 file = open(dir).ok();
             }
@@ -173,8 +186,11 @@ const CRASH_LIMIT: usize = 4000;
 
 /// Отказ интерфейса окна (граница `Guard` во фронте): в собранном приложении
 /// консоли webview никто не видит, и без этого причина пустого окна пропала бы.
+///
+/// Async: запись в трубу журнала ждёт, пока её вычитают, а восемь тысяч знаков
+/// стека больше её буфера — ждать этого в главном потоке незачем.
 #[tauri::command]
-pub fn report_crash(window: tauri::WebviewWindow, message: String, stack: String) {
+pub async fn report_crash(window: tauri::WebviewWindow, message: String, stack: String) {
     let clip = |text: &str| text.chars().take(CRASH_LIMIT).collect::<String>();
     eprintln!("[окно {}] интерфейс упал: {}
 {}", window.label(), clip(&message), clip(&stack));

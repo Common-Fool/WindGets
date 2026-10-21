@@ -54,6 +54,9 @@ function AppClipboard() {
   const t = useText();
   const { entries, capacity } = useClipboard();
   const [picked, setPicked] = useState<number | undefined>(undefined);
+  // Очистку жмут ради того, чтобы секрет ушёл из буфера: отказ обязан быть
+  // виден. Прежде он уходил только в консоль, а список пустел — как успех
+  const [clearFailed, setClearFailed] = useState(false);
 
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -65,6 +68,12 @@ function AppClipboard() {
     timer.current = window.setTimeout(() => setPicked(undefined), HOLD_MS);
 
     control({ kind: "copy", id });
+  }
+
+  async function clear() {
+    setClearFailed(false);
+    const result = await controlConfirmed({ kind: "clear" });
+    setClearFailed(!result.ok);
   }
 
   const current = picked ?? entries.find((entry) => entry.current)?.id;
@@ -92,15 +101,15 @@ function AppClipboard() {
           )}
 
           <div className="clip__foot">
-            <span className="clip__count tabular">
-              {t("clipboard.count", { count: entries.length, capacity })}
+            <span className="clip__count tabular" data-error={clearFailed || undefined} role={clearFailed ? "alert" : undefined}>
+              {clearFailed ? t("clipboard.clearFailed") : t("clipboard.count", { count: entries.length, capacity })}
             </span>
             <Button
               variant="outline"
               icon={<EraseIcon />}
               label={t("clipboard.clearHint")}
-              disabled={entries.length === 0}
-              onClick={() => control({ kind: "clear" })}
+              disabled={entries.length === 0 && !clearFailed}
+              onClick={() => void clear()}
             />
           </div>
         </div>

@@ -43,6 +43,8 @@ export type Attachment = {
 
 /** Что приезжает по нажатию на письмо. */
 export type LetterBody = {
+  /** Достигнут предел выборки или длины текста: письмо показано не целиком. */
+  truncated: boolean;
   text: string | null;
   attachments: Attachment[];
 };
@@ -144,7 +146,8 @@ type Listener = () => void;
  */
 let current: MailView | null = null;
 const listeners = new Set<Listener>();
-let started = false;
+let unlisten: Promise<() => void> | null = null;
+let generation = 0;
 
 function publish(next: MailView) {
   current = next;
@@ -152,25 +155,33 @@ function publish(next: MailView) {
 }
 
 function start() {
-  if (started) return;
-  started = true;
-  // Ответ на первый вопрос мог прийти позже события: тогда он старше
+  if (unlisten !== null) return;
+  const started = ++generation;
   let heard = false;
-
-  invoke<MailView>("mail_state")
-    .then((first) => {
-      if (!heard) publish(first);
-    })
-    .catch(() => {
-      // До готовности бэкенда или вне Tauri молчим — состояние придёт событием
-    });
-
-  listen<MailView>("mail", (event) => {
+  const registered = listen<MailView>("mail", (event) => {
+    if (generation !== started) return;
     heard = true;
     publish(event.payload);
-  }).catch(() => {
-    // Вне Tauri (обычный браузер) события не приходят
   });
+  unlisten = registered;
+
+  // Сперва подписка, потом снимок: между ними событие теряться не должно.
+  registered
+    .then(() => generation === started ? invoke<MailView>("mail_state") : null)
+    .then((first) => {
+      if (generation === started && !heard && first !== null) publish(first);
+    })
+    .catch(() => {
+      // До готовности бэкенда или вне Tauri молчим — состояние придёт событием.
+    });
+}
+
+function stopIfIdle() {
+  if (listeners.size > 0 || unlisten === null) return;
+  ++generation;
+  const pending = unlisten;
+  unlisten = null;
+  pending.then((stop) => stop()).catch(() => {});
 }
 
 function subscribe(listener: Listener): () => void {
@@ -178,6 +189,8 @@ function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+    // StrictMode и переход между страницами тут же возвращают слушателя.
+    setTimeout(stopIfIdle, 1000);
   };
 }
 

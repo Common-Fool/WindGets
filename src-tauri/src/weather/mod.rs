@@ -335,18 +335,26 @@ async fn work(app: AppHandle) {
         }
 
         // Город тут есть заведомо: без него `due` не пропускает
-        let Some(place) = known.clone() else {
+        let Some(asked) = known.clone() else {
             rest(&nudge).await;
             continue;
         };
 
         last = Some(Instant::now());
 
-        match api::fetch(&client, &place).await {
+        let outcome = api::fetch(&client, &asked).await;
+        // Город сменили или убрали, пока шёл запрос: ответ про прежний, и
+        // опубликованный, он показал бы чужую погоду. Новый город снимок
+        // сбросит и заберёт сразу — заход начнётся с проверки наверху
+        if place(&app) != known {
+            continue;
+        }
+
+        match outcome {
             Ok(report) => {
                 failures = 0;
                 let next = View::Ready {
-                    place: place.name,
+                    place: asked.name,
                     report,
                     stale: false,
                 };
@@ -362,7 +370,7 @@ async fn work(app: AppHandle) {
             Err(reason) => {
                 failures = failures.saturating_add(1);
                 let previous = app.state::<Weather>().locked().clone();
-                let next = after_failure(&previous, place.name, reason, failures);
+                let next = after_failure(&previous, asked.name, reason, failures);
 
                 if forced {
                     publish_always(&app, next);

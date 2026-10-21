@@ -498,7 +498,9 @@ function part(id, pkg, lead, items) {
 function families(items) {
   const count = new Map();
   for (const item of items) {
-    const expression = item.family ?? elected(item.license);
+    // Выбор ветки уже сделан (`ELECTED`) — пересчитывать его по исходному
+    // выражению значило бы потерять, например, CC0-1.0 у dunce
+    const expression = item.family ?? item.elected ?? elected(item.license);
     for (const id of expression.replace(/\s+WITH\s+\S+/g, "").split(/[\s()/]+/)) {
       if (id === "" || id === "AND" || id === "OR") continue;
       if (!/^[A-Za-z0-9][A-Za-z0-9.+-]*$/.test(id)) throw new Error(`${item.name}: «${id}» — не лицензия SPDX`);

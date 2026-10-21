@@ -262,6 +262,37 @@ pub fn detail(lines: &[String]) -> Option<String> {
     Some(short)
 }
 
+/// Жалоба для журнала — без хвостов ссылок.
+///
+/// yt-dlp повторяет адрес в отказе целиком («Unsupported URL: …»), а в
+/// строке запроса бывают токены и ключи доступа: журнал лежит на диске, и
+/// человек пересылает его, когда что-то сломалось. Адрес оставляем до `?` и
+/// `#` — сайт и путь для разбора хватает, — а данные для входа перед `@`
+/// убираем совсем.
+pub fn without_secrets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("http://").into_iter().chain(rest.find("https://")).min() {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+        let link = &tail[..end];
+        let link = &link[..link.find(['?', '#']).unwrap_or(link.len())];
+        let (scheme, after) = link.split_once("://").unwrap_or(("", link));
+        let host_end = after.find('/').unwrap_or(after.len());
+        let after = match after[..host_end].rfind('@') {
+            Some(sign) => &after[sign + 1..],
+            None => after,
+        };
+        out.push_str(scheme);
+        out.push_str("://");
+        out.push_str(after);
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,5 +443,25 @@ mod tests {
             Some("Unsupported URL: https://example.com/")
         );
         assert_eq!(detail(&lines("WARNING: only")), None);
+    }
+
+    #[test]
+    fn url_punctuation_cannot_leave_a_secret_in_the_journal() {
+        for tail in ["?name=O'Neil&token=PRIVATE_TOKEN", "#name=O'Neil&token=PRIVATE_TOKEN", "?name=one|two&token=PRIVATE_TOKEN", "?name=one\"two&token=PRIVATE_TOKEN"] {
+            let line = format!("ERROR: Unsupported URL: https://example.org/video{tail} next");
+            assert_eq!(without_secrets(&line), "ERROR: Unsupported URL: https://example.org/video next");
+        }
+        assert_eq!(
+            without_secrets("https://example.org/O'Neil?token=PRIVATE_TOKEN"),
+            "https://example.org/O'Neil"
+        );
+    }
+
+    #[test]
+    fn the_journal_gets_links_without_their_secrets() {
+        let line = "ERROR: Unsupported URL: https://user:pass@example.com/video/1?token=abc#t=5 | next";
+        assert_eq!(without_secrets(line), "ERROR: Unsupported URL: https://example.com/video/1 | next");
+        assert_eq!(without_secrets("нет ссылок"), "нет ссылок");
+        assert_eq!(without_secrets("http://a.b/c?x https://d.e/f"), "http://a.b/c https://d.e/f");
     }
 }

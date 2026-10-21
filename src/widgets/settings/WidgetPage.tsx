@@ -348,6 +348,7 @@ function Own({
         min={min * 100}
         max={max * 100}
         step={step}
+        ariaLabel={name}
         onChange={(next) => {
           const value = next / 100;
           setDraft(value);

@@ -83,6 +83,9 @@ pub struct Codes {
 /// Состояние виджета: записи в памяти плюс их же файл на диске.
 pub struct Totp {
     store: Store,
+    /// Чтение, правка, диск и рассылка идут вместе: отдельные get/set теряли
+    /// добавленную запись при одновременном удалении из другого снимка.
+    transaction: Mutex<()>,
     /// Что случилось при чтении файла. Пока он не прочитан
     /// (`Trouble::Unreadable`), правки отвергаются: записи на диске есть, мы их
     /// просто не видели, и первая же правка затёрла бы их.
@@ -93,8 +96,14 @@ impl Totp {
     pub fn new(loaded: Loaded) -> Self {
         Self {
             store: Store::new(loaded.stored),
+            transaction: Mutex::new(()),
             trouble: Mutex::new(loaded.trouble),
         }
+    }
+
+    fn transact<T>(&self, work: impl FnOnce() -> T) -> T {
+        let _transaction = self.transaction.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        work()
     }
 
     fn trouble(&self) -> Option<Trouble> {
@@ -104,14 +113,23 @@ impl Totp {
     /// Непрочитанный файл пробуем прочитать снова: занятым он бывает мгновение
     /// (антивирус, синхронизация папки), и до перезапуска ждать незачем.
     fn retry(&self, app: &AppHandle) {
-        let mut trouble = self.trouble.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *trouble != Some(Trouble::Unreadable) {
-            return;
-        }
-        let loaded = store::load(app);
-        if loaded.trouble != Some(Trouble::Unreadable) {
+        let recovered = {
+            let mut trouble = self.trouble.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if *trouble != Some(Trouble::Unreadable) {
+                return;
+            }
+            let loaded = store::load(app);
+            if loaded.trouble == Some(Trouble::Unreadable) {
+                return;
+            }
             self.store.set(loaded.stored);
             *trouble = loaded.trouble;
+            true
+        };
+        // Прочиталось — говорим всем окнам, а не одному спросившему: карточка,
+        // оставшаяся на «не прочитался», сама больше ничего не спросит
+        if recovered {
+            let _ = app.emit(TOTP_EVENT, view(&self.store.get(), self.trouble()));
         }
     }
 
@@ -160,8 +178,37 @@ fn view(accounts: &Stored, trouble: Option<Trouble>) -> View {
 fn commit(app: &AppHandle, state: &Totp, accounts: Stored) -> Result<(), String> {
     store::save(app, &accounts)?;
     state.store.set(accounts.clone());
+    {
+        // Записалось — файл теперь целый, и «отложен как испорченный» больше
+        // не про него: пустая карточка иначе твердила бы это до перезапуска
+        let mut trouble = state.trouble.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *trouble == Some(Trouble::SetAside) {
+            *trouble = None;
+        }
+    }
     let _ = app.emit(TOTP_EVENT, view(&accounts, state.trouble()));
     Ok(())
+}
+
+/// Работа с файлом записей — в пуле, а не в главном потоке.
+///
+/// ВАЖНО: **и чтение, и запись умеют ждать.** Занятый антивирусом файл они
+/// пробуют снова с паузами по 40 мс, запись ещё и доводит данные до диска, а
+/// синхронная команда выполняется в обработчике IPC — на это время вставали
+/// бы все окна приложения.
+async fn on_pool<T: Send + 'static>(
+    app: AppHandle,
+    work: impl FnOnce(&AppHandle, &Totp) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Totp>();
+        state.transact(|| work(&app, &state))
+    })
+    .await
+    .map_err(|error| {
+        eprintln!("[2FA] работа с файлом записей сорвалась: {error}");
+        tr!("common.failed")
+    })?
 }
 
 /// Имя записи: хоть что-то из двух полей обязано быть.
@@ -176,9 +223,12 @@ fn named(issuer: &str, label: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn totp_state(app: AppHandle, state: State<'_, Totp>) -> View {
-    state.retry(&app);
-    view(&state.store.get(), state.trouble())
+pub async fn totp_state(app: AppHandle) -> Result<View, String> {
+    on_pool(app, |app, state| {
+        state.retry(app);
+        Ok(view(&state.store.get(), state.trouble()))
+    })
+    .await
 }
 
 /// Коды для перечисленных записей; пустой список — коды для всех.
@@ -252,14 +302,12 @@ pub fn totp_codes(app: AppHandle, state: State<'_, Totp>, ids: Vec<String>) -> C
 /// строки, а не два разных действия. Поля издателя и ярлыка при вставленной
 /// ссылке уступают ей: она пришла от сервиса, а поля заполнены на глаз.
 #[tauri::command]
-pub fn add_totp_account(
-    app: AppHandle,
-    state: State<'_, Totp>,
-    input: String,
-    issuer: String,
-    label: String,
-) -> Result<Row, String> {
-    state.writable(&app)?;
+pub async fn add_totp_account(app: AppHandle, input: String, issuer: String, label: String) -> Result<Row, String> {
+    on_pool(app, move |app, state| add(app, state, input, issuer, label)).await
+}
+
+fn add(app: &AppHandle, state: &Totp, input: String, issuer: String, label: String) -> Result<Row, String> {
+    state.writable(app)?;
     let typed = input.trim();
     if typed.is_empty() {
         return Err(tr!("totp.error.nothing"));
@@ -298,7 +346,10 @@ pub fn add_totp_account(
         id: store::new_id(),
         issuer,
         label,
-        secret: dpapi::protect(&secret).map_err(|error| tr!("totp.error.noEncrypt", error = error))?,
+        secret: dpapi::protect(&secret).map_err(|error| {
+            eprintln!("[2FA] секрет не зашифровался: {error}");
+            tr!("totp.error.noEncrypt")
+        })?,
         digits: shape.digits,
         period: shape.period,
         algorithm: shape.algorithm,
@@ -308,7 +359,7 @@ pub fn add_totp_account(
     let row = account.row();
     let mut accounts = state.store.get();
     accounts.accounts.push(account);
-    commit(&app, &state, accounts)?;
+    commit(app, state, accounts)?;
 
     Ok(row)
 }
@@ -318,14 +369,12 @@ pub fn add_totp_account(
 /// Нужно потому, что секрета у человека под рукой уже нет: опечатку в ярлыке
 /// иначе пришлось бы чинить, заводя запись заново с нуля.
 #[tauri::command]
-pub fn rename_totp_account(
-    app: AppHandle,
-    state: State<'_, Totp>,
-    id: String,
-    issuer: String,
-    label: String,
-) -> Result<(), String> {
-    state.writable(&app)?;
+pub async fn rename_totp_account(app: AppHandle, id: String, issuer: String, label: String) -> Result<(), String> {
+    on_pool(app, move |app, state| rename(app, state, id, issuer, label)).await
+}
+
+fn rename(app: &AppHandle, state: &Totp, id: String, issuer: String, label: String) -> Result<(), String> {
+    state.writable(app)?;
     named(&issuer, &label)?;
 
     let mut accounts = state.store.get();
@@ -340,7 +389,7 @@ pub fn rename_totp_account(
     account.issuer = issuer.trim().to_owned();
     account.label = label.trim().to_owned();
 
-    commit(&app, &state, accounts)
+    commit(app, state, accounts)
 }
 
 /// Переставить записи в порядке присланных ключей.
@@ -353,15 +402,14 @@ pub fn rename_totp_account(
 /// в хвост: окно настроек могло отстать от правки из другого места, и ронять
 /// из-за этого весь порядок нельзя.
 #[tauri::command]
-pub fn reorder_totp_accounts(
-    app: AppHandle,
-    state: State<'_, Totp>,
-    ids: Vec<String>,
-) -> Result<(), String> {
-    state.writable(&app)?;
-    let mut accounts = state.store.get();
-    accounts.accounts = arrange(accounts.accounts, &ids);
-    commit(&app, &state, accounts)
+pub async fn reorder_totp_accounts(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    on_pool(app, move |app, state| {
+        state.writable(app)?;
+        let mut accounts = state.store.get();
+        accounts.accounts = arrange(accounts.accounts, &ids);
+        commit(app, state, accounts)
+    })
+    .await
 }
 
 /// Сама перестановка, без окон и диска, — чтобы её можно было проверить.
@@ -381,21 +429,20 @@ fn arrange(mut accounts: Vec<Account>, ids: &[String]) -> Vec<Account> {
 
 /// Удалить запись. Секрет уходит вместе с ней и не восстанавливается ничем.
 #[tauri::command]
-pub fn remove_totp_account(
-    app: AppHandle,
-    state: State<'_, Totp>,
-    id: String,
-) -> Result<(), String> {
-    state.writable(&app)?;
-    let mut accounts = state.store.get();
-    let before = accounts.accounts.len();
-    accounts.accounts.retain(|account| account.id != id);
+pub async fn remove_totp_account(app: AppHandle, id: String) -> Result<(), String> {
+    on_pool(app, move |app, state| {
+        state.writable(app)?;
+        let mut accounts = state.store.get();
+        let before = accounts.accounts.len();
+        accounts.accounts.retain(|account| account.id != id);
 
-    if accounts.accounts.len() == before {
-        return Err(tr!("totp.error.noEntry"));
-    }
+        if accounts.accounts.len() == before {
+            return Err(tr!("totp.error.noEntry"));
+        }
 
-    commit(&app, &state, accounts)
+        commit(app, state, accounts)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -414,6 +461,63 @@ mod tests {
             algorithm: Algorithm::Sha1,
             added_at,
         }
+    }
+
+    /// Удаление не берёт старый снимок, пока добавление ещё пишет и рассылает.
+    #[test]
+    fn concurrent_edits_keep_disk_memory_and_events_in_one_order() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let first = account(1);
+        let added = account(2);
+        let state = Totp::new(Loaded {
+            stored: Stored { accounts: vec![first.clone()] },
+            trouble: None,
+        });
+        let disk = Mutex::new(state.store.get());
+        let events = Mutex::new(Vec::new());
+        let (reading, read) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (removing, remove_started) = mpsc::channel();
+
+        thread::scope(|threads| {
+            let state = &state;
+            let disk = &disk;
+            let events = &events;
+            let added = &added;
+            threads.spawn(move || state.transact(|| {
+                let mut next = state.store.get();
+                next.accounts.push(added.clone());
+                reading.send(()).unwrap();
+                released.recv().unwrap();
+                *disk.lock().unwrap() = next.clone();
+                state.store.set(next.clone());
+                events.lock().unwrap().push(next);
+            }));
+            read.recv().unwrap();
+            assert!(state.transaction.try_lock().is_err(), "транзакция держит общий замок");
+            threads.spawn(move || {
+                removing.send(()).unwrap();
+                state.transact(|| {
+                    let mut next = state.store.get();
+                    next.accounts.retain(|entry| entry.id != first.id);
+                    *disk.lock().unwrap() = next.clone();
+                    state.store.set(next.clone());
+                    events.lock().unwrap().push(next);
+                });
+            });
+            remove_started.recv().unwrap();
+            release.send(()).unwrap();
+        });
+
+        let expected = Stored { accounts: vec![added] };
+        assert_eq!(state.store.get(), expected);
+        assert_eq!(*disk.lock().unwrap(), expected);
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].accounts.len(), 2);
+        assert_eq!(events[1], expected);
     }
 
     /// Фронт читает поля в camelCase, как у всех остальных виджетов.

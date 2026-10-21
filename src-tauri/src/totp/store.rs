@@ -212,8 +212,16 @@ fn parse(text: &str) -> Option<Stored> {
     serde_json::from_str(text).ok()
 }
 
-/// Атомарно сохраняет записи на диск.
+/// Атомарно сохраняет записи на диск. Подробность отказа — в журнал (она
+/// русская и с текстом Windows), в окно — строка каталога.
 pub fn save(app: &AppHandle, accounts: &Stored) -> Result<(), String> {
+    write(app, accounts).map_err(|error| {
+        eprintln!("[2FA] записи не сохранились: {error}");
+        tr!("totp.error.save")
+    })
+}
+
+fn write(app: &AppHandle, accounts: &Stored) -> Result<(), String> {
     let path = file_path(app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)

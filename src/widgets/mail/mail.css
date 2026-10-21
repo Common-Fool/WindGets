@@ -844,3 +844,36 @@ button.mail__box-trouble:focus-visible {
     inset-block: calc(-1 * var(--space-2));
   }
 }
+
+/* Обрыв выборки не должен выглядеть концом настоящего письма. */
+.mail__incomplete {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-control);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.mail__incomplete-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mail__incomplete-link:hover { background: var(--surface-control-hover); }
+.mail__incomplete-link:focus-visible { outline: 2px solid var(--focus-ring); }
+.mail__incomplete-link svg { flex: none; width: 1em; height: 1em; }

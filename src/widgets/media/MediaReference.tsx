@@ -12,6 +12,7 @@ type PlayerProps = {
   playing: boolean;
   position: number;
   others: number;
+  canSwitch: boolean;
   opened: boolean;
   onSwitch: () => void;
   onOpen: () => void;
@@ -21,11 +22,11 @@ type PlayerProps = {
 
 /** Только разметка GPT: команды и рабочее состояние принадлежат общему Player. */
 export function ReferencePlayer({
-  track, size, layout, cover, playing, position, others, opened,
+  track, size, layout, cover, playing, position, others, canSwitch, opened,
   onSwitch, onOpen, onToggle, seek,
 }: PlayerProps) {
   const t = useText();
-  const source = <ReferenceSource track={track} others={others} opened={opened}
+  const source = <ReferenceSource track={track} others={others} canSwitch={canSwitch} opened={opened}
     onSwitch={onSwitch} onOpen={onOpen} />;
 
   return (
@@ -84,25 +85,25 @@ function ReferenceCover({ url }: { url: string | null }) {
 }
 
 function ReferenceSource({
-  track, others, opened, onSwitch, onOpen,
+  track, others, canSwitch, opened, onSwitch, onOpen,
 }: {
-  track: Track; others: number; opened: boolean;
+  track: Track; others: number; canSwitch: boolean; opened: boolean;
   onSwitch: () => void; onOpen: () => void;
 }) {
   const t = useText();
   const name = track.title === "" ? track.source : track.title;
   return (
     <div className="media-reference__source">
-      {others < 1 ? <span className="media-reference__source-name" title={name}>{name}</span>
+      {!canSwitch ? <span className="media-reference__source-name" title={name}>{name}</span>
         : <button type="button" className="media-reference__source-cycle"
-          title={t.count("media.moreSources", others)} onClick={onSwitch}>
+          title={others > 0 ? t.count("media.moreSources", others) : t("media.settings.sources")} onClick={onSwitch}>
           <span className="media-reference__source-name">{name}</span>
-          <span className="media-reference__more">+{others}</span>
+          {others > 0 && <span className="media-reference__more">+{others}</span>}
         </button>}
       <button type="button" className="media-reference__source-expand"
         aria-label={t("media.settings.sources")} title={t("media.settings.sources")}
         aria-expanded={opened} aria-controls="media-session-panel"
-        disabled={others < 1} onClick={onOpen}>
+        disabled={!canSwitch} onClick={onOpen}>
         <MediaGlyph name={opened ? "up" : "down"} />
       </button>
     </div>

@@ -124,20 +124,38 @@ struct Single {
 
 /// Файл любой из двух редакций.
 ///
-/// Нынешняя узнаётся по полю `accounts`: у прежней его нет, и разбор уходит во
-/// вторую ветку.
-#[derive(Deserialize)]
-#[serde(untagged)]
+/// ВАЖНО: **редакция выбирается по полю `accounts`, а не перебором.** С
+/// `untagged` нынешний файл, у которого одно поле не разобралось (порт
+/// строкой «993»), молча принимался за прежний плоский объект без единого
+/// ящика — тот лишние поля пропускает, — и первая же запись клала на диск
+/// `accounts: []`: все ящики и пароли уходили безвозвратно. Теперь такой
+/// файл — неразобравшийся и откладывается в `mail.bad.json`.
 enum OnDisk {
     Many {
         accounts: Vec<Account>,
-        #[serde(default)]
         preview: bool,
     },
     One(Single),
 }
 
+#[derive(Deserialize)]
+struct Many {
+    accounts: Vec<Account>,
+    #[serde(default)]
+    preview: bool,
+}
+
 impl OnDisk {
+    fn decode(text: &str) -> Result<Self, serde_json::Error> {
+        let value: serde_json::Value = serde_json::from_str(text)?;
+        if value.get("accounts").is_some() {
+            let Many { accounts, preview } = serde_json::from_value(value)?;
+            Ok(Self::Many { accounts, preview })
+        } else {
+            Ok(Self::One(serde_json::from_value(value)?))
+        }
+    }
+
     /// Приводит файл к нынешнему виду. Второе значение — был ли это переезд:
     /// тогда файл надо переписать сразу.
     fn into_stored(self) -> (Stored, bool) {
@@ -194,7 +212,7 @@ fn sane(mut stored: Stored) -> (Stored, bool) {
 
 /// Разбор текста файла — отдельно от чтения ради тестов.
 fn parse(text: &str) -> (Stored, bool) {
-    let Ok(on_disk) = serde_json::from_str::<OnDisk>(text) else {
+    let Ok(on_disk) = OnDisk::decode(text) else {
         return (Stored::default(), false);
     };
     let (stored, migrated) = on_disk.into_stored();
@@ -289,7 +307,10 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_config_dir()
-        .map_err(|error| format!("не найден каталог настроек: {error}"))?;
+        .map_err(|error| {
+            eprintln!("почта: не найден каталог настроек: {error}");
+            tr!("common.notSaved")
+        })?;
     Ok(dir.join(FILE))
 }
 
@@ -315,7 +336,7 @@ pub fn load(app: &AppHandle) -> Stored {
         }
     };
 
-    if serde_json::from_str::<OnDisk>(&text).is_err() {
+    if OnDisk::decode(&text).is_err() {
         match crate::disk::set_aside(&path) {
             Ok(aside) => eprintln!("почта: mail.json не разобрался, файл отложен в {}", aside.display()),
             Err(error) => {
@@ -338,19 +359,39 @@ pub fn load(app: &AppHandle) -> Stored {
 /// Атомарно сохраняет ящики на диск.
 pub fn save(app: &AppHandle, stored: &Stored) -> Result<(), String> {
     let path = file_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("не создать каталог настроек: {error}"))?;
-    }
-    let text = serde_json::to_string_pretty(stored)
-        .map_err(|error| format!("не сериализовать учётные данные: {error}"))?;
-    crate::disk::write_atomically(&path, &text)
-        .map_err(|error| format!("не записать учётные данные: {error}"))
+    save_at(&path, stored)
+}
+
+fn save_at(path: &std::path::Path, stored: &Stored) -> Result<(), String> {
+    let result = (|| {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("не создать каталог настроек: {error}"))?;
+        }
+        let text = serde_json::to_string_pretty(stored)
+            .map_err(|error| format!("не сериализовать учётные данные: {error}"))?;
+        crate::disk::write_atomically(path, &text)
+            .map_err(|error| format!("не записать учётные данные: {error}"))
+    })();
+    result.map_err(|error: String| {
+        eprintln!("почта: mail.json не записался: {error}");
+        tr!("common.notSaved")
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_save_returns_catalog_message_and_preserves_existing_file() {
+        let path = std::env::temp_dir().join(format!("windgets-mail-save-{}", crate::totp::store::new_id()));
+        fs::write(&path, b"kept").unwrap();
+        let result = save_at(&path.join("mail.json"), &Stored::default());
+        assert_eq!(result.unwrap_err(), tr!("common.notSaved"));
+        assert_eq!(fs::read(&path).unwrap(), b"kept");
+        fs::remove_file(path).unwrap();
+    }
 
     fn account(id: &str, login: &str) -> Account {
         Account {
@@ -516,5 +557,13 @@ mod tests {
             ..account("x", "")
         };
         assert_eq!(no_login.address(), "imap.example.org");
+    }
+
+    #[test]
+    fn a_broken_current_file_is_not_taken_for_an_empty_old_one() {
+        let broken = r#"{"accounts":[{"id":"0123456789abcdef","host":"imap.example.com","port":"993"}],"preview":false}"#;
+        assert!(OnDisk::decode(broken).is_err(), "порт строкой обязан ронять разбор, а не давать пустой прежний файл");
+        let old = r#"{"host":"imap.example.com","port":993}"#;
+        assert!(matches!(OnDisk::decode(old), Ok(OnDisk::One(_))));
     }
 }

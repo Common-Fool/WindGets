@@ -95,7 +95,10 @@ export function MediaWidget() {
             layout={layout}
             opened={panelOpen}
             onOpen={() => setSourcesOpen((open) => !open)}
-            others={view.sessions.length - 1}
+            // «+N» — о других ИГРАЮЩИХ: вкладка на паузе вторым источником
+            // не считается, иначе подсказка «ещё играет» врала бы почти всегда
+            others={view.sessions.filter((session) => session.playing && session.source !== track.source).length}
+            canSwitch={view.sessions.some((session) => session.source !== track.source)}
             onSwitch={() => {
               const at = view.sessions.findIndex((session) => session.source === track.source);
               const next = view.sessions[(at + 1) % view.sessions.length];
@@ -141,6 +144,7 @@ function Player({
   opened,
   onOpen,
   others,
+  canSwitch,
   onSwitch,
 }: {
   track: Track;
@@ -150,6 +154,7 @@ function Player({
   opened: boolean;
   onOpen: () => void;
   others: number;
+  canSwitch: boolean;
   onSwitch: () => void;
 }) {
   const t = useText();
@@ -191,12 +196,13 @@ function Player({
   // перемотку виджет переносит сам (`moved` в Rust), но досчёт до свежего
   // снимка шёл от старого места, и полоса скакала
   const drag = useSeekDrag(ratio, track.duration, SEEK_CLOSE, track.canSeek && known,
-    (share) => void seek(track.source, share * track.duration));
+    (share) => void seek(track.source, share * track.duration), `${track.song}
+${track.artist}`);
   const shownPosition = drag.chosen === null ? position : drag.chosen * track.duration;
 
   const meta = (
     <div className="media__meta">
-      <Source track={track} others={others} onSwitch={onSwitch} />
+      <Source track={track} others={others} canSwitch={canSwitch} onSwitch={onSwitch} />
       <Marquee className="media__song" text={track.song === "" ? t("media.unknownTrack") : track.song} />
       {track.artist !== "" && <Marquee className="media__artist" text={track.artist} />}
     </div>
@@ -265,7 +271,7 @@ function Player({
   // смена дизайна/A/B не начинает медиасессию заново.
   if (reference) {
     return <ReferencePlayer track={track} size={size} layout={layout} cover={cover}
-      playing={playing} position={position} others={others}
+      playing={playing} position={position} others={others} canSwitch={canSwitch}
       opened={opened} onSwitch={onSwitch} onOpen={onOpen} onToggle={toggle} seek={drag} />;
   }
 
@@ -297,23 +303,25 @@ function Player({
 /**
  * Имя источника — строкой над названием, как во всплывающем окне Windows.
  *
- * Когда играют двое разом, строка становится кнопкой и листает сессии по
- * кругу. Кнопка маленькая намеренно: она удерживает мышь, и во всю ширину
- * отняла бы у карточки перетаскивание окна.
+ * Другую сессию можно выбрать и на паузе: «+N» считает лишь играющие,
+ * а кнопка листает все доступные. Она маленькая намеренно: удерживает мышь
+ * и во всю ширину отняла бы у карточки перетаскивание окна.
  */
 function Source({
   track,
   others,
+  canSwitch,
   onSwitch,
 }: {
   track: Track;
   others: number;
+  canSwitch: boolean;
   onSwitch: () => void;
 }) {
   const t = useText();
   const name = track.title === "" ? track.source : track.title;
 
-  if (others < 1) {
+  if (!canSwitch) {
     return <span className="media__source">{name}</span>;
   }
 
@@ -321,11 +329,11 @@ function Source({
     <button
       type="button"
       className="media__source media__source--switch"
-      title={t.count("media.moreSources", others)}
+      title={others > 0 ? t.count("media.moreSources", others) : t("media.settings.sources")}
       onClick={onSwitch}
     >
       {name}
-      <span className="media__more">+{others}</span>
+      {others > 0 && <span className="media__more">+{others}</span>}
     </button>
   );
 }

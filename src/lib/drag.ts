@@ -93,6 +93,10 @@ export function useWindowDrag(ignoresLock = false): void {
     const grab = (event: MouseEvent) => {
       // Правая кнопка и колесо к перетаскиванию отношения не имеют
       if (event.button !== 0) return;
+      // Слушатель прошлого нажатия снимаем до любой проверки: щелчок по
+      // кнопке сразу после переноса окна иначе застал бы его висящим, и на
+      // отпускании он прислал бы `end_drag` поперёк нажатия кнопки
+      release();
       if (locked) return;
       if (!(event.target instanceof Element)) return;
 
@@ -101,8 +105,6 @@ export function useWindowDrag(ignoresLock = false): void {
       const keeper = event.target.closest(KEEPS_THE_MOUSE);
       if (keeper !== null && !keeper.hasAttribute("data-drags")) return;
       if (onScrollbar(event.target, event.clientX)) return;
-
-      release();
 
       // Экранные координаты, а не координаты окна: окно вот-вот поедет
       const fromX = event.screenX;

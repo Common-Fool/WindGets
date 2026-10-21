@@ -265,14 +265,29 @@ fn board(flat: &Flat, boards: &[usize]) -> BoardRoles {
         // Имена вентиляторов даёт таблица LHM под известную плату; у
         // незнакомой они «Fan #1…», и который из них процессорный — не
         // угадать. Тогда роли нет, а выбрать можно будет в настройках
-        cpu_fan: named(flat, boards, "Fan", &["CPU Fan"])
-            .or_else(|| spinning_fan(flat, boards, |name| name.starts_with("CPU"))),
+        cpu_fan: cpu_fan(flat, boards),
         chassis_fan: spinning_fan(flat, boards, |name| {
             ["CHASSIS", "SYSTEM", "CASE", "SYS_", "CHA_"]
                 .iter()
                 .any(|start| name.starts_with(start))
         }),
         temperature: named(flat, boards, "Temperature", &["Motherboard", "System", "Mainboard"]),
+    }
+}
+
+/// Процессорный вентилятор. Имя «CPU Fan» из таблицы LHM главнее, но правило
+/// вращения общее: стоит он, а крутится соседний «CPU Optional Fan» (кулер
+/// воткнут не в тот разъём) — берётся вращающийся, иначе роль закрепила бы
+/// пустой разъём до выхода. Нашло ревью второй модели.
+fn cpu_fan(flat: &Flat, boards: &[usize]) -> Option<String> {
+    let spins = |path: &str| {
+        flat.readings
+            .iter()
+            .any(|reading| reading.path == path && reading.value.is_some_and(|value| value > 0.0))
+    };
+    match named(flat, boards, "Fan", &["CPU Fan"]) {
+        Some(path) if spins(&path) => Some(path),
+        _ => spinning_fan(flat, boards, |name| name.starts_with("CPU")),
     }
 }
 
@@ -939,6 +954,27 @@ mod tests {
         };
         let roles = resolve(&machine(&[single]));
         assert_eq!(tail(&roles.board.chassis_fan).as_deref(), Some("Fans/Chassis Fan"));
+    }
+
+    /// Стоящий «CPU Fan» при вращающемся «CPU Optional Fan» уступает ему;
+    /// единственный процессорный разъём остаётся ролью и стоя.
+    #[test]
+    fn a_still_cpu_fan_gives_way_to_a_spinning_neighbour() {
+        let flat = machine(&[Part {
+            name: "Nuvoton NCT6799D",
+            kind: Some("SuperIO"),
+            id: "/lpc/nct6799d/0",
+            sensors: &[("Fan", "CPU Fan", 0.0), ("Fan", "CPU Optional Fan", 900.0)],
+        }]);
+        assert_eq!(tail(&resolve(&flat).board.cpu_fan).as_deref(), Some("Fans/CPU Optional Fan"));
+
+        let alone = machine(&[Part {
+            name: "Nuvoton NCT6799D",
+            kind: Some("SuperIO"),
+            id: "/lpc/nct6799d/0",
+            sensors: &[("Fan", "CPU Fan", 0.0)],
+        }]);
+        assert_eq!(tail(&resolve(&alone).board.cpu_fan).as_deref(), Some("Fans/CPU Fan"));
     }
 
     // ---- Ручной выбор (этап 58) ----

@@ -11,7 +11,7 @@ import {
   useSettings,
   type SettingsView,
 } from "../../lib/settings";
-import { componentsFor, listOf, removeTools, useTools, type ModuleId } from "../../lib/tools";
+import { componentsFor, failureText, listOf, removeTools, useTools, type ModuleId } from "../../lib/tools";
 import { useText } from "../../lib/i18n";
 import { getState, subscribe } from "../../lib/telemetry";
 import { gpuPresent } from "../../lib/sensors";
@@ -47,14 +47,16 @@ export function WidgetsSection() {
 
   /*
    * Дискретной видеокарты нет — включить её виджет нельзя, показывать ему
-   * нечего (этап 57). Знать это можно только по живому снимку: пока датчики
-   * спят, галочка обычная. Включённый модуль выключается как всегда, а
-   * «Включить все» его пропускает — это делает Rust (`modules::set_all`).
+   * нечего (этап 57). Живой снимок говорит это сразу; пока датчики спят, его
+   * нет, и тогда слово за Rust: он помнит последний снимок (`noGpu`), по нему
+   * же «Включить все» пропускает видеокарту (`modules::set_all`). Включённый
+   * модуль выключается как всегда.
    *
    * Подписка на один признак, а не на весь снимок: снимок приходит раз в
    * секунду, и таблица перерисовывалась бы с ним впустую.
    */
-  const noGpu = useSyncExternalStore(subscribe, () => gpuPresent(getState())) === false;
+  const present = useSyncExternalStore(subscribe, () => gpuPresent(getState()));
+  const noGpu = present === false || (present === undefined && settings.noGpu);
   const blocked = (widget: SettingsView["widgets"][number]) => noGpu && widget.id === "gpu" && !widget.enabled;
 
   /*
@@ -64,8 +66,9 @@ export function WidgetsSection() {
    */
   const [offered, setOffered] = useState<ModuleId[]>([]);
   // Отказ включения: окно не собралось, и Rust вернул галочку назад. Очередь
-  // переходов держит Rust (`TRANSITION`), поэтому галочки на время перехода
-  // не гасятся — иначе мигали бы все разом на каждом нажатии
+  // переходов держит Rust (номерами, в порядке нажатий — `modules::ticket`),
+  // поэтому галочки на время перехода не гасятся — иначе мигали бы все разом
+  // на каждом нажатии
   const [error, setError] = useState<string | null>(null);
 
   const toggleModule = async (id: string, on: boolean) => {
@@ -297,6 +300,7 @@ function ToolsOffer({
 }) {
   const tools = useTools();
   const t = useText();
+  const [removing, setRemoving] = useState(false);
 
   const enabled = (id: string) => settings.widgets.find((row) => row.id === id)?.enabled ?? false;
   const stillNeeded = new Set(
@@ -309,9 +313,15 @@ function ToolsOffer({
     .filter((component) => component.presence === "installed" && !stillNeeded.has(component.id))
     .filter((component, index, all) => all.findIndex((other) => other.id === component.id) === index);
 
+  // Удалённое пропадает из списка само: предложение уходит, когда удалять
+  // стало нечего, а не по нажатию — иначе отказ («программа занята») было бы
+  // некому показать
   if (removable.length === 0) return null;
 
   const size = removable.reduce((sum, component) => sum + component.diskBytes, 0);
+  const failure = tools.failure !== null && removable.some((component) => component.id === tools.failure?.component)
+    ? failureText(t, tools.failure.code)
+    : null;
 
   return (
     <div className="field">
@@ -324,10 +334,12 @@ function ToolsOffer({
       <div className="choices">
         <Button
           variant="outline"
-          disabled={tools.job !== null}
+          disabled={tools.job !== null || removing}
           onClick={() => {
-            void removeTools(removable.map((component) => component.id)).catch(() => {});
-            onClose();
+            setRemoving(true);
+            removeTools(removable.map((component) => component.id))
+              .catch(() => {})
+              .finally(() => setRemoving(false));
           }}
         >
           {t("tools.remove")}
@@ -336,6 +348,7 @@ function ToolsOffer({
           {t("settings.widgets.keepTools")}
         </Button>
       </div>
+      {failure !== null && <p className="note note--error" role="alert">{failure}</p>}
     </div>
   );
 }

@@ -217,6 +217,14 @@ pub struct SettingsView {
     pub version: String,
     /// «Напоминать реже» у напоминания о донатах (`support_reminder.rs`).
     pub support_rare: bool,
+    /// Последний снимок датчиков сказал, что дискретной видеокарты нет.
+    /// Живой снимок у окна пропадает, когда опрос засыпает вместе с модулями
+    /// железа, а Rust помнит (`poller::lacks_graphics_card`): без этого
+    /// галочка видеокарты оживала бы ровно тогда, когда «Включить все» её
+    /// пропускает.
+    pub no_gpu: bool,
+    /// `settings.json` не прочитался при запуске, правки не сохраняются.
+    pub unsaved: bool,
 }
 
 fn view(app: &AppHandle) -> SettingsView {
@@ -289,6 +297,8 @@ fn view(app: &AppHandle) -> SettingsView {
         sensor_picks: settings.sensor_picks.clone(),
         version: app.package_info().version.to_string(),
         support_rare: settings.support_reminder.rare,
+        no_gpu: crate::poller::lacks_graphics_card(),
+        unsaved: settings::unsaved(),
     }
 }
 
@@ -386,10 +396,11 @@ fn target(app: &AppHandle, id: &str) {
     let _ = app.emit_to(LABEL, TARGET_EVENT, id);
 }
 
+/// Видно ли окно человеку. Свёрнутое Windows считает видимым, а человек его не
+/// видит: такое окно и центрировать можно, и разворачивать нужно.
 fn visible(app: &AppHandle) -> bool {
     app.get_webview_window(LABEL)
-        .and_then(|window| window.is_visible().ok())
-        .unwrap_or(false)
+        .is_some_and(|window| window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false))
 }
 
 fn reveal(app: &AppHandle) {
@@ -401,6 +412,11 @@ fn reveal(app: &AppHandle) {
 
     // До показа: страница успевает смонтироваться, пока окно выходит на экран
     let _ = app.emit_to(LABEL, SHOWN_EVENT, true);
+    // Свёрнутое в панель задач окно `show` не трогает, а `set_focus` у tao
+    // свёрнутые пропускает: трей, шестерёнка и второй запуск молчали бы
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
     let _ = window.show();
     let _ = window.set_focus();
 }
@@ -535,6 +551,9 @@ fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
         api.prevent_close();
         // Тем же путём, что и крестик: ползунки начисто, позиции на диск
         close_settings(handle.clone());
+        // И в общий счёт закрытий: `taskkill` шлёт его всем окнам разом, и
+        // с одним виджетом без этого счёта он выключил бы модуль
+        windows::closing(&handle, "settings");
     });
 
     Ok(window)
@@ -754,10 +773,15 @@ pub fn set_flag(app: AppHandle, name: String, value: bool) {
         "autostart" => {
             // ВАЖНО: **не здесь, а в пуле.** Задачу планировщика ставит
             // `schtasks`, и его ждут, а синхронная команда выполняется в главном
-            // потоке — на это время встал бы приём IPC во всех окнах
+            // потоке — на это время встал бы приём IPC во всех окнах.
+            //
+            // Два быстрых нажатия — две работы в пуле, и порядок между ними
+            // никто не обещает: поздняя «включить» могла пройти после «выключить».
+            // Поэтому работа берёт не своё значение, а последнее попрошенное
+            settings::want_autostart(value);
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                settings::set_autostart(&app, value);
+                settings::apply_autostart(&app);
                 emit(&app);
             });
             return;

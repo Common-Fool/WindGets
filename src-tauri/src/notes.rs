@@ -13,7 +13,8 @@
 //! она в этом случае запирает запись, чтобы не затереть написанное руками.
 
 use std::fs;
-use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,36 @@ use tauri::{AppHandle, Manager};
 /// Имя файла книги заметок в каталоге настроек.
 const NOTES_FILE: &str = "notes.json";
 
+/// Сеанс чтения различает пересозданные окна, а ревизия приходит из окна:
+/// порядок снимков не зависит от планирования IPC и рабочих потоков.
+#[derive(Default)]
+struct Saves {
+    issued: AtomicU64,
+    written: Mutex<(u64, u64)>,
+}
+
+impl Saves {
+    fn issue(&self) -> u64 {
+        self.issued.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn save(&self, revision: (u64, u64), write: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        let mut written = self.written.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if revision <= *written {
+            return Ok(());
+        }
+        write()?;
+        // Отказ не делает снимок сохранённым: его разрешено повторить.
+        *written = revision;
+        Ok(())
+    }
+}
+
+static SAVES: Saves = Saves {
+    issued: AtomicU64::new(0),
+    written: Mutex::new((0, 0)),
+};
+
 /// Книга заметок: несколько страниц текста и индекс активной страницы.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +60,14 @@ pub struct Book {
     pub pages: Vec<String>,
     #[serde(default)]
     pub active: usize,
+}
+
+/// Номер сеанса отдаём окну отдельно от книги: на диск он не попадает.
+#[derive(Serialize)]
+pub struct Snapshot {
+    #[serde(flatten)]
+    book: Book,
+    session: u64,
 }
 
 fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -50,9 +89,12 @@ fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
 /// указывает мимо, приводим его к нулю, чтобы ручная правка файла не выглядела
 /// как поломка.
 fn read(path: &Path) -> Result<Book, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+    // Общей дорогой (`disk::read_existing`): занятый антивирусом файл пробуем
+    // ещё раз, а метку порядка байт от Блокнота снимаем — иначе карточка
+    // запиралась бы до пересборки окна над целым файлом
+    let text = match crate::disk::read_existing(path) {
+        Ok(Some(text)) => text,
+        Ok(None) => {
             return Ok(Book {
                 pages: Vec::new(),
                 active: 0,
@@ -92,9 +134,20 @@ fn write(path: &Path, book: &Book) -> Result<(), String> {
 /// Отдаёт книгу заметок карточке.
 ///
 /// Отказ уходит и в лог, и отказом команды: карточка по нему запирает запись.
+///
+/// Async и в пул, как и запись: чтение с повторами и запись с доводкой до
+/// диска умеют ждать, а синхронная команда стоит в обработчике IPC всех окон.
 #[tauri::command]
-pub fn notes_pages(app: AppHandle) -> Result<Book, String> {
-    let outcome = notes_path(&app).and_then(|path| read(&path));
+pub async fn notes_pages(app: AppHandle) -> Result<Snapshot, String> {
+    let session = SAVES.issue();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        // Новое окно не читает промежуточный снимок во время замены файла.
+        let _written = SAVES.written.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        notes_path(&app).and_then(|path| read(&path)).map(|book| Snapshot { book, session })
+    })
+        .await
+        .map_err(|error| format!("чтение заметок сорвалось: {error}"))
+        .and_then(|outcome| outcome);
 
     if let Err(error) = &outcome {
         eprintln!("заметки не прочитались: {error}");
@@ -108,8 +161,13 @@ pub fn notes_pages(app: AppHandle) -> Result<Book, String> {
 /// Отказ уходит в две стороны сразу: в лог — разработчику, с причиной, и
 /// отказом команды — карточке, которая покажет «Not saved».
 #[tauri::command]
-pub fn set_notes_pages(app: AppHandle, book: Book) -> Result<(), String> {
-    let outcome = notes_path(&app).and_then(|path| write(&path, &book));
+pub async fn set_notes_pages(app: AppHandle, book: Book, session: u64, revision: u64) -> Result<(), String> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        SAVES.save((session, revision), || notes_path(&app).and_then(|path| write(&path, &book)))
+    })
+        .await
+        .map_err(|error| format!("запись заметок сорвалась: {error}"))
+        .and_then(|outcome| outcome);
 
     if let Err(error) = &outcome {
         eprintln!("заметки не сохранились: {error}");
@@ -127,6 +185,56 @@ mod tests {
         let dir = std::env::temp_dir().join("windgets-tests");
         fs::create_dir_all(&dir).expect("каталог под тесты создаётся");
         dir.join(name)
+    }
+
+    /// Пул исполнил новый запрос первым: запоздалый уже не пишет старый файл.
+    #[test]
+    fn an_older_worker_cannot_overwrite_a_newer_save() {
+        let path = scratch("notes-revision-order.json");
+        let saves = Saves::default();
+        let session = saves.issue();
+        let old = (session, 1);
+        let new = (session, 2);
+        let expected = Book { pages: vec!["Свежий текст".to_owned()], active: 0 };
+        saves.save(new, || write(&path, &expected)).expect("новый снимок записан");
+        saves.save(old, || panic!("старый снимок не должен дойти до записи"))
+            .expect("устаревший запрос пропущен");
+        assert_eq!(read(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    /// Пересозданное окно начинает ревизии с единицы, но оно новее прежнего.
+    #[test]
+    fn a_new_window_session_outweighs_old_revision_numbers() {
+        let saves = Saves::default();
+        let old = saves.issue();
+        let new = saves.issue();
+        saves.save((old, 99), || Ok(())).unwrap();
+        let mut new_written = false;
+        saves.save((new, 1), || { new_written = true; Ok(()) }).unwrap();
+        assert!(new_written);
+        saves.save((old, 100), || panic!("старое окно не перетирает новое")).unwrap();
+    }
+
+    /// Номер сеанса есть только в ответе, а формат файла остался прежним.
+    #[test]
+    fn session_is_returned_beside_the_book_but_not_stored_in_it() {
+        let book = Book { pages: vec!["Текст".to_owned()], active: 0 };
+        let response = serde_json::to_value(Snapshot { book: book.clone(), session: 7 }).unwrap();
+        assert_eq!(response["session"], 7);
+        assert!(response["pages"].is_array());
+        assert!(serde_json::to_value(book).unwrap().get("session").is_none());
+    }
+
+    /// Неудачная запись не занимает ревизию и не запирает повтор.
+    #[test]
+    fn a_failed_save_can_be_retried() {
+        let saves = Saves::default();
+        let revision = (saves.issue(), 1);
+        assert!(saves.save(revision, || Err("диск занят".to_owned())).is_err());
+        let mut retried = false;
+        saves.save(revision, || { retried = true; Ok(()) }).unwrap();
+        assert!(retried);
     }
 
     /// Пропажа файла даёт пустую книгу без ошибки.

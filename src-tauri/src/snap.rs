@@ -59,10 +59,15 @@ fn snapping() -> bool {
 pub fn begin_drag(window: WebviewWindow) {
     #[cfg(windows)]
     {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
 
+        // `GetAsyncKeyState` смотрит физическую кнопку, а фронт видит
+        // логическую: у мыши для левой руки основная — физическая правая, и
+        // без этой сверки перенос не начинался бы ни у одного окна
+        let primary = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 { VK_RBUTTON } else { VK_LBUTTON };
         // Старший бит — «кнопка нажата прямо сейчас»
-        let held = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 != 0;
+        let held = unsafe { GetAsyncKeyState(primary.0 as i32) } as u16 & 0x8000 != 0;
         if !held {
             return;
         }
@@ -544,6 +549,21 @@ mod imp {
                         right: rect.right,
                         bottom: rect.bottom,
                     };
+                }
+            }
+
+            // Переезд посреди жеста на монитор с другим масштабом: Windows даёт
+            // окну новый физический размер, и якорь меняется вместе с ним —
+            // иначе до конца жеста грани считались бы по прежнему размеру, и
+            // правая с нижней прилипали бы мимо
+            WM_DPICHANGED => {
+                let suggested = Rect::from(*(lparam.0 as *const RECT));
+                let drag = &mut *DRAG.lock().unwrap();
+                if drag.anchor.is_some() {
+                    let mut cursor = POINT::default();
+                    if GetCursorPos(&mut cursor).is_ok() {
+                        drag.anchor = Some(Anchor { cursor, rect: suggested });
+                    }
                 }
             }
 

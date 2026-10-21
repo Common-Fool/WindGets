@@ -27,17 +27,6 @@ function inHardware(
   );
 }
 
-/** Все датчики железа, попадающие под условие, в порядке выхлопа. */
-function allInHardware(
-  state: SourceState,
-  hardware: string,
-  matches: (reading: Reading) => boolean,
-): Reading[] {
-  if (state.status !== "ok") return [];
-  return state.snapshot.readings.filter(
-    (reading) => hardwareOf(reading.path) === hardware && matches(reading),
-  );
-}
 
 /* ===================== Роли: процессор, плата, видеокарта ===================== */
 
@@ -200,23 +189,40 @@ function isMeasuredTemperature(reading: Reading): boolean {
  * Накопители находим по датчику заполнения — он есть у каждого.
  * Модели не зашиты: добавится третий диск, появится сам.
  */
+const USED_SPACE = "/Load/Used Space";
+
+/*
+ * Накопитель — по началу пути его датчика заполнения, а не по второму
+ * сегменту: косая бывает в самой модели («KINGSTON SV100S2/64G»), и второй
+ * сегмент усекал имя, а два диска с общим началом склеивал в один. Путь
+ * диска — «машина/модель/группа/датчик», так что модель — всё между первым
+ * сегментом и двумя последними.
+ */
 export function disks(state: SourceState): Disk[] {
   if (state.status !== "ok") return [];
+  const readings = state.snapshot.readings;
 
-  const names = state.snapshot.readings
-    .filter((reading) => reading.path.endsWith("/Load/Used Space"))
-    .map((reading) => hardwareOf(reading.path));
+  const prefixes = readings
+    .filter((reading) => reading.path.endsWith(USED_SPACE))
+    .map((reading) => reading.path.slice(0, -USED_SPACE.length));
 
-  return names.map((name) => ({
-    name,
-    usedShare: inHardware(state, name, "/Load/Used Space"),
-    free: inHardware(state, name, "/Data/Free Space"),
-    total: inHardware(state, name, "/Data/Total Space"),
-    temperatures: allInHardware(state, name, isMeasuredTemperature),
-    life: inHardware(state, name, "/Levels/Life"),
-    readRate: inHardware(state, name, "/Throughput/Read Rate"),
-    writeRate: inHardware(state, name, "/Throughput/Write Rate"),
-  }));
+  return prefixes.map((prefix) => {
+    const exact = (suffix: string) => readings.find((reading) => reading.path === prefix + suffix);
+    // Ровно «группа/датчик» после модели: иначе диск «KINGSTON» забрал бы и
+    // датчики соседа «KINGSTON/64G»
+    const own = (reading: Reading) =>
+      reading.path.startsWith(`${prefix}/`) && reading.path.slice(prefix.length + 1).split("/").length === 2;
+    return {
+      name: prefix.slice(prefix.indexOf("/") + 1),
+      usedShare: exact(USED_SPACE),
+      free: exact("/Data/Free Space"),
+      total: exact("/Data/Total Space"),
+      temperatures: readings.filter((reading) => own(reading) && isMeasuredTemperature(reading)),
+      life: exact("/Levels/Life"),
+      readRate: exact("/Throughput/Read Rate"),
+      writeRate: exact("/Throughput/Write Rate"),
+    };
+  });
 }
 
 /**

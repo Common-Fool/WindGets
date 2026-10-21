@@ -300,10 +300,23 @@ fn run(app: &AppHandle, job: &Job) {
     if app.state::<Tools>().update_due(Component::YtDlp) {
         update(app, |state| state.status = Status::Updating);
         publish(app);
-        let _ = crate::tools::refresh_blocking(app, Component::YtDlp, false);
+        let _ = crate::tools::refresh_blocking(app, Component::YtDlp, false, &downloader.cancel);
     }
 
-    let mut outcome = if cancelled() { Err(Failure::Cancelled) } else { attempt(app, job) };
+    // Папку вывода — до загрузки, а не после: недоступная (отключённый диск)
+    // стоила бы гигабайтов, скачанных в рабочую папку и стёртых вместе с ней
+    let ready = crate::output::dir_for(app, Module::Downloader)
+        .0
+        .filter(|dir| crate::output::probe_write(dir).map_err(|error| {
+            eprintln!("[загрузчик] папка вывода недоступна {}: {error}", dir.display());
+        }).is_ok());
+    let mut outcome = if cancelled() {
+        Err(Failure::Cancelled)
+    } else if ready.is_none() {
+        Err(Failure::Reason(Reason::Failed, Some(tr!("output.error.cannotWrite"))))
+    } else {
+        attempt(app, job)
+    };
 
     // Похоже на поломку сайта — обновляем и пробуем ещё раз, один.
     //
@@ -315,7 +328,7 @@ fn run(app: &AppHandle, job: &Job) {
     if let Err(Failure::Reason(Reason::Broken, _)) = outcome {
         update(app, |state| state.status = Status::Updating);
         publish(app);
-        let _ = crate::tools::refresh_blocking(app, Component::YtDlp, true);
+        let _ = crate::tools::refresh_blocking(app, Component::YtDlp, true, &downloader.cancel);
         outcome = if cancelled() { Err(Failure::Cancelled) } else { attempt(app, job) };
     }
 
@@ -364,9 +377,7 @@ fn attempt(app: &AppHandle, job: &Job) -> Result<PathBuf, Failure> {
     let (Some(work_root), Some(cache)) = (tools.work_dir(), tools.cache_dir(Component::YtDlp)) else {
         return Err(failed(Reason::Failed));
     };
-    let work = work_root.join(downloader.jobs.fetch_add(1, Ordering::SeqCst).to_string());
-    let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work).map_err(|error| {
+    let work = new_work_dir(&work_root, &downloader.jobs).map_err(|error| {
         eprintln!("[загрузчик] рабочая папка не создалась: {error}");
         failed(Reason::Failed)
     })?;
@@ -397,9 +408,46 @@ fn attempt(app: &AppHandle, job: &Job) -> Result<PathBuf, Failure> {
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1");
 
-    let outcome = follow(app, command);
-    let result = outcome.and_then(|file| save(app, &file));
-    let _ = std::fs::remove_dir_all(&work);
+    finish_attempt(&work, follow(app, command), |file| save(app, file))
+}
+
+/// Сохранённая после отказа папка может пережить запуск приложения, а счётчик
+/// начинается заново: занимаем новую папку, не стирая прежнюю с тем же номером.
+fn new_work_dir(root: &Path, jobs: &AtomicU64) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(root)?;
+    loop {
+        let work = root.join(jobs.fetch_add(1, Ordering::SeqCst).to_string());
+        match std::fs::create_dir(&work) {
+            Ok(()) => return Ok(work),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn finish_attempt(
+    work: &Path,
+    downloaded: Result<PathBuf, Failure>,
+    save: impl FnOnce(&Path) -> Result<PathBuf, Failure>,
+) -> Result<PathBuf, Failure> {
+    let result = match downloaded {
+        Ok(file) => match save(&file) {
+            Err(Failure::Reason(reason, _)) => {
+                // Готовое уже скачано: поздний отказ назначения не должен
+                // требовать повторной загрузки. Метку читает и уборка при старте
+                if let Err(error) = std::fs::OpenOptions::new().write(true).create_new(true).open(work.join(crate::tools::KEEP_WORK)) {
+                    if error.kind() != std::io::ErrorKind::AlreadyExists {
+                        eprintln!("[загрузчик] не удалось защитить рабочую папку от уборки {}: {error}", work.display());
+                    }
+                }
+                eprintln!("[загрузчик] скачанный файл оставлен в {}", file.display());
+                return Err(Failure::Reason(reason, Some(tr!("downloader.error.retained", path = file.to_string_lossy()))));
+            }
+            other => other,
+        },
+        Err(error) => Err(error),
+    };
+    let _ = std::fs::remove_dir_all(work);
     result
 }
 
@@ -487,11 +535,11 @@ fn follow(app: &AppHandle, command: Command) -> Result<PathBuf, Failure> {
         return Err(Failure::Cancelled);
     }
     if code != Some(0) {
-        eprintln!("[загрузчик] yt-dlp отказал ({code:?}): {}", complaints.join(" | "));
+        eprintln!("[загрузчик] yt-dlp отказал ({code:?}): {}", complaints.iter().map(|line| args::without_secrets(line)).collect::<Vec<_>>().join(" | "));
         return Err(Failure::Reason(args::classify_error(&complaints), args::detail(&complaints)));
     }
     file.filter(|path| path.is_file()).ok_or_else(|| {
-        eprintln!("[загрузчик] yt-dlp кончил без файла: {}", complaints.join(" | "));
+        eprintln!("[загрузчик] yt-dlp кончил без файла: {}", complaints.iter().map(|line| args::without_secrets(line)).collect::<Vec<_>>().join(" | "));
         Failure::Reason(Reason::Failed, args::detail(&complaints))
     })
 }
@@ -517,6 +565,13 @@ fn save(app: &AppHandle, file: &Path) -> Result<PathBuf, Failure> {
         .map(|ext| ext.to_string_lossy().into_owned())
         .unwrap_or_else(|| "bin".to_owned());
 
+    // «Cancel» на сохранении — тоже отмена: кнопка в это время видна, и
+    // выключенный модуль файла в папку класть не должен. Само копирование с
+    // другого диска не прервать, поэтому смотрим до него и после
+    let cancel = &app.state::<Downloader>().cancel;
+    if cancel.load(Ordering::SeqCst) {
+        return Err(Failure::Cancelled);
+    }
     let reserved = crate::output::reserve(&dir, &stem, &ext).map_err(|error| {
         eprintln!("[загрузчик] имя не заняли в {}: {error}", dir.display());
         failed()
@@ -526,6 +581,10 @@ fn save(app: &AppHandle, file: &Path) -> Result<PathBuf, Failure> {
         let _ = std::fs::remove_file(&reserved);
         failed()
     })?;
+    if cancel.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_file(&reserved);
+        return Err(Failure::Cancelled);
+    }
     Ok(reserved)
 }
 
@@ -571,7 +630,7 @@ pub fn downloader_start(app: AppHandle, url: String, mode: Mode, quality: Qualit
                 let mut state = downloader.lock();
                 state.status = Status::Failed;
                 state.reason = Some(Reason::Failed);
-                state.detail = Some("The downloader stopped, restart the app".to_owned());
+                state.detail = Some(tr!("downloader.error.stopped"));
             }
             downloader.running.store(false, Ordering::SeqCst);
             publish(&app);
@@ -633,6 +692,80 @@ pub fn downloader_forget(app: AppHandle, id: Option<u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Отказ назначения после успешной загрузки оставляет сам файл и метку
+    /// для уборки следующего запуска; новый номер папки его не затрёт.
+    #[test]
+    fn a_late_output_failure_keeps_the_download_and_uses_a_new_work_folder() {
+        let root = std::env::temp_dir().join(format!("hw-downloader-retained-{}", std::process::id()));
+        let jobs = AtomicU64::new(0);
+        let work = new_work_dir(&root, &jobs).unwrap();
+        let file = work.join("clip.mp4");
+        std::fs::write(&file, b"downloaded").unwrap();
+        let destination = root.join("destination");
+        crate::output::probe_write(&destination).unwrap();
+        // Назначение стало недоступно уже после пробы, пока шла загрузка
+        std::fs::remove_dir(&destination).unwrap();
+        std::fs::write(&destination, b"occupied").unwrap();
+        let result = finish_attempt(&work, Ok(file.clone()), |_| {
+            crate::output::reserve(&destination, "clip", "mp4")
+                .map_err(|_| Failure::Reason(Reason::Failed, None))
+        });
+        assert!(matches!(result, Err(Failure::Reason(Reason::Failed, Some(_)))));
+        assert_eq!(std::fs::read(&file).unwrap(), b"downloaded");
+        assert!(work.join(crate::tools::KEEP_WORK).is_file());
+        let next = new_work_dir(&root, &AtomicU64::new(0)).unwrap();
+        assert_ne!(work, next);
+        assert_eq!(std::fs::read(&file).unwrap(), b"downloaded");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn success_and_cancellation_still_remove_the_work_folder() {
+        let root = std::env::temp_dir().join(format!("hw-downloader-clean-{}", std::process::id()));
+        let jobs = AtomicU64::new(0);
+        let work = new_work_dir(&root, &jobs).unwrap();
+        let file = work.join("clip.mp4");
+        std::fs::write(&file, b"downloaded").unwrap();
+        let result = finish_attempt(&work, Ok(file), |_| Err(Failure::Cancelled));
+        assert!(matches!(result, Err(Failure::Cancelled)));
+        assert!(!work.exists());
+        let work = new_work_dir(&root, &jobs).unwrap();
+        let file = work.join("clip.mp4");
+        std::fs::write(&file, b"downloaded").unwrap();
+        let output = root.join("clip.mp4");
+        let result = finish_attempt(&work, Ok(file), |file| {
+            crate::output::place(file, &output).unwrap();
+            Ok(output.clone())
+        });
+        assert!(result.is_ok());
+        assert_eq!(std::fs::read(&output).unwrap(), b"downloaded");
+        assert!(!work.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_transfer_failure_keeps_the_source_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let root = std::env::temp_dir().join(format!("hw-downloader-transfer-{}", std::process::id()));
+        let work = new_work_dir(&root, &AtomicU64::new(0)).unwrap();
+        let file = work.join("clip.mp4");
+        std::fs::write(&file, b"downloaded").unwrap();
+        let reserved = crate::output::reserve(&root.join("output"), "clip", "mp4").unwrap();
+        // Windows отказывает и переименованию, и копированию занятого файла
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let result = finish_attempt(&work, Ok(file.clone()), |file| {
+            crate::output::place(file, &reserved).map(|()| reserved.clone())
+                .map_err(|_| Failure::Reason(Reason::Failed, None))
+        });
+        assert!(result.is_err());
+        drop(held);
+        assert_eq!(std::fs::read(&file).unwrap(), b"downloaded");
+        assert!(work.join(crate::tools::KEEP_WORK).is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn the_view_arrives_in_camel_case() {

@@ -43,6 +43,18 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// «сайдкар не отвечает», а не «сайдкар не торопится».
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Срок первого ответа. До чтения stdin сайдкар открывает всё железо
+/// (`computer.Open()`): SMART каждого диска, шины, драйвер. На машине с
+/// десятком накопителей или спящим USB-диском это дольше обычного такта, и с
+/// общим сроком сайдкар убивался бы на середине открытия — каждый раз заново.
+const FIRST_ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Сколько ждём, пока убитый сайдкар уйдёт. Застрявший в драйвере ядра он
+/// может не уйти вовсе. Одна попытка ограничена сроком, но Child остаётся
+/// у опроса до подтверждённого выхода: установщику нельзя подтверждать
+/// освобождение драйвера только на основании отправленного kill.
+const EXIT_WAIT: Duration = Duration::from_secs(2);
+
 /// Живой сайдкар со своими потоками ввода-вывода.
 pub struct Sensors {
     child: Child,
@@ -50,6 +62,14 @@ pub struct Sensors {
     /// Ответы от потока-читателя. Оборванный канал означает, что сайдкар
     /// закрыл поток вывода, то есть кончился.
     lines: Receiver<String>,
+    /// Ответа ещё не было: срок у него свой ([`FIRST_ANSWER_TIMEOUT`]).
+    first: bool,
+    stopped: bool,
+    /// Объект задания с `KILL_ON_JOB_CLOSE`: сайдкар уходит вместе с
+    /// приложением, даже зависший — тогда закрытый stdin он не прочтёт, а поток
+    /// опроса на выходе не доживает до `Drop`.
+    #[cfg(windows)]
+    _job: Option<crate::child::job::Job>,
 }
 
 impl Sensors {
@@ -72,19 +92,27 @@ impl Sensors {
             .spawn()
             .map_err(|error| tr!("source.sidecarNoStart", error = error))?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| tr!("source.sidecarNoPipe", pipe = "stdin"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| tr!("source.sidecarNoPipe", pipe = "stdout"))?;
+        // Обе трубы запрошены через Stdio::piped: после удачного spawn они
+        // обязаны быть. Нарушение этого условия — ошибка самого запуска;
+        // опрос тогда не подтвердит остановку неучтённого процесса.
+        let stdin = child.stdin.take().expect("сайдкар получил stdin");
+        let stdout = child.stdout.take().expect("сайдкар получил stdout");
+
+        // Своих потомков сайдкар не порождает, так что спящий запуск, как у
+        // программ конвертера, ему не нужен
+        #[cfg(windows)]
+        let job = crate::child::job::Job::adopt(&child)
+            .map_err(|error| eprintln!("сайдкар без объекта задания: {error}"))
+            .ok();
 
         Ok(Sensors {
             child,
             stdin,
             lines: read_lines(stdout),
+            first: true,
+            stopped: false,
+            #[cfg(windows)]
+            _job: job,
         })
     }
 
@@ -97,16 +125,32 @@ impl Sensors {
     /// Опоздавший ответ никого не путает именно поэтому: вместе с `Sensors`
     /// уходит и приёмник, так что второй раз его уже некому прочесть.
     pub fn poll(&mut self) -> Result<Flat, String> {
+        if crate::poller::holding() {
+            return Err(tr!("source.sidecarDown"));
+        }
         self.stdin
             .write_all(b"poll\n")
             .and_then(|()| self.stdin.flush())
             .map_err(|error| tr!("source.sidecarDeaf", error = error))?;
 
-        let line = answer(&self.lines, ANSWER_TIMEOUT)?;
+        let wait = if self.first { FIRST_ANSWER_TIMEOUT } else { ANSWER_TIMEOUT };
+        let line = answer(&self.lines, wait, crate::poller::holding)?;
+        self.first = false;
 
         let root: Node = serde_json::from_str(&line)
             .map_err(|error| tr!("source.sidecarGarbled", error = error))?;
         Ok(flatten(&root))
+    }
+
+    /// Только подтверждённый выход освобождает драйвер для установщика.
+    /// Не ушёл — опрос сохраняет Child и повторяет остановку, а не выдаёт
+    /// отсутствие владельца процесса за отсутствие самого процесса.
+    pub fn stop(&mut self) -> bool {
+        if !self.stopped {
+            let _ = self.child.kill();
+            self.stopped = wait_for_exit(|| self.child.try_wait().map(|status| status.is_some()), EXIT_WAIT);
+        }
+        self.stopped
     }
 }
 
@@ -144,21 +188,51 @@ fn read_lines(stdout: ChildStdout) -> Receiver<String> {
 ///
 /// Отдельной функцией ради теста: обе беды — молчание и оборванный канал —
 /// проверяются на голом канале, без живого процесса.
-fn answer(lines: &Receiver<String>, wait: Duration) -> Result<String, String> {
-    lines.recv_timeout(wait).map_err(|error| match error {
-        RecvTimeoutError::Timeout => {
-            tr!("source.sidecarSilent", seconds = wait.as_secs())
+fn answer(lines: &Receiver<String>, wait: Duration, mut held: impl FnMut() -> bool) -> Result<String, String> {
+    let until = std::time::Instant::now() + wait;
+    loop {
+        // Первый ответ ждём дольше обычного, но установщик не должен ждать
+        // окончания computer.Open: удержание слышно не реже раза в 100 мс.
+        if held() {
+            return Err(tr!("source.sidecarDown"));
         }
-        RecvTimeoutError::Disconnected => tr!("source.sidecarClosed"),
-    })
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        match lines.recv_timeout(left.min(Duration::from_millis(100))) {
+            Ok(line) => return Ok(line),
+            Err(RecvTimeoutError::Disconnected) => return Err(tr!("source.sidecarClosed")),
+            Err(RecvTimeoutError::Timeout) if std::time::Instant::now() >= until => {
+                return Err(tr!("source.sidecarSilent", seconds = wait.as_secs()));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn wait_for_exit(mut exited: impl FnMut() -> std::io::Result<bool>, wait: Duration) -> bool {
+    let until = std::time::Instant::now() + wait;
+    loop {
+        match exited() {
+            Ok(true) => return true,
+            Err(error) => {
+                eprintln!("выход сайдкара не подтвердился: {error}");
+                return false;
+            }
+            Ok(false) => {}
+        }
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            eprintln!("сайдкар не ушёл за {} с после kill", wait.as_secs());
+            return false;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(50)));
+    }
 }
 
 impl Drop for Sensors {
     fn drop(&mut self) {
-        // Закрытый stdin сайдкар понимает как «приложение ушло» и выходит сам,
-        // но ждать его тут некогда — добиваем
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // На обычных путях опрос уже дождался stop. При панике остаётся
+        // последняя попытка; разрешения установщику сам Drop не выдаёт.
+        self.stop();
     }
 }
 
@@ -185,7 +259,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         sender.send("{}\n".to_owned()).expect("ответ уходит");
 
-        assert_eq!(answer(&receiver, SOON).as_deref(), Ok("{}\n"));
+        assert_eq!(answer(&receiver, SOON, || false).as_deref(), Ok("{}\n"));
     }
 
     /// Молчащий сайдкар — это отказ, а не повод ждать вечно. Ровно из-за
@@ -196,7 +270,7 @@ mod tests {
         // Отправитель жив — канал не оборван, ответа просто нет
         let (_sender, receiver) = mpsc::channel::<String>();
 
-        let refusal = answer(&receiver, SOON).expect_err("молчание — отказ");
+        let refusal = answer(&receiver, SOON, || false).expect_err("молчание — отказ");
         assert!(refusal.contains("не ответил"), "{refusal}");
     }
 
@@ -207,7 +281,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel::<String>();
         drop(sender);
 
-        let refusal = answer(&receiver, SOON).expect_err("оборванный канал — отказ");
+        let refusal = answer(&receiver, SOON, || false).expect_err("оборванный канал — отказ");
         assert!(refusal.contains("закрылся"), "{refusal}");
     }
 
@@ -236,5 +310,26 @@ mod tests {
             second.len(),
             "между снимками изменился состав датчиков"
         );
+    }
+
+    #[test]
+    fn the_first_answer_can_be_interrupted_by_hold() {
+        let (_sender, receiver) = mpsc::channel::<String>();
+        let asked = std::time::Instant::now();
+        let mut checks = 0;
+        let outcome = answer(&receiver, FIRST_ANSWER_TIMEOUT, || {
+            checks += 1;
+            checks > 1
+        });
+        assert!(outcome.is_err());
+        assert!(checks > 1, "удержание проверяется во время ожидания");
+        assert!(asked.elapsed() < Duration::from_secs(2), "не ждём первого ответа целиком");
+    }
+
+    #[test]
+    fn a_lost_exit_status_does_not_confirm_a_stopped_process() {
+        assert!(!wait_for_exit(|| Err(std::io::ErrorKind::PermissionDenied.into()), Duration::ZERO));
+        assert!(!wait_for_exit(|| Ok(false), Duration::ZERO));
+        assert!(wait_for_exit(|| Ok(true), Duration::ZERO));
     }
 }

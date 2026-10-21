@@ -19,7 +19,8 @@
 //! его сборке, а дальше он живёт во фронте.
 
 use std::fs;
-use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,36 @@ use tauri::{AppHandle, Manager};
 
 /// Имя файла в каталоге настроек. Рядом с `settings.json` и `notes.json`.
 const TODO_FILE: &str = "todo.json";
+
+/// Сеанс чтения различает пересозданные окна, а ревизия приходит из окна:
+/// порядок снимков не зависит от планирования IPC и рабочих потоков.
+#[derive(Default)]
+struct Saves {
+    issued: AtomicU64,
+    written: Mutex<(u64, u64)>,
+}
+
+impl Saves {
+    fn issue(&self) -> u64 {
+        self.issued.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn save(&self, revision: (u64, u64), write: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        let mut written = self.written.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if revision <= *written {
+            return Ok(());
+        }
+        write()?;
+        // Отказ не делает снимок сохранённым: его разрешено повторить.
+        *written = revision;
+        Ok(())
+    }
+}
+
+static SAVES: Saves = Saves {
+    issued: AtomicU64::new(0),
+    written: Mutex::new((0, 0)),
+};
 
 /// Отдельная задача с идентификатором, текстом и статусом выполнения.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +87,14 @@ enum StoredBoard {
     Legacy(Vec<Task>),
 }
 
+/// Номер сеанса отдаём окну отдельно от книги: на диск он не попадает.
+#[derive(Serialize)]
+pub struct Snapshot {
+    #[serde(flatten)]
+    board: Board,
+    session: u64,
+}
+
 fn todo_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -73,9 +112,11 @@ fn todo_path(app: &AppHandle) -> Result<PathBuf, String> {
 ///
 /// Указатель `active` приводится к нулю, если указывает за пределы списков.
 fn read(path: &Path) -> Result<Board, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+    // Общей дорогой, как у заметок: повтор занятого файла и снятая метка
+    // порядка байт
+    let text = match crate::disk::read_existing(path) {
+        Ok(Some(text)) => text,
+        Ok(None) => {
             return Ok(Board {
                 lists: Vec::new(),
                 active: 0,
@@ -122,9 +163,19 @@ fn write(path: &Path, board: &Board) -> Result<(), String> {
 /// Отдаёт доску списков дел карточке.
 ///
 /// Отказ уходит и в лог, и отказом команды: карточка по нему запирает запись.
+///
+/// Async и в пул по той же причине, что у заметок.
 #[tauri::command]
-pub fn todo_lists(app: AppHandle) -> Result<Board, String> {
-    let outcome = todo_path(&app).and_then(|path| read(&path));
+pub async fn todo_lists(app: AppHandle) -> Result<Snapshot, String> {
+    let session = SAVES.issue();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        // Новое окно не читает промежуточный снимок во время замены файла.
+        let _written = SAVES.written.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        todo_path(&app).and_then(|path| read(&path)).map(|board| Snapshot { board, session })
+    })
+        .await
+        .map_err(|error| format!("чтение списка дел сорвалось: {error}"))
+        .and_then(|outcome| outcome);
 
     if let Err(error) = &outcome {
         eprintln!("список дел не прочитался: {error}");
@@ -138,8 +189,13 @@ pub fn todo_lists(app: AppHandle) -> Result<Board, String> {
 /// Отказ уходит в две стороны: в лог с русской причиной для разработчика и
 /// карточке отказом команды для показа «Not saved».
 #[tauri::command]
-pub fn set_todo_lists(app: AppHandle, board: Board) -> Result<(), String> {
-    let outcome = todo_path(&app).and_then(|path| write(&path, &board));
+pub async fn set_todo_lists(app: AppHandle, board: Board, session: u64, revision: u64) -> Result<(), String> {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        SAVES.save((session, revision), || todo_path(&app).and_then(|path| write(&path, &board)))
+    })
+        .await
+        .map_err(|error| format!("запись списка дел сорвалась: {error}"))
+        .and_then(|outcome| outcome);
 
     if let Err(error) = &outcome {
         eprintln!("список дел не сохранился: {error}");
@@ -157,6 +213,56 @@ mod tests {
         let dir = std::env::temp_dir().join("windgets-tests");
         fs::create_dir_all(&dir).expect("каталог под тесты создаётся");
         dir.join(name)
+    }
+
+    /// Пул исполнил новый запрос первым: запоздалый уже не пишет старый файл.
+    #[test]
+    fn an_older_worker_cannot_overwrite_a_newer_save() {
+        let path = scratch("todo-revision-order.json");
+        let saves = Saves::default();
+        let session = saves.issue();
+        let old = (session, 1);
+        let new = (session, 2);
+        let expected = Board { lists: vec![vec![Task { id: 1, text: "Свежее дело".to_owned(), done: false }]], active: 0 };
+        saves.save(new, || write(&path, &expected)).expect("новый снимок записан");
+        saves.save(old, || panic!("старый снимок не должен дойти до записи"))
+            .expect("устаревший запрос пропущен");
+        assert_eq!(read(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    /// Пересозданное окно начинает ревизии с единицы, но оно новее прежнего.
+    #[test]
+    fn a_new_window_session_outweighs_old_revision_numbers() {
+        let saves = Saves::default();
+        let old = saves.issue();
+        let new = saves.issue();
+        saves.save((old, 99), || Ok(())).unwrap();
+        let mut new_written = false;
+        saves.save((new, 1), || { new_written = true; Ok(()) }).unwrap();
+        assert!(new_written);
+        saves.save((old, 100), || panic!("старое окно не перетирает новое")).unwrap();
+    }
+
+    /// Номер сеанса есть только в ответе, а формат файла остался прежним.
+    #[test]
+    fn session_is_returned_beside_the_book_but_not_stored_in_it() {
+        let board = Board { lists: vec![Vec::new()], active: 0 };
+        let response = serde_json::to_value(Snapshot { board: board.clone(), session: 7 }).unwrap();
+        assert_eq!(response["session"], 7);
+        assert!(response["lists"].is_array());
+        assert!(serde_json::to_value(board).unwrap().get("session").is_none());
+    }
+
+    /// Неудачная запись не занимает ревизию и не запирает повтор.
+    #[test]
+    fn a_failed_save_can_be_retried() {
+        let saves = Saves::default();
+        let revision = (saves.issue(), 1);
+        assert!(saves.save(revision, || Err("диск занят".to_owned())).is_err());
+        let mut retried = false;
+        saves.save(revision, || { retried = true; Ok(()) }).unwrap();
+        assert!(retried);
     }
 
     /// Пропажа файла даёт пустую доску без ошибки.

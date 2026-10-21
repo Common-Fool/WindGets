@@ -44,7 +44,10 @@ pub fn pick_asset(release: &Release, rule: AssetRule) -> Result<&Asset, Failure>
 /// `sha256:<64 шестнадцатеричных знака>` в байты.
 pub fn parse_digest(digest: Option<&str>) -> Result<[u8; 32], Failure> {
     let hex = digest
-        .and_then(|digest| digest.strip_prefix("sha256:"))
+        .and_then(|digest| {
+            let (prefix, hex) = digest.split_once(':')?;
+            prefix.eq_ignore_ascii_case("sha256").then_some(hex)
+        })
         .ok_or(Failure::NoChecksum)?;
     if hex.len() != 64 {
         return Err(Failure::NoChecksum);
@@ -86,17 +89,13 @@ pub async fn latest(client: &reqwest::Client, repo: &str) -> Result<Release, Fai
     let status = response.status();
     if !status.is_success() {
         // Безымянных запросов GitHub пускает шестьдесят в час; кончились —
-        // 403 или 429 с нулём в остатке
+        // 403 с нулём в остатке; 429 бывает и у вторичного лимита
         let exhausted = response
             .headers()
             .get("x-ratelimit-remaining")
             .is_some_and(|left| left.as_bytes() == b"0");
         eprintln!("[компоненты] GitHub ответил {status} на {repo}");
-        return Err(match status.as_u16() {
-            403 | 429 if exhausted => Failure::RateLimited,
-            404 => Failure::NoBuild,
-            _ => Failure::Network,
-        });
+        return Err(status_failure(status.as_u16(), exhausted));
     }
 
     response.json::<Release>().await.map_err(|error| {
@@ -105,9 +104,30 @@ pub async fn latest(client: &reqwest::Client, repo: &str) -> Result<Release, Fai
     })
 }
 
+fn status_failure(status: u16, exhausted: bool) -> Failure {
+    match status {
+        429 => Failure::RateLimited,
+        403 if exhausted => Failure::RateLimited,
+        404 => Failure::NoBuild,
+        _ => Failure::Network,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limiting_does_not_require_an_exhausted_primary_quota() {
+        for exhausted in [false, true] {
+            assert_eq!(status_failure(429, exhausted), Failure::RateLimited);
+        }
+        assert_eq!(status_failure(403, true), Failure::RateLimited);
+        assert_eq!(status_failure(403, false), Failure::Network);
+        assert_eq!(status_failure(404, false), Failure::NoBuild);
+        assert_eq!(status_failure(500, false), Failure::Network);
+    }
+
 
     fn release(names: &[&str]) -> Release {
         Release {
@@ -150,7 +170,7 @@ mod tests {
         let bytes = parse_digest(Some(lower)).unwrap();
         assert_eq!(bytes[0], 0x2a);
         assert_eq!(bytes[31], 0x77);
-        assert_eq!(parse_digest(Some(&lower.to_uppercase().replace("SHA256", "sha256"))).unwrap(), bytes);
+        assert_eq!(parse_digest(Some(&lower.to_uppercase())).unwrap(), bytes);
     }
 
     #[test]

@@ -350,7 +350,10 @@ pub fn fraction(done: f64, segment: f64) -> f64 {
 /// удвоенные кадры только раздули бы файл.
 pub fn gif_fps(chosen: u32, source: Option<f64>) -> String {
     match source {
-        Some(source) if source < f64::from(chosen) => format!("{source:.2}"),
+        // Две сотых точности не должны превратить редкие кадры в fps=0.00.
+        Some(source) if source.is_finite() && source > 0.0 && source < f64::from(chosen) => {
+            format!("{:.2}", source.max(0.01))
+        }
         _ => chosen.to_string(),
     }
 }
@@ -385,6 +388,15 @@ fn long_side(limit: u32, keep: &str) -> String {
 ///
 /// Вход и выход — отдельными словами, а не склеенной строкой: имена файлов с
 /// пробелами и кавычками тут просто данные.
+/// Видеопоток, который выбрала проба: по номеру, а не «первое видео» (`0:v:0`)
+/// — обложка тоже видео и стоит чаще всего первой. Номера нет — прежний путь.
+fn video_stream(probe: &Probe) -> String {
+    match probe.video.as_ref().and_then(|video| video.stream) {
+        Some(stream) => format!("0:{stream}"),
+        None => "0:v:0".to_owned(),
+    }
+}
+
 pub fn ffmpeg_args(
     target: Target,
     options: &Options,
@@ -434,7 +446,7 @@ pub fn ffmpeg_args(
                     "scale=w='if(gte(iw,ih),-2,trunc(min(iw,{size})/2)*2)':h='if(gte(iw,ih),trunc(min(ih,{size})/2)*2,-2)'"
                 ),
             };
-            push(&["-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn"]);
+            push(&["-map", &video_stream(probe), "-map", "0:a:0?", "-sn", "-dn"]);
             push(&["-vf", &format!("{scale},format=yuv420p")]);
             push(&encoder.args(options.quality));
             push(&[
@@ -450,7 +462,8 @@ pub fn ffmpeg_args(
                 size => format!("{},", long_side(size, "-1")),
             };
             let graph = format!(
-                "[0:v:0]fps={fps},{scale}split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+                "[{}]fps={fps},{scale}split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+                video_stream(probe)
             );
             push(&["-an", "-sn", "-dn", "-filter_complex", &graph, "-loop", "0", "-f", "gif"]);
         }
@@ -512,6 +525,21 @@ pub fn ffmpeg_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_very_slow_gif_keeps_a_positive_filter_rate() {
+        for source in [0.0001, 0.0049, 0.005, 0.01] {
+            assert_eq!(gif_fps(15, Some(source)), "0.01");
+        }
+        for source in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(gif_fps(15, Some(source)), "15");
+        }
+        let probe = video_probe(400, 300, "yuv420p", Some(0.001));
+        let args = build(Target::Gif, &Options::default(), &probe, None);
+        let graph = &args[position(&args, "-filter_complex").unwrap() + 1];
+        assert!(graph.starts_with("[0:v:0]fps=0.01,"), "{graph}");
+    }
+
     use crate::converter::probe::{Audio, Video};
 
     fn video_probe(width: u32, height: u32, pix_fmt: &str, fps: Option<f64>) -> Probe {
@@ -524,6 +552,7 @@ mod tests {
                 width,
                 height,
                 fps,
+                stream: None,
             }),
             audio: Some(Audio { sample_rate: Some(44_100), layout: Some("stereo".to_owned()) }),
         }

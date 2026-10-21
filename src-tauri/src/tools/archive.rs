@@ -36,6 +36,22 @@ pub fn member_to_extract(listing: &[String], member: &str) -> Option<String> {
     }
 }
 
+/// Путь из архива обязан оставаться относительным и внутри папки распаковки.
+fn member_path(into: &Path, entry: &str) -> Result<PathBuf, Failure> {
+    // Проверяем оба разделителя независимо от ОС: Windows понимает оба,
+    // а буква диска и альтернативный поток с двоеточием здесь не нужны.
+    if entry.starts_with(['/', '\\'])
+        || entry.split(['/', '\\']).any(|part| part == ".." || part.contains(':'))
+    {
+        return Err(Failure::Unpack);
+    }
+    let unpacked = into.join(entry);
+    if unpacked == into || !unpacked.starts_with(into) {
+        return Err(Failure::Unpack);
+    }
+    Ok(unpacked)
+}
+
 /// Достаёт из архива один файл в `into` и отдаёт путь к нему.
 pub fn unpack(archive: &Path, member: &str, into: &Path) -> Result<PathBuf, Failure> {
     let listing = tar(&["-tf".as_ref(), archive.as_os_str()])?;
@@ -44,6 +60,10 @@ pub fn unpack(archive: &Path, member: &str, into: &Path) -> Result<PathBuf, Fail
         Failure::NoBuild
     })?;
 
+    let unpacked = member_path(into, &entry).map_err(|error| {
+        eprintln!("[компоненты] небезопасный путь в архиве: {entry}");
+        error
+    })?;
     std::fs::create_dir_all(into).map_err(|error| {
         eprintln!("[компоненты] папка распаковки не создалась: {error}");
         Failure::Disk
@@ -53,11 +73,14 @@ pub fn unpack(archive: &Path, member: &str, into: &Path) -> Result<PathBuf, Fail
         archive.as_os_str(),
         "-C".as_ref(),
         into.as_os_str(),
+        "--".as_ref(),
         entry.as_ref(),
     ])?;
 
-    let unpacked = into.join(&entry);
-    if unpacked.is_file() {
+    // Ссылка внутри распакованного дерева тоже не должна уводить за его корень.
+    let root = std::fs::canonicalize(into).map_err(|_| Failure::Unpack)?;
+    let resolved = std::fs::canonicalize(&unpacked).map_err(|_| Failure::Unpack)?;
+    if resolved.starts_with(&root) && unpacked.is_file() {
         Ok(unpacked)
     } else {
         eprintln!("[компоненты] tar промолчал, но файла нет: {}", unpacked.display());
@@ -104,6 +127,23 @@ fn tar(args: &[&std::ffi::OsStr]) -> Result<Vec<String>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_paths_cannot_escape_the_destination() {
+        let into = Path::new("unpacked");
+        for entry in [
+            "../bin/ffmpeg.exe", "build/../bin/ffmpeg.exe", "build/../../bin/ffmpeg.exe",
+            "build\\..\\bin\\ffmpeg.exe", "/build/bin/ffmpeg.exe", "\\build\\bin\\ffmpeg.exe",
+            "C:\\build\\bin\\ffmpeg.exe", "C:/build/bin/ffmpeg.exe", "C:bin/ffmpeg.exe",
+            "\\\\server\\share\\bin\\ffmpeg.exe", "build/bin/ffmpeg.exe:stream", "",
+        ] {
+            assert_eq!(member_path(into, entry), Err(Failure::Unpack), "{entry}");
+        }
+        for entry in ["build/bin/ffmpeg.exe", "Build\\BIN\\FFmpeg.exe", "./build/bin/ffmpeg.exe"] {
+            assert_eq!(member_path(into, entry), Ok(into.join(entry)), "{entry}");
+        }
+    }
+
 
     fn listing() -> Vec<String> {
         [

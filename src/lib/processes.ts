@@ -1,6 +1,4 @@
-import { useSyncExternalStore } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { liveSnapshot } from "./live";
 
 export type Group = {
   /** Имя без расширения: «msedge», а не «msedge.exe». */
@@ -25,47 +23,8 @@ export type ProcessesState = {
 
 const EMPTY: ProcessesState = { byCpu: [], byMemory: [] };
 
-type Listener = (state: ProcessesState) => void;
-
 /*
- * Подписка одна на окно, как у телеметрии, пинга, звука и буфера обмена.
+ * Подписка одна на окно, как у телеметрии и пинга, и снимается, когда
+ * слушателей не осталось (`live.ts`).
  */
-let current: ProcessesState = EMPTY;
-const listeners = new Set<Listener>();
-let started = false;
-
-function publish(next: ProcessesState) {
-  current = next;
-  for (const listener of listeners) listener(next);
-}
-
-function start() {
-  if (started) return;
-  started = true;
-
-  // Спрашиваем сразу: событие придёт только со следующим тиком, то есть через
-  // две секунды, а окно уже открыто
-  invoke<ProcessesState>("processes_state")
-    .then((initial) => {
-      if (current === EMPTY) publish(initial);
-    })
-    .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
-    });
-
-  listen<ProcessesState>("processes", (event) => publish(event.payload)).catch(() => {
-    // Вне Tauri (обычный браузер) процессов просто нет
-  });
-}
-
-function subscribe(listener: Listener): () => void {
-  start();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function useProcesses(): ProcessesState {
-  return useSyncExternalStore(subscribe, () => current);
-}
+export const useProcesses = liveSnapshot<ProcessesState>("processes_state", "processes", EMPTY);

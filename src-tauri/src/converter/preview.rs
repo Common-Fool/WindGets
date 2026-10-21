@@ -127,7 +127,7 @@ pub fn clip_args(input: &Path, from: f64, length: f64, output: &Path) -> Vec<OsS
 /// Что слушать: от левой ручки вперёд, но не дальше правой и не дольше
 /// `LISTEN_MAX`; от правой — последние секунды перед ней.
 pub fn listen_span(from: f64, until: f64, duration: f64, tail: bool) -> Option<(f64, f64)> {
-    if !(from.is_finite() && until.is_finite() && duration.is_finite()) {
+    if !(from.is_finite() && until.is_finite() && duration.is_finite()) || duration <= 0.0 {
         return None;
     }
     let from = from.clamp(0.0, duration);
@@ -157,6 +157,10 @@ pub mod sound {
     static PLAYING: Mutex<Option<Vec<u8>>> = Mutex::new(None);
 
     pub fn play(wav: Vec<u8>) -> Result<(), String> {
+        // Пустой Vec даёт ненулевой указатель без данных: PlaySound читать нечего.
+        if wav.is_empty() {
+            return Err("пустой буфер звука".to_owned());
+        }
         let mut slot = PLAYING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Сперва остановить прежний звук — только потом отпускать его буфер
         unsafe {
@@ -194,6 +198,21 @@ pub mod sound {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nonpositive_duration_cannot_be_listened_to() {
+        for duration in [-1.0, 0.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+            for tail in [false, true] {
+                assert_eq!(listen_span(0.0, 1.0, duration, tail), None);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_sound_is_refused() {
+        assert!(sound::play(Vec::new()).is_err());
+    }
+
 
     fn strings(args: &[OsString]) -> Vec<String> {
         args.iter().map(|arg| arg.to_string_lossy().into_owned()).collect()

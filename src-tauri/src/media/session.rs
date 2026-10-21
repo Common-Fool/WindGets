@@ -8,7 +8,7 @@
 //! потому, что поток свой: в потоке команды такое ожидание держало бы приём
 //! IPC у WebView2.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -39,6 +39,7 @@ pub struct Sessions {
     /// Имена источников по их ключам. Спрашивать систему на каждом такте
     /// незачем: имя приложения за время работы не меняется.
     names: HashMap<String, String>,
+    failures: ReadFailures,
 }
 
 impl Sessions {
@@ -59,6 +60,7 @@ impl Sessions {
         Ok(Self {
             manager,
             names: HashMap::new(),
+            failures: ReadFailures::default(),
         })
     }
 
@@ -67,8 +69,14 @@ impl Sessions {
     /// Сессия, которую не удалось прочитать, пропускается молча: плеер мог
     /// закрыться между перечислением и чтением, и это не беда виджета.
     pub fn read(&mut self, now: i64) -> Vec<Track> {
-        let Ok(all) = self.manager.GetSessions() else {
-            return Vec::new();
+        let all = match self.manager.GetSessions() {
+            Ok(all) => all,
+            Err(error) => {
+                // Молча — это «ничего не играет» до перезапуска без единой
+                // строки в журнале
+                eprintln!("[медиа] сессии не перечислились: {error}");
+                return Vec::new();
+            }
         };
         let count = all.Size().unwrap_or(0);
 
@@ -77,18 +85,31 @@ impl Sessions {
             let Ok(session) = all.GetAt(index) else {
                 continue;
             };
-            match self.track(&session, now) {
+            let source = match session.SourceAppUserModelId() {
+                Ok(source) => source.to_string(),
+                Err(error) => {
+                    self.report_failure("", &error);
+                    continue;
+                }
+            };
+            match self.track(&session, &source, now) {
                 Ok(track) => tracks.push(track),
-                Err(error) => eprintln!("[медиа] сессия не прочиталась: {error}"),
+                Err(error) => self.report_failure(&source, &error),
             }
         }
 
         keep(&tracks).into_iter().map(|at| tracks[at].clone()).collect()
     }
 
-    fn track(&mut self, session: &Session, now: i64) -> windows::core::Result<Track> {
-        let source = session.SourceAppUserModelId()?.to_string();
-        let title = self.name(&source);
+    fn report_failure(&mut self, source: &str, error: &windows::core::Error) {
+        let detail = error.to_string();
+        if self.failures.first(source, &detail) {
+            eprintln!("[медиа] сессия «{source}» не прочиталась: {detail}");
+        }
+    }
+
+    fn track(&mut self, session: &Session, source: &str, now: i64) -> windows::core::Result<Track> {
+        let title = self.name(source);
 
         let properties = session.TryGetMediaPropertiesAsync()?.get()?;
         let song = properties.Title()?.to_string();
@@ -104,19 +125,25 @@ impl Sessions {
         let playing = info.PlaybackStatus()? == Status::Playing;
         let controls = info.Controls()?;
 
-        let timeline = session.GetTimelineProperties()?;
-        let start = timeline.StartTime()?.Duration;
-        let duration = seconds(timeline.EndTime()?.Duration - start).max(0.0);
-        let position = seconds(timeline.Position()?.Duration - start).max(0.0);
-        let measured_at = unix_millis(timeline.LastUpdatedTime()?.UniversalTime, now);
+        // Радио и поток могут не иметь полосы вовсе. Отказ её чтения не
+        // должен скрывать сам трек и доступные ему кнопки.
+        let timeline = (|| -> windows::core::Result<_> {
+            let timeline = session.GetTimelineProperties()?;
+            Ok((timeline.StartTime()?.Duration, timeline.EndTime()?.Duration,
+                timeline.Position()?.Duration, timeline.LastUpdatedTime()?.UniversalTime))
+        })();
+        let (duration, position, measured_at) = timeline_values(timeline.ok(), now);
 
         Ok(Track {
-            source,
+            source: source.to_owned(),
             title,
             song,
             artist,
             playing,
-            can_play: controls.IsPlayEnabled()? || controls.IsPauseEnabled()?,
+            // Одна кнопка на два действия, и разрешение у неё — того, что она
+            // сейчас сделает: у играющей — паузы, у стоящей — пуска. «Или»
+            // оставляло живой паузу, которую источник запретил
+            can_play: if playing { controls.IsPauseEnabled()? } else { controls.IsPlayEnabled()? },
             can_next: controls.IsNextEnabled()?,
             can_previous: controls.IsPreviousEnabled()?,
             can_seek: controls.IsPlaybackPositionEnabled()? && duration > 0.0,
@@ -289,4 +316,58 @@ fn from_apps_folder(source: &str) -> Option<String> {
 
     // Имя, совпавшее с ключом, — это тот же хеш, только из другого места
     name.filter(|name| !name.trim().is_empty() && name != source)
+}
+
+// Одна строка на источник и причину: неисправная сессия иначе засоряет
+// журнал каждую секунду, пряча остальные события приложения.
+#[derive(Default)]
+struct ReadFailures(HashSet<(String, String)>);
+
+impl ReadFailures {
+    fn first(&mut self, source: &str, error: &str) -> bool {
+        self.0.insert((source.to_owned(), error.to_owned()))
+    }
+}
+
+fn timeline_values(timeline: Option<(i64, i64, i64, i64)>, now: i64) -> (f64, f64, i64) {
+    let Some((start, end, position, updated)) = timeline else {
+        return (0.0, 0.0, now);
+    };
+    // У некоторых браузеров приходят крайние отрицательные значения:
+    // обычное вычитание переполнилось бы ещё до отсечения нуля.
+    (seconds(end.saturating_sub(start)).max(0.0),
+        seconds(position.saturating_sub(start)).max(0.0), unix_millis(updated, now))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_source_and_error_is_reported_once() {
+        let mut failures = ReadFailures::default();
+        assert!(failures.first("player-a", "не отвечает"));
+        assert!(!failures.first("player-a", "не отвечает"));
+        assert!(failures.first("player-b", "не отвечает"));
+        assert!(failures.first("player-a", "закрыт"));
+        assert!(!failures.first("player-a", "не отвечает"));
+    }
+
+    #[test]
+    fn missing_timeline_keeps_an_unknown_position_at_now() {
+        assert_eq!(timeline_values(None, 1234), (0.0, 0.0, 1234));
+    }
+
+    #[test]
+    fn timeline_subtraction_handles_extreme_signed_ticks() {
+        let (duration, position, measured) = timeline_values(
+            Some((i64::MAX, i64::MIN, i64::MIN, 0)), 1234);
+        assert_eq!((duration, position, measured), (0.0, 0.0, 1234));
+        let (duration, position, _) = timeline_values(
+            Some((i64::MIN, i64::MAX, i64::MAX, 0)), 1234);
+        assert_eq!(duration, seconds(i64::MAX));
+        assert_eq!(position, duration);
+        assert_eq!(timeline_values(Some((10_000_000, 40_000_000, 20_000_000, 0)), 1234),
+            (3.0, 1.0, 1234));
+    }
 }

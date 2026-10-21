@@ -27,7 +27,10 @@ type Props = {
 };
 
 export function SetupPanel({ clientId, busy, onConnect, reference = false }: Props) {
-  const [value, setValue] = useState(clientId);
+  // Пока поле не трогали, оно идёт за сохранённым Client ID: первый снимок
+  // окна — «нет Client ID», а настоящий приезжает позже, в тот же экземпляр
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? clientId;
   const known = clientId !== "";
   const t = useText();
 
@@ -46,7 +49,7 @@ export function SetupPanel({ clientId, busy, onConnect, reference = false }: Pro
         spellCheck={false}
         autoComplete="off"
         aria-label={reference ? "Client ID" : undefined}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => setDraft(event.target.value)}
       />
 
       <div className="setup__row">

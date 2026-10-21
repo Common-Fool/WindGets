@@ -24,6 +24,7 @@ import "./ToolsGate.css";
  */
 export function ToolsGate({ module }: { module: ModuleId }) {
   const tools = useTools();
+  const needs = tools.modules.find((entry) => entry.id === module)?.needs ?? [];
   const t = useText();
   const missing = missingFor(tools, module);
 
@@ -73,7 +74,7 @@ export function ToolsGate({ module }: { module: ModuleId }) {
       <Button onClick={install}>
         {t("tools.gate.download")}
       </Button>
-      {tools.failure !== null && (
+      {tools.failure !== null && needs.includes(tools.failure.component) && (
         <p className="gate__error">
           {nameOf(tools, tools.failure.component)}: {failureText(t, tools.failure.code)}
         </p>

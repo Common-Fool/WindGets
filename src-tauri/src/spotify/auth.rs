@@ -26,6 +26,10 @@ const SCOPES: &str = concat!(
 /// дорога до Spotify — запас нужен, иначе поймаем 401 на ровном месте.
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
+// Обычный токен живёт час. Чужое огромное число не должно переполнить
+// Instant и унести задачу входа или обновления паникой.
+const MAX_EXPIRY: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Живой токен доступа. Наружу не отдаётся и на диск не пишется: срок жизни
 /// у него час, восстановить его всегда можно из refresh token.
 #[derive(Debug, Clone)]
@@ -124,6 +128,18 @@ struct TokenResponse {
     refresh_token: Option<String>,
 }
 
+impl TokenResponse {
+    fn into_tokens(self) -> Tokens {
+        Tokens {
+            access: AccessToken {
+                value: self.access_token,
+                expires_at: Instant::now() + Duration::from_secs(self.expires_in).min(MAX_EXPIRY),
+            },
+            refresh: self.refresh_token,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct TokenError {
     error: Option<String>,
@@ -146,20 +162,22 @@ async fn post_token(client: &reqwest::Client, form: &[(&str, &str)]) -> Result<T
         .await
         .map_err(|error| AuthError::Transport(tr!("spotify.error.unreadable", error = error)))?;
 
-    if !status.is_success() {
+    // ВАЖНО: **отказ гранта — только 400 и 401.** Так OAuth отвечает на
+    // отозванный токен и чужой Client ID; на `Rejected` опрос стирает refresh
+    // token. 5xx, 429 и прочее — беда сервера на минуту, а не отзыв: прежде
+    // любой не-2xx стирал действующий токен, и после сбоя accounts.spotify.com
+    // приходилось заново входить через браузер
+    if status == reqwest::StatusCode::BAD_REQUEST || status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(AuthError::Rejected(describe_failure(status, &body)));
+    }
+    if !status.is_success() {
+        return Err(AuthError::Transport(describe_failure(status, &body)));
     }
 
     let parsed: TokenResponse = serde_json::from_str(&body)
         .map_err(|error| AuthError::Transport(tr!("spotify.error.garbled", error = error)))?;
 
-    Ok(Tokens {
-        access: AccessToken {
-            value: parsed.access_token,
-            expires_at: Instant::now() + Duration::from_secs(parsed.expires_in),
-        },
-        refresh: parsed.refresh_token,
-    })
+    Ok(parsed.into_tokens())
 }
 
 /// Ошибки этого эндпоинта осмысленные, и их стоит показать целиком: чаще
@@ -179,6 +197,21 @@ fn describe_failure(status: reqwest::StatusCode, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_lifetime_is_bounded_without_extending_short_lifetimes() {
+        for lifetime in [0, 30, 3600, u64::MAX] {
+            let before = Instant::now();
+            let tokens = TokenResponse { access_token: "sample".into(),
+                expires_in: lifetime, refresh_token: Some("sample-refresh".into()) }.into_tokens();
+            let after = Instant::now();
+            let expected = Duration::from_secs(lifetime).min(MAX_EXPIRY);
+            assert!(tokens.access.expires_at >= before + expected);
+            assert!(tokens.access.expires_at <= after + expected);
+            assert_eq!(tokens.refresh.as_deref(), Some("sample-refresh"));
+            assert_eq!(tokens.access.is_fresh(), lifetime > EXPIRY_MARGIN.as_secs());
+        }
+    }
 
     fn params(url: &str) -> Vec<(String, String)> {
         Url::parse(url)

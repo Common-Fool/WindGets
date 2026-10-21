@@ -114,6 +114,7 @@ export function GeneralSection() {
           min={MIN_SCALE * 100}
           max={MAX_SCALE * 100}
           step={5}
+          ariaLabel={t("look.scale")}
           onChange={(next) => look.preview({ scale: next / 100 })}
           onCommit={look.commit}
         />
@@ -226,6 +227,7 @@ export function AppearanceSection() {
           min={MIN_VIVID * 100}
           max={MAX_VIVID * 100}
           step={5}
+          ariaLabel={t("look.vivid")}
           onChange={(next) => look.preview({ vivid: next / 100 })}
           onCommit={look.commit}
         />
@@ -243,6 +245,7 @@ export function AppearanceSection() {
           value={opacity}
           min={MIN_OPACITY * 100}
           max={100}
+          ariaLabel={t("look.opacity")}
           onChange={(next) => look.preview({ cardOpacity: next / 100 })}
           onCommit={look.commit}
         />
@@ -580,7 +583,10 @@ function ColorField({
   function finish() {
     focused.current = false;
     const color = normalizeHex(draftRef.current);
-    const next = color ?? pending.current ?? value.toUpperCase();
+    // Стёртый до негодного ввод возвращает отправленное, а не набранное
+    // мгновение назад и брошенное: иначе уход из поля воскрешал бы отменённый
+    // цвет и сохранял его
+    const next = color ?? lastSent.current ?? value.toUpperCase();
     draftRef.current = next;
     setDraft(next);
     if (next !== lastSent.current) scheduled.current = next;

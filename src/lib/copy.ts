@@ -1,3 +1,4 @@
+import type { ClipboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 /*
@@ -34,6 +35,19 @@ export async function copySecret(text: string): Promise<boolean> {
     // Обычная копия сняла бы защитные пометки: на отказе возвращаем отказ.
     return false;
   }
+}
+
+/**
+ * Ctrl+C по выделенному секрету. Обычная копия webview пометок «не для
+ * истории» не ставит, и выделенный мышью пароль уходил бы в историю Windows,
+ * облачный буфер и наш же виджет буфера — мимо защиты кнопки копирования.
+ * Здесь та же дорога, что у кнопки.
+ */
+export function copySelectionAsSecret(event: ClipboardEvent<HTMLElement>): void {
+  const text = window.getSelection()?.toString() ?? "";
+  if (text === "") return;
+  event.preventDefault();
+  void copySecret(text);
 }
 
 function copyThroughSelection(text: string): boolean {

@@ -24,7 +24,18 @@ export function SpotifySection() {
   const { view } = useSpotify();
   const t = useText();
   const known = view.status === "needsAuth" ? view.clientId : "";
-  const [value, setValue] = useState(known);
+  // Пока поле не трогали, оно идёт за сохранённым: первый вид окна — ещё не
+  // снимок Rust, и Client ID приезжает позже первой отрисовки
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? known;
+  // Отказ входа или отключения — строкой под кнопкой, как в карточке пульта:
+  // иначе страница молча возвращалась к «не выполнен вход» без причины
+  const [failure, setFailure] = useState<string | null>(null);
+
+  function run(action: () => Promise<void>) {
+    setFailure(null);
+    action().catch((reason: unknown) => setFailure(String(reason)));
+  }
 
   const busy = view.status === "authorizing";
   const connected = view.status === "active" || view.status === "idle";
@@ -56,7 +67,7 @@ export function SpotifySection() {
 
       {connected ? (
         <div className="field" data-hint={t("spotify.settings.disconnectNote")}>
-          <Button variant="outline" onClick={() => void disconnect()}>
+          <Button variant="outline" onClick={() => run(disconnect)}>
             {t("common.disconnect")}
           </Button>
         </div>
@@ -72,7 +83,7 @@ export function SpotifySection() {
             spellCheck={false}
             autoComplete="off"
             data-no-drag
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => setDraft(event.target.value)}
           />
 
           <div className="uris" data-hint={t("spotify.settings.urisNote")}>
@@ -87,12 +98,14 @@ export function SpotifySection() {
           <Button
             busy={busy}
             disabled={value.trim() === ""}
-            onClick={() => void connect(value.trim())}
+            onClick={() => run(() => connect(value.trim()))}
           >
             {t(busy ? "spotify.settings.waitingBrowser" : "spotify.settings.connect")}
           </Button>
         </div>
       )}
+
+      {failure !== null && <p className="note note--error" role="alert">{failure}</p>}
     </div>
   );
 }

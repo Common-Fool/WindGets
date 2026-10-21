@@ -26,8 +26,22 @@ export type PlaceSearch =
  */
 const SEARCH_DELAY_MS = 1000;
 
-/** Короче трёх букв не ищем: находки будут случайными. */
+/** Короче трёх букв сами не ищем: находки будут случайными. */
 const MIN_QUERY_LENGTH = 3;
+
+/**
+ * Но иероглифы — не буквы: у китайских городов имя из двух знаков («北京»,
+ * «上海») и есть всё название, и с порогом в три их было не найти никак. Тот
+ * же предел в два знака у Enter: им просят искать именно то, что набрано, —
+ * ровно столько пускает и Rust (`api::MIN_QUERY`).
+ */
+const MIN_QUERY_SHORT = 2;
+const IDEOGRAPHS = /[぀-ヿ㐀-鿿가-힯]/;
+
+function askable(text: string, enter: boolean): boolean {
+  const least = enter || IDEOGRAPHS.test(text) ? MIN_QUERY_SHORT : MIN_QUERY_LENGTH;
+  return [...text].length >= least;
+}
 
 export type PlaceSearchControls = {
   query: string;
@@ -51,22 +65,39 @@ export function usePlaceSearch(): PlaceSearchControls {
   const debounced = useDebounced(query, SEARCH_DELAY_MS);
 
   const ask = useCallback((wanted: string, force = false) => {
-    if (wanted.length < MIN_QUERY_LENGTH) return;
+    if (!askable(wanted, force)) return;
     if (!force && wanted === lastAskedRef.current) return;
 
     lastAskedRef.current = wanted;
     setSearch({ status: "busy" });
+
+    /*
+     * Ответ устарел. Если новее этого запроса не уходило, ждать больше нечего:
+     * поле вернули к тому же тексту или укоротили, задержка второй раз не
+     * сработает, и «Ищем…» висело бы навсегда. Спрашиваем то, что в поле
+     * сейчас, или гасим поиск.
+     */
+    const outdated = () => {
+      if (wanted !== lastAskedRef.current) return;
+      const current = queryRef.current.trim();
+      if (askable(current, false)) {
+        ask(current, true);
+      } else {
+        lastAskedRef.current = "";
+        setSearch({ status: "idle" });
+      }
+    };
 
     searchPlaces(wanted)
       .then((hits) => {
         // ВАЖНО: ответ на устаревший запрос выбрасываем. Запросы уходят
         // внахлёст, и ответ на «Гра» приходит после ответа на «Грац» —
         // показанный, он подменил бы находки на чужие
-        if (queryRef.current.trim() !== wanted) return;
+        if (queryRef.current.trim() !== wanted) return outdated();
         setSearch({ status: "done", hits });
       })
       .catch((error: unknown) => {
-        if (queryRef.current.trim() !== wanted) return;
+        if (queryRef.current.trim() !== wanted) return outdated();
         setSearch({ status: "failed", reason: String(error) });
       });
   }, []);
@@ -78,7 +109,7 @@ export function usePlaceSearch(): PlaceSearchControls {
       lastAskedRef.current = "";
       return;
     }
-    if (wanted.length < MIN_QUERY_LENGTH) return;
+    if (!askable(wanted, false)) return;
     ask(wanted);
   }, [debounced, ask]);
 

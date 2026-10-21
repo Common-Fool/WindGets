@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "../../components/Button";
 import { fileSize } from "../../lib/format";
 import { openOutputDir, pickOutputDir, resetOutputDir } from "../../lib/output";
@@ -34,6 +35,7 @@ export function OutputFolderField({
   custom: boolean;
 }) {
   const t = useText();
+  const [openFailed, setOpenFailed] = useState(false);
   return (
     <div className="field" data-hint={t("tools.folderNote")}>
       <div className="field__head">
@@ -45,7 +47,13 @@ export function OutputFolderField({
       </p>
       <div className="choices">
         <Button onClick={() => void pickOutputDir(module)}>{t("tools.change")}</Button>
-        <Button variant="outline" onClick={() => void openOutputDir(module)}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setOpenFailed(false);
+            openOutputDir(module).catch(() => setOpenFailed(true));
+          }}
+        >
           {t("tools.open")}
         </Button>
         {custom && (
@@ -54,6 +62,9 @@ export function OutputFolderField({
           </Button>
         )}
       </div>
+      {/* Своя папка на отключённом сетевом диске: молчание выглядело бы как
+          неработающая кнопка */}
+      {openFailed && <p className="note note--error" role="alert">{t("tools.openFailed")}</p>}
     </div>
   );
 }
@@ -72,6 +83,7 @@ export function OutputFolderField({
  */
 export function ComponentsField({ module, extra }: { module: ModuleId; extra?: string }) {
   const tools = useTools();
+  const needs = tools.modules.find((entry) => entry.id === module)?.needs ?? [];
   const settings = useSettings();
   const components = componentsFor(tools, module);
   const missing = components.some((component) => component.presence === "missing");
@@ -148,16 +160,18 @@ export function ComponentsField({ module, extra }: { module: ModuleId; extra?: s
         </div>
       )}
 
-      {!busy && missing && (
+      {/* Пока ищется системный ffmpeg, «не хватает» — ещё не ответ: нажатие
+          скачало бы то, что, возможно, уже стоит */}
+      {!busy && missing && !tools.probing && (
         <Button onClick={() => void installTools(module).catch(() => {})}>{t("tools.installMissing")}</Button>
       )}
 
-      {tools.failure !== null && (
+      {tools.failure !== null && needs.includes(tools.failure.component) && (
         <p className="note note--error">
           {nameOf(tools, tools.failure.component)}: {failureText(t, tools.failure.code)}
         </p>
       )}
-      {tools.notice !== null && (
+      {tools.notice !== null && needs.includes(tools.notice.component) && (
         <p className="note">
           {nameOf(tools, tools.notice.component)}:{" "}
           {t(tools.notice.code === "updated" ? "tools.updated" : "tools.upToDate", {

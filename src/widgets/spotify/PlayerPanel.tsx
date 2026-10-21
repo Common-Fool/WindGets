@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   formatTime,
   nextRepeat,
@@ -123,19 +123,27 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
    * через сотни миллисекунд. До него показываем ожидаемое состояние.
    */
   const [expected, setExpected] = useState<Partial<Player> | null>(null);
-  const shown = expected ? { ...player, ...expected } : player;
+  // Досчёт слушает показанное состояние: сохраняем его ссылку между тиками,
+  // чтобы ожидание «играть» не перезапускало таймер при каждой перерисовке.
+  const shown = useMemo(() => expected ? { ...player, ...expected } : player, [player, expected]);
+
+  // Номер последнего нажатия: ожидание снимает только оно. Иначе первая из
+  // двух быстрых команд, вернувшись, стирала бы ожидание второй, ещё бегущей,
+  // и кнопка мигала бы опрошенным состоянием
+  const issued = useRef(0);
 
   async function issue(action: Action, patch?: Partial<Player>) {
+    const number = ++issued.current;
     if (patch) setExpected(patch);
     try {
       await send(action);
     } finally {
       // К этому моменту бэкенд уже переспросил Spotify и разослал свежее
-      setExpected(null);
+      if (issued.current === number) setExpected(null);
     }
   }
 
-  const position = useTickingPosition(player, receivedAt);
+  const position = useTickingPosition(shown, receivedAt);
   const volume = useVolume(player, send);
 
   const elapsed = Math.min(position, player.durationMs);
@@ -161,7 +169,8 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
   const backdrop = cover === COVER.back ? <Backdrop url={player.coverUrl} /> : null;
 
   const bar = (
-    <Progress elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} />
+    <Progress elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} subject={`${player.track}
+${player.artists}`} />
   );
 
   /*
@@ -175,7 +184,8 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
    * а не дорожки.
    */
   const edgeBar = (
-    <Progress edge elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} />
+    <Progress edge elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} subject={`${player.track}
+${player.artists}`} />
   );
 
   /*
@@ -484,15 +494,18 @@ function Progress({
   total,
   ratio,
   onSeek,
+  subject,
 }: {
   edge?: boolean;
   elapsed: number;
   total: number;
   ratio: number;
   onSeek: (share: number) => void;
+  /** Чей это трек: удержание отпущенного места к другому не переходит. */
+  subject: string;
 }) {
   const t = useText();
-  const drag = useSeekDrag(ratio, total, SEEK_CLOSE_MS, total > 0, onSeek);
+  const drag = useSeekDrag(ratio, total, SEEK_CLOSE_MS, total > 0, onSeek, subject);
   const shownElapsed = drag.chosen === null ? elapsed : Math.round(drag.chosen * total);
 
   return (
@@ -572,12 +585,13 @@ function Transport({
 }
 
 function VolumeRow({ value, onChange }: { value: number; onChange: (next: number) => void }) {
+  const t = useText();
   return (
     <div className="player__volume">
       <span className="player__volume-icon">
         <VolumeIcon />
       </span>
-      <Slider value={value} min={0} max={100} onChange={onChange} />
+      <Slider value={value} min={0} max={100} ariaLabel={t("spotify.volume")} onChange={onChange} />
       <span className="player__volume-value tabular">{value}%</span>
     </div>
   );
@@ -641,6 +655,13 @@ function useVolume(player: Player, send: (action: Action) => Promise<void>) {
   const [value, setValue] = useState<number | null>(player.volume);
   const sentAt = useRef(0);
   const timer = useRef<number | null>(null);
+  const settle = useRef<number | null>(null);
+  // Последняя громкость из опроса: к ней ползунок возвращается, когда
+  // команда не прошла. Эффект ниже срабатывает только на её смене, а
+  // отвергнутая громкость Spotify её не меняет — ползунок стоял бы на чужом
+  // числе навсегда
+  const reported = useRef(player.volume);
+  reported.current = player.volume;
 
   useEffect(() => {
     if (player.volume === null) return;
@@ -650,16 +671,28 @@ function useVolume(player: Player, send: (action: Action) => Promise<void>) {
 
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
+    if (settle.current !== null) window.clearTimeout(settle.current);
   }, []);
+
+  /** Вернуть ползунок к правде, если после `stamp` его больше не трогали. */
+  function resync(stamp: number) {
+    if (sentAt.current !== stamp || reported.current === null) return;
+    setValue(reported.current);
+  }
 
   function change(next: number) {
     setValue(next);
     sentAt.current = Date.now();
+    if (settle.current !== null) window.clearTimeout(settle.current);
 
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      sentAt.current = Date.now();
-      void send({ kind: "volume", percent: next });
+      const stamp = Date.now();
+      sentAt.current = stamp;
+      send({ kind: "volume", percent: next }).catch(() => resync(stamp));
+      // Прошла команда, а устройство громкость не взяло — то же самое,
+      // только узнаём об этом по истечении удержания
+      settle.current = window.setTimeout(() => resync(stamp), VOLUME_HOLD_MS);
     }, VOLUME_DEBOUNCE_MS);
   }
 

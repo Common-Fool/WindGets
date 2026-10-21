@@ -8,6 +8,7 @@
 
 use std::time::Duration;
 
+use async_imap::imap_proto::{types::{AttributeValue, Envelope}, Response, Status as ImapStatus};
 use async_imap::types::Flag;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -76,6 +77,19 @@ impl std::fmt::Display for MailError {
             Self::Stale => write!(f, "{}", tr!("mail.error.stale")),
             Self::Auth(msg) => write!(f, "сервер не пустил: {msg}"),
             Self::Network(msg) => write!(f, "не достучались до сервера: {msg}"),
+        }
+    }
+}
+
+impl MailError {
+    /// Подробность нужна журналу, а команды возвращают только перевод каталога.
+    pub fn user_message(&self) -> String {
+        eprintln!("почта: {self}");
+        match self {
+            Self::NoAccount => tr!("mail.noAccount"),
+            Self::Stale => tr!("mail.error.stale"),
+            Self::Auth(_) => tr!("mail.signInFailed"),
+            Self::Network(_) => tr!("mail.unavailable"),
         }
     }
 }
@@ -152,8 +166,13 @@ async fn connect_and_login(
         Ok(session) => session,
         Err((err, _)) => {
             return Err(match err {
+                // Отказ входа — это неверный пароль, только если сервер не
+                // назвал другую причину. `[UNAVAILABLE]`, `[INUSE]`, лимит
+                // соединений (RFC 5530) — беда на минуту, а «неверный пароль»
+                // останавливает опрос до нажатия и зовёт менять верный
+                async_imap::error::Error::No(msg) if !transient_refusal(&msg) => MailError::Auth(msg),
                 async_imap::error::Error::Bad(msg) | async_imap::error::Error::No(msg) => {
-                    MailError::Auth(msg)
+                    MailError::Network(msg)
                 }
                 other => MailError::Network(other.to_string()),
             });
@@ -161,6 +180,14 @@ async fn connect_and_login(
     };
 
     Ok(session)
+}
+
+/// Отказ входа с кодом временной беды сервера, а не неверных реквизитов.
+fn transient_refusal(message: &str) -> bool {
+    let upper = message.to_ascii_uppercase();
+    ["[UNAVAILABLE]", "[INUSE]", "[LIMIT]", "[SERVERBUG]", "[OVERQUOTA]", "TOO MANY"]
+        .iter()
+        .any(|code| upper.contains(code))
 }
 
 /// Шаг проверки подключения — на нём она и остановилась, если не прошла.
@@ -355,28 +382,15 @@ async fn fetch_inbox_session(
         .join(",");
     let fetch_query = fetch_query(preview);
 
-    let mut fetch_stream = session
-        .uid_fetch(&uid_query, &fetch_query)
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка UID FETCH: {e}")))?;
-
-    let mut letters = Vec::new();
-    while let Some(fetch_res) = fetch_stream.next().await {
-        let fetch = match fetch_res {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
-
-        // Письмо, помеченное к удалению, для нас уже удалено: на сервере оно
-        // ещё лежит, но и почтовик его не показывает
+    let mut letters = checked_fetch(&mut session, &format!("UID FETCH {uid_query} {fetch_query}"), |fetch| {
+        // Помеченное к удалению письмо не показываем, но итог команды всё
+        // равно проверяем, даже если отфильтрованы все полученные письма
         if fetch.flags().any(|flag| flag == Flag::Deleted) {
-            continue;
+            None
+        } else {
+            Some(parse_letter(fetch, host, own_mailbox))
         }
-
-        let letter = parse_letter(&fetch, host, own_mailbox);
-        letters.push(letter);
-    }
-    drop(fetch_stream);
+    }).await?;
 
     // Закрываем сессию чисто
     let _ = session.logout().await;
@@ -404,6 +418,102 @@ async fn checked_inbox<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin +
         session.examine("INBOX").await
     }.map_err(|e| MailError::Network(format!("ошибка открытия INBOX: {e}")))?;
     check_uid_validity(uid_validity, mailbox.uid_validity)
+}
+
+/// Данные FETCH остаются у парсера библиотеки; здесь нужны только поля,
+/// которые читает карточка. Конструктор библиотечного Fetch закрыт.
+struct Fetched<'a>(&'a [AttributeValue<'a>]);
+
+impl Fetched<'_> {
+    fn uid(&self) -> Option<u32> {
+        self.0.iter().find_map(|attr| match attr {
+            AttributeValue::Uid(uid) => Some(*uid),
+            _ => None,
+        })
+    }
+
+    fn flags(&self) -> impl Iterator<Item = Flag<'_>> {
+        self.0.iter().filter_map(|attr| match attr {
+            AttributeValue::Flags(flags) => Some(flags.iter().map(|flag| Flag::from(flag.as_ref()))),
+            _ => None,
+        }).flatten()
+    }
+
+    fn body(&self) -> Option<&[u8]> {
+        self.0.iter().find_map(|attr| match attr {
+            AttributeValue::BodySection { section: None, data: Some(body), .. }
+            | AttributeValue::Rfc822(Some(body)) => Some(body.as_ref()),
+            _ => None,
+        })
+    }
+
+    fn size(&self) -> Option<u32> {
+        self.0.iter().find_map(|attr| match attr {
+            AttributeValue::Rfc822Size(size) => Some(*size),
+            _ => None,
+        })
+    }
+
+    fn envelope(&self) -> Option<&Envelope<'_>> {
+        self.0.iter().find_map(|attr| match attr {
+            AttributeValue::Envelope(envelope) => Some(envelope.as_ref()),
+            _ => None,
+        })
+    }
+
+    fn internal_date(&self) -> Option<i64> {
+        let raw = self.0.iter().find_map(|attr| match attr {
+            AttributeValue::InternalDate(date) => Some(date.as_ref()),
+            _ => None,
+        })?;
+        // У IMAP дата «17-Jul-2026», у RFC 822 — «17 Jul 2026».
+        // Меняем только две черты даты: минус часового пояса остаётся своим
+        let date = mail_parser::DateTime::parse_rfc822(&raw.replacen('-', " ", 2))?;
+        date.is_valid().then(|| date.to_timestamp())
+    }
+}
+
+/// async-imap 0.11.3 завершает поток FETCH на теге, не проверяя его статус.
+/// Читаем ответы тем же парсером, но накопленное отдаём только после своего
+/// tagged OK: даже одно полученное письмо не превращает NO/BAD в успех.
+async fn checked_fetch<T, R>(
+    session: &mut async_imap::Session<T>,
+    command: &str,
+    mut parse: impl FnMut(&Fetched<'_>) -> Option<R>,
+) -> Result<Vec<R>, MailError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let tag = session.run_command(command).await
+        .map_err(|e| MailError::Network(format!("ошибка {command}: {e}")))?;
+    let mut values = Vec::new();
+    let mut answered = false;
+    loop {
+        let response = session.read_response().await
+            .map_err(|e| MailError::Network(format!("ошибка чтения FETCH: {e}")))?
+            .ok_or_else(|| MailError::Network("соединение оборвалось до завершения FETCH".to_owned()))?;
+        match response.parsed() {
+            Response::Done { tag: received, status, code, information } => {
+                if received != &tag || *status != ImapStatus::Ok {
+                    return Err(MailError::Network(format!("ошибка завершения FETCH: {received:?} {status:?} {code:?} {information:?}")));
+                }
+                if !answered {
+                    return Err(MailError::Network("сервер не отдал ни одного письма из запрошенных".to_owned()));
+                }
+                return Ok(values);
+            }
+            Response::Fetch(_, attributes) => {
+                answered = true;
+                if let Some(value) = parse(&Fetched(attributes)) {
+                    values.push(value);
+                }
+            }
+            Response::Data { status: ImapStatus::Bye, .. } => {
+                return Err(MailError::Network("сервер закрыл соединение во время FETCH".to_owned()));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Дочитывает ответ STORE и проверяет tagged-статус, включая NO/BAD и обрыв.
@@ -672,20 +782,11 @@ async fn get_last_uids<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin +
     exists: u32,
 ) -> Result<Vec<u32>, MailError> {
     let seq_start = exists.saturating_sub(LAST_LETTERS - 1).max(1);
-    let mut seq_stream = session
-        .fetch(format!("{seq_start}:*"), "UID")
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка FETCH UID: {e}")))?;
-
-    let mut uids = Vec::new();
-    while let Some(res) = seq_stream.next().await {
-        if let Ok(item) = res {
-            if let Some(uid) = item.uid {
-                uids.push(uid);
-            }
-        }
+    let mut uids = checked_fetch(session, &format!("FETCH {seq_start}:* UID"), |fetch| fetch.uid()).await?;
+    // Письма в ящике есть, а номеров не пришло — это отказ, а не пустой ящик
+    if uids.is_empty() {
+        return Err(MailError::Network("сервер не отдал номера последних писем".to_owned()));
     }
-    drop(seq_stream);
 
     uids.sort_unstable();
     Ok(uids)
@@ -693,15 +794,14 @@ async fn get_last_uids<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin +
 
 /// Извлекает поля письма из ответа FETCH и тела сообщения.
 fn parse_letter(
-    fetch: &async_imap::types::Fetch,
+    fetch: &Fetched<'_>,
     host: &str,
     own_mailbox: Option<&str>,
 ) -> Letter {
-    let uid = fetch.uid.unwrap_or(0);
+    let uid = fetch.uid().unwrap_or(0);
     let seen = fetch.flags().any(|f| f == Flag::Seen);
     let at = fetch
         .internal_date()
-        .map(|dt| dt.timestamp())
         .unwrap_or_default();
 
     // Тело письма из BODY[] или BODY.PEEK[]
@@ -716,7 +816,9 @@ fn parse_letter(
     let to = extract_to(Some(fetch), parsed_msg.as_ref());
     let raw_text = extract_raw_text(parsed_msg.as_ref());
 
-    let preview = raw_text.as_deref().and_then(clean_preview);
+    // Превью рисуется простым текстом: записи ссылок `[слово](адрес)` в нём
+    // остаются одним словом, адрес показывать нельзя
+    let preview = raw_text.as_deref().map(link_words).as_deref().and_then(clean_preview);
 
     let message_id = extract_message_id(fetch, parsed_msg.as_ref());
     let link = super::web::letter_url(host, message_id.as_deref(), own_mailbox);
@@ -789,37 +891,33 @@ async fn fetch_body_session(
     // для этого есть своя кнопка
     checked_inbox(&mut session, uid_validity, false).await?;
 
-    let mut stream = session
-        .uid_fetch(uid.to_string(), format!("(BODY.PEEK[]<0.{BODY_LIMIT}>)"))
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка UID FETCH тела: {e}")))?;
-
-    let mut letter_body = LetterBody {
+    let bodies = checked_fetch(&mut session, &format!("UID FETCH {uid} (RFC822.SIZE BODY.PEEK[]<0.{BODY_LIMIT}>)"), fetched_letter_body).await?;
+    let letter_body = bodies.into_iter().next().unwrap_or(LetterBody {
+        truncated: false,
         text: None,
         attachments: Vec::new(),
-    };
-
-    while let Some(res) = stream.next().await {
-        let Ok(fetch) = res else { continue };
-        let parsed = fetch
-            .body()
-            .and_then(|bytes| mail_parser::MessageParser::default().parse(bytes));
-        if let Some(msg) = parsed.as_ref() {
-            letter_body = parse_letter_body(msg);
-            break;
-        }
-    }
-    drop(stream);
-
+    });
     let _ = session.logout().await;
     Ok(letter_body)
 }
 
+/// Признак обрезки сохраняется, даже если оборванный MIME не разобрался.
+fn fetched_letter_body(fetch: &Fetched<'_>) -> Option<LetterBody> {
+    let bytes = fetch.body()?;
+    let mut body = mail_parser::MessageParser::default().parse(bytes)
+        .as_ref().map(parse_letter_body)
+        .unwrap_or(LetterBody { truncated: false, text: None, attachments: Vec::new() });
+    body.truncated |= fetch.size().map_or(bytes.len() >= BODY_LIMIT as usize, |size| size as usize > bytes.len());
+    Some(body)
+}
+
 /// Извлекает тело письма и список вложений из разобранного сообщения.
 pub fn parse_letter_body(msg: &mail_parser::Message<'_>) -> LetterBody {
-    let text = extract_raw_text(Some(msg)).as_deref().and_then(clean_body);
+    let text = extract_raw_text(Some(msg)).as_deref().and_then(clean_body_full);
+    let truncated = text.as_ref().is_some_and(|text| text.chars().count() > BODY_MAX_CHARS);
+    let text = text.map(|text| text.chars().take(BODY_MAX_CHARS).collect());
     let attachments = extract_attachments(msg);
-    LetterBody { text, attachments }
+    LetterBody { truncated, text, attachments }
 }
 
 /// Извлекает вложения из сообщения.
@@ -1065,26 +1163,15 @@ async fn search_inbox_session(
         .join(",");
     let fetch_query = fetch_query(preview);
 
-    let mut fetch_stream = session
-        .uid_fetch(&uid_query, &fetch_query)
-        .await
-        .map_err(|e| MailError::Network(format!("ошибка UID FETCH при поиске: {e}")))?;
-
-    let mut letters = Vec::new();
-    while let Some(fetch_res) = fetch_stream.next().await {
-        let fetch = match fetch_res {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
-
+    let mut letters = checked_fetch(&mut session, &format!("UID FETCH {uid_query} {fetch_query}"), |fetch| {
+        // Помеченное к удалению письмо не показываем, но итог команды всё
+        // равно проверяем, даже если отфильтрованы все полученные письма
         if fetch.flags().any(|flag| flag == Flag::Deleted) {
-            continue;
+            None
+        } else {
+            Some(parse_letter(fetch, host, own_mailbox))
         }
-
-        let letter = parse_letter(&fetch, host, own_mailbox);
-        letters.push(letter);
-    }
-    drop(fetch_stream);
+    }).await?;
 
     let _ = session.logout().await;
 
@@ -1146,7 +1233,7 @@ pub fn escape_imap_string(query: &str) -> String {
 
 /// Извлекает Message-ID из заголовков письма (mail-parser) или из IMAP ENVELOPE.
 fn extract_message_id(
-    fetch: &async_imap::types::Fetch,
+    fetch: &Fetched<'_>,
     parsed: Option<&mail_parser::Message<'_>>,
 ) -> Option<String> {
     if let Some(msg) = parsed {
@@ -1173,7 +1260,7 @@ fn extract_message_id(
 
 /// Извлекает тему письма с декодированием RFC 2047 (`=?UTF-8?B?...?=`).
 fn extract_subject(
-    fetch: &async_imap::types::Fetch,
+    fetch: &Fetched<'_>,
     parsed: Option<&mail_parser::Message<'_>>,
 ) -> String {
     // Если mail-parser успешно разобрал сообщение, берём тему оттуда
@@ -1195,7 +1282,7 @@ fn extract_subject(
 }
 
 /// Извлекает отправителя: имя из конверта, а если имени нет — адрес.
-fn extract_from(fetch: &async_imap::types::Fetch, parsed: Option<&mail_parser::Message<'_>>) -> String {
+fn extract_from(fetch: &Fetched<'_>, parsed: Option<&mail_parser::Message<'_>>) -> String {
     // Сначала пробуем разобранное mail-parser сообщение
     if let Some(msg) = parsed {
         if let Some(from_header) = msg.from() {
@@ -1280,7 +1367,7 @@ fn format_imap_address(mailbox: Option<&[u8]>, host: Option<&[u8]>) -> Option<St
 
 /// Извлекает адрес отправителя из IMAP ENVELOPE или разобранного сообщения.
 fn extract_from_address(
-    fetch: Option<&async_imap::types::Fetch>,
+    fetch: Option<&Fetched<'_>>,
     parsed: Option<&mail_parser::Message<'_>>,
 ) -> Option<String> {
     if let Some(f) = fetch {
@@ -1317,7 +1404,7 @@ fn extract_from_address(
 /// Извлекает адреса получателей из IMAP ENVELOPE или разобранного сообщения.
 /// Возвращает не более пяти адресов. Пустой список — пустой Vec, а не None.
 fn extract_to(
-    fetch: Option<&async_imap::types::Fetch>,
+    fetch: Option<&Fetched<'_>>,
     parsed: Option<&mail_parser::Message<'_>>,
 ) -> Vec<String> {
     let mut recipients = Vec::new();
@@ -1496,6 +1583,32 @@ pub fn prepare_html_for_text(html: &str) -> String {
     replace_html_block_breaks(&with_links)
 }
 
+/// Записи ссылок `[слово](адрес)` — одним словом: для превью.
+fn link_words(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let tail = &rest[open..];
+        let record = tail.find("](").and_then(|middle| {
+            let close = tail[middle + 2..].find(')')?;
+            Some((middle, middle + 2 + close))
+        });
+        match record {
+            Some((middle, close)) if !tail[1..middle].contains('[') => {
+                out.push_str(&rest[..open]);
+                out.push_str(&tail[1..middle]);
+                rest = &tail[close + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..=open]);
+                rest = &rest[open + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Выносит адрес ссылки в сам текст: `<a href="X">слово</a>` даёт «слово (X)».
 ///
 /// ВАЖНО: **без этого ссылка в письме пропадает бесследно.** Превращение HTML в
@@ -1518,10 +1631,13 @@ fn expose_links(html: &str) -> String {
         };
 
         let href = href_of(&tag[..tag_end]);
+        // Закрывающего нет — дальше его нет и у остальных `<a>`: остаток
+        // целиком как есть. Искать заново от каждого следующего `<a>` значило
+        // бы квадратичный разбор, и враждебное письмо в мегабайт висело бы
+        // минутами
         let Some(close) = find_tag_start(&tag[tag_end..], "/a") else {
-            out.push_str(&tag[..=tag_end]);
-            rest = &tag[tag_end + 1..];
-            continue;
+            out.push_str(tag);
+            return out;
         };
 
         let inner = &tag[tag_end + 1..tag_end + close];
@@ -1543,6 +1659,10 @@ fn expose_links(html: &str) -> String {
             // адрес и есть та простыня, ради избавления от которой всё это
             Some(_) if word.is_empty() => {}
             Some(link) if !word.contains(link.as_str()) => {
+                // Скобки в адресе кодируются: запись `[слово](адрес)` фронт
+                // режет на первой `)`, и `…/a(b)?x` открывался бы обрубком.
+                // Для сервера `%28`/`%29` — те же знаки
+                let link = link.replace('(', "%28").replace(')', "%29").replace(' ', "%20");
                 out.push_str(&format!("[{word}]({link})"));
             }
             _ => out.push_str(&word),
@@ -1581,26 +1701,56 @@ fn flatten_label(inner: &str) -> String {
 /// Достаёт `href` из открывающего тега ссылки. Годится только http и https:
 /// по этой строке потом запускают браузер.
 fn href_of(tag: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    let at = lower.find("href")?;
-    let after = &tag[at + 4..];
-    let eq = after.find('=')?;
-    let value = after[eq + 1..].trim_start();
-
-    let link = if let Some(quoted) = value.strip_prefix('"') {
-        quoted.split('"').next()?
-    } else if let Some(quoted) = value.strip_prefix('\'') {
-        quoted.split('\'').next()?
-    } else {
-        value.split_whitespace().next()?
-    };
-
-    let link = link.trim();
-    if link.starts_with("http://") || link.starts_with("https://") {
-        Some(link.to_owned())
-    } else {
-        None
+    let bytes = tag.as_bytes();
+    let mut at = 0;
+    // Сначала имя тега, затем атрибуты целиком: href внутри data-href,
+    // hreflang или чужого значения не должен становиться ссылкой.
+    while at < bytes.len() && !bytes[at].is_ascii_whitespace() {
+        at += 1;
     }
+    while at < bytes.len() {
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        if at == bytes.len() || bytes[at] == b'>' || bytes[at] == b'/' {
+            break;
+        }
+        let name = at;
+        while at < bytes.len() && !bytes[at].is_ascii_whitespace() && !matches!(bytes[at], b'=' | b'>') {
+            at += 1;
+        }
+        let is_href = tag[name..at].eq_ignore_ascii_case("href");
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        if at == bytes.len() || bytes[at] != b'=' {
+            continue;
+        }
+        at += 1;
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        let quote = bytes.get(at).copied().filter(|ch| matches!(ch, b'"' | b'\''));
+        if quote.is_some() {
+            at += 1;
+        }
+        let start = at;
+        while at < bytes.len() && match quote {
+            Some(quote) => bytes[at] != quote,
+            None => !bytes[at].is_ascii_whitespace() && bytes[at] != b'>',
+        } {
+            at += 1;
+        }
+        let link = tag[start..at].trim();
+        if is_href {
+            return (link.starts_with("http://") || link.starts_with("https://"))
+                .then(|| link.to_owned());
+        }
+        if quote.is_some() && at < bytes.len() {
+            at += 1;
+        }
+    }
+    None
 }
 
 fn replace_html_block_breaks(html: &str) -> String {
@@ -1753,6 +1903,10 @@ pub fn clean_preview(raw: &str) -> Option<String> {
 ///
 /// Пустой текст даёт `None`.
 pub fn clean_body(raw: &str) -> Option<String> {
+    clean_body_full(raw).map(|text| text.chars().take(BODY_MAX_CHARS).collect())
+}
+
+fn clean_body_full(raw: &str) -> Option<String> {
     let raw = &decode_entities(raw);
     // 1. Вырезаем style, script, head, если они присутствуют
     let stripped = if raw.contains('<') {
@@ -1821,12 +1975,7 @@ pub fn clean_body(raw: &str) -> Option<String> {
         return None;
     }
 
-    let truncated: String = joined.chars().take(BODY_MAX_CHARS).collect();
-    if truncated.is_empty() {
-        None
-    } else {
-        Some(truncated)
-    }
+    Some(joined)
 }
 
 /// Проверяет, состоит ли строка исключительно из разделителей (`-`, `=`, `_`, `*`, `|`, пробелы).
@@ -1841,6 +1990,195 @@ fn is_delimiter_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn href_is_a_whole_attribute_outside_other_values() {
+        for tag in [
+            r#"<a hreflang="en" href="https://example.org/right""#,
+            r#"<a data-href="https://example.org/wrong" HREF = 'https://example.org/right'"#,
+            r#"<a title=" href='https://example.org/wrong'" href=https://example.org/right"#,
+            r#"<a disabled href = "https://example.org/right""#,
+        ] {
+            assert_eq!(href_of(tag).as_deref(), Some("https://example.org/right"), "{tag}");
+        }
+        for tag in [
+            r#"<a hreflang="https://example.org/wrong""#,
+            r#"<a data-href="https://example.org/wrong""#,
+            r#"<a href-other="https://example.org/wrong""#,
+            r#"<a title="href=https://example.org/wrong""#,
+            r#"<a href="javascript:alert(1)""#,
+        ] {
+            assert_eq!(href_of(tag), None, "{tag}");
+        }
+    }
+
+    #[test]
+    fn command_errors_use_catalog_without_server_details() {
+        assert_eq!(MailError::NoAccount.user_message(), tr!("mail.noAccount"));
+        assert_eq!(MailError::Auth("AUTH detail".into()).user_message(), tr!("mail.signInFailed"));
+        assert_eq!(MailError::Network("NETWORK detail".into()).user_message(), tr!("mail.unavailable"));
+        assert_eq!(MailError::Stale.user_message(), tr!("mail.error.stale"));
+        assert!(MailError::Network("NETWORK detail".into()).to_string().contains("NETWORK detail"));
+    }
+
+    /// Сервер в памяти говорит с настоящим парсером async-imap. Литерал тела
+    /// тоже проходит протокол, поэтому строка, похожая на тег, не завершает FETCH.
+    async fn fetch_session(
+        command: &str,
+        data: &str,
+        status: Option<&str>,
+    ) -> (async_imap::Session<tokio::io::DuplexStream>, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let command = command.to_owned();
+        let data = data.to_owned();
+        let status = status.map(str::to_owned);
+        let server = tokio::spawn(async move {
+            let (reader, mut writer) = tokio::io::split(server_io);
+            let mut reader = BufReader::new(reader);
+            writer.write_all(b"* OK ready\r\n").await.unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let tag = line.split_whitespace().next().unwrap();
+            writer.write_all(format!("{tag} OK logged in\r\n").as_bytes()).await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let (tag, sent) = line.trim_end().split_once(' ').unwrap();
+            assert_eq!(sent, command);
+            writer.write_all(data.as_bytes()).await.unwrap();
+            if let Some(status) = status {
+                writer.write_all(format!("{tag} {status} [UNAVAILABLE] finished\r\n").as_bytes()).await.unwrap();
+            }
+        });
+        let mut client = async_imap::Client::new(client_io);
+        client.read_response().await.unwrap().unwrap();
+        let session = client.login("user", "password").await.unwrap();
+        (session, server)
+    }
+
+    /// Размер приходит тем же FETCH; без него граница выборки считается обрывом.
+    #[tokio::test]
+    async fn fetched_body_reports_limits_and_preserves_the_flag_on_broken_mime() {
+        let small = "Subject: Sample\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nshort".to_owned();
+        let mut boundary = format!("X-Padding: {}\r\n\r\nshort", "p".repeat(BODY_LIMIT as usize - 20));
+        boundary.push_str(&" ".repeat(BODY_LIMIT as usize - boundary.len()));
+        for (bytes, size, expected) in [
+            (small.as_str(), Some(small.len() as u32), false),
+            (small.as_str(), Some(BODY_LIMIT + 1), true),
+            (small.as_str(), None, false),
+            (boundary.as_str(), None, true),
+            (boundary.as_str(), Some(BODY_LIMIT), false),
+            ("", Some(BODY_LIMIT + 1), true),
+        ] {
+            let command = format!("UID FETCH 42 (RFC822.SIZE BODY.PEEK[]<0.{BODY_LIMIT}>)");
+            let size_field = size.map(|size| format!("RFC822.SIZE {size} ")).unwrap_or_default();
+            let data = format!("* 1 FETCH (UID 42 {size_field}BODY[]<0> {{{}}}\r\n{bytes})\r\n", bytes.len());
+            let (mut session, server) = fetch_session(&command, &data, Some("OK")).await;
+            let bodies = checked_fetch(&mut session, &command, fetched_letter_body).await.unwrap();
+            assert_eq!(bodies.len(), 1);
+            assert_eq!(bodies[0].truncated, expected, "размер: {size:?}");
+            assert_eq!(serde_json::to_value(&bodies[0]).unwrap()["truncated"], expected);
+            server.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn parsed_body_reports_the_text_limit_only_when_text_was_cut() {
+        for length in [BODY_MAX_CHARS, BODY_MAX_CHARS + 1] {
+            let raw = format!("Content-Type: text/plain; charset=utf-8\r\n\r\n{}", "я".repeat(length));
+            let msg = mail_parser::MessageParser::default().parse(raw.as_bytes()).unwrap();
+            let body = parse_letter_body(&msg);
+            assert_eq!(body.truncated, length > BODY_MAX_CHARS);
+            assert_eq!(body.text.unwrap().chars().count(), BODY_MAX_CHARS);
+        }
+    }
+
+    /// Частичный список, номера, поиск и тело обязаны дождаться своего OK.
+    /// Даже уже полученные данные не дают успеха при NO/BAD, BYE или обрыве.
+    #[tokio::test]
+    async fn every_fetch_requires_a_successful_tagged_completion() {
+        let body = "Subject: Sample\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nA0002 OK inside the body";
+        let data = format!("* 1 FETCH (UID 42 FLAGS (\\Seen) INTERNALDATE \"17-Jul-2026 12:30:00 -0430\" BODY[]<0> {{{}}}\r\n{body})\r\n", body.len());
+        for command in [
+            "UID FETCH 42,43 (UID FLAGS ENVELOPE INTERNALDATE)",
+            "FETCH 1:* UID",
+            "UID FETCH 42,43 (UID FLAGS ENVELOPE INTERNALDATE BODY.PEEK[]<0.65536>)",
+            "UID FETCH 42 (BODY.PEEK[]<0.1048576>)",
+        ] {
+            for status in [Some("OK"), Some("NO"), Some("BAD"), None] {
+                let (mut session, server) = fetch_session(command, &data, status).await;
+                let result = tokio::time::timeout(Duration::from_secs(2), checked_fetch(&mut session, command, |fetch| {
+                    let letter = parse_letter(fetch, "imap.example.org", None);
+                    Some((letter, fetch.body().unwrap().to_vec()))
+                })).await.expect("FETCH должен завершиться");
+                if status == Some("OK") {
+                    let values = result.unwrap();
+                    assert_eq!(values.len(), 1);
+                    assert_eq!(values[0].0.uid, 42);
+                    assert!(values[0].0.seen);
+                    assert_eq!(values[0].0.subject, "Sample");
+                    assert_eq!(values[0].0.at, 1_784_307_600);
+                    assert_eq!(values[0].1, body.as_bytes());
+                } else {
+                    assert!(matches!(result, Err(MailError::Network(_))), "{command}: {status:?}");
+                }
+                server.await.unwrap();
+            }
+        }
+
+        for (data, status) in [
+            ("", Some("OK")),
+            ("* 1 FETCH (UID 42)\r\n* BYE disconnected\r\n", None),
+            ("* 1 FETCH (UID 42)\r\nwrong OK wrong tag\r\n", None),
+            ("* 1 FETCH (UID 42)\r\n* 2 FETCH (UID", None),
+        ] {
+            let command = "FETCH 1:* UID";
+            let (mut session, server) = fetch_session(command, data, status).await;
+            let result = tokio::time::timeout(Duration::from_secs(2), checked_fetch(&mut session, command, |fetch| fetch.uid()))
+                .await.expect("FETCH должен завершиться");
+            assert!(matches!(result, Err(MailError::Network(_))), "{data}: {status:?}");
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn checked_fetch_preserves_envelope_fields_and_timezone() {
+        let command = "UID FETCH 42 (UID FLAGS ENVELOPE INTERNALDATE)";
+        let data = concat!(
+            "* 1 FETCH (UID 42 FLAGS () INTERNALDATE \"17-Jul-2026 12:30:00 +0200\" ",
+            "ENVELOPE (NIL \"Subject\" ((\"Sender\" NIL \"sender\" \"example.org\")) NIL NIL ",
+            "((NIL NIL \"reader\" \"example.org\")) NIL NIL NIL \"<sample@example.org>\"))\r\n",
+        );
+        let (mut session, server) = fetch_session(command, data, Some("OK")).await;
+        let letters = checked_fetch(&mut session, command, |fetch| Some(parse_letter(fetch, "imap.example.org", None))).await.unwrap();
+        assert_eq!(letters.len(), 1);
+        assert_eq!(letters[0].subject, "Subject");
+        assert_eq!(letters[0].from, "Sender");
+        assert_eq!(letters[0].from_address.as_deref(), Some("sender@example.org"));
+        assert_eq!(letters[0].at, 1_784_284_200);
+        assert!(!letters[0].seen);
+        server.await.unwrap();
+
+        let (mut session, server) = fetch_session(command, data, Some("OK")).await;
+        let skipped = checked_fetch(&mut session, command, |_| None::<()>).await.unwrap();
+        assert!(skipped.is_empty());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn last_uids_reject_a_partial_failed_fetch() {
+        for status in [Some("OK"), Some("NO"), Some("BAD"), None] {
+            let (mut session, server) = fetch_session("FETCH 1:* UID", "* 1 FETCH (UID 42)\r\n", status).await;
+            let result = tokio::time::timeout(Duration::from_secs(2), get_last_uids(&mut session, 10))
+                .await.expect("FETCH UID должен завершиться");
+            assert_eq!(result.is_ok(), status == Some("OK"));
+            if let Ok(uids) = result {
+                assert_eq!(uids, vec![42]);
+            }
+            server.await.unwrap();
+        }
+    }
 
     #[test]
     fn uid_validity_requires_the_same_known_generation() {
@@ -2394,5 +2732,40 @@ Content-Type: text/html; charset=utf-8
         };
         let err = search_inbox("", 993, "", "", criteria, None, true).await.unwrap_err();
         assert_eq!(err, MailError::NoAccount);
+    }
+
+    #[test]
+    fn brackets_in_a_link_do_not_cut_the_record_short() {
+        let out = prepare_html_for_text(r#"<a href="https://example.org/a(b)?x=1">Open</a>"#);
+        assert!(out.contains("[Open](https://example.org/a%28b%29?x=1)"), "{out}");
+    }
+
+    #[test]
+    fn the_preview_shows_link_words_without_addresses() {
+        assert_eq!(link_words("Hi [Open](https://example.com/x) now [a] b"), "Hi Open now [a] b");
+    }
+
+    #[test]
+    fn a_busy_server_is_not_a_wrong_password() {
+        assert!(transient_refusal("[UNAVAILABLE] Try again later"));
+        assert!(!transient_refusal("[AUTHENTICATIONFAILED] Invalid credentials"));
+    }
+
+    /// День из одной цифры IMAP пишет с пробелом впереди (`date-day-fixed`):
+    /// « 7-Jul-2026». Дата письма обязана читаться и так, и с минусом пояса.
+    #[test]
+    fn imap_dates_read_with_a_padded_day_and_a_negative_zone() {
+        use async_imap::imap_proto::types::AttributeValue;
+        use std::borrow::Cow;
+        let date = |raw: &'static str| {
+            let attrs = [AttributeValue::InternalDate(Cow::Borrowed(raw))];
+            Fetched(&attrs).internal_date()
+        };
+        let padded = date(" 7-Jul-2026 12:30:00 +0000").expect("день с пробелом впереди");
+        let plain = date("07-Jul-2026 12:30:00 +0000").expect("день с нулём впереди");
+        assert_eq!(padded, plain);
+        let west = date("17-Jul-2026 12:30:00 -0430").expect("отрицательный пояс");
+        let utc = date("17-Jul-2026 17:00:00 +0000").unwrap();
+        assert_eq!(west, utc);
     }
 }

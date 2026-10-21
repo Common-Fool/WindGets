@@ -18,6 +18,10 @@ pub struct Video {
     pub width: u32,
     pub height: u32,
     pub fps: Option<f64>,
+    /// Номер потока во входе (`Stream #0:2`). Кодирование берёт его, а не
+    /// «первое видео»: обложка (`attached pic`) тоже видео, и стоит она чаще
+    /// всего первой — `0:v:0` выбрал бы её вместо ролика.
+    pub stream: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +73,7 @@ pub fn parse(lines: &[&str]) -> Option<Probe> {
         } else if line.starts_with("Stream #0:") {
             if let Some(description) = after(line, ": Video: ") {
                 if probe.video.is_none() && !line.contains("(attached pic)") {
-                    probe.video = parse_video(description);
+                    probe.video = parse_video(description).map(|video| Video { stream: stream_number(line), ..video });
                 }
             } else if let Some(description) = after(line, ": Audio: ") {
                 if probe.audio.is_none() {
@@ -80,6 +84,13 @@ pub fn parse(lines: &[&str]) -> Option<Probe> {
     }
 
     probe
+}
+
+/// `Stream #0:2[0x1](und): Video: …` → 2.
+fn stream_number(line: &str) -> Option<u32> {
+    let rest = line.strip_prefix("Stream #0:")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 fn after<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
@@ -146,7 +157,7 @@ fn parse_video(description: &str) -> Option<Video> {
         }
     }
 
-    (width > 0 && height > 0).then_some(Video { codec, pix_fmt, width, height, fps })
+    (width > 0 && height > 0).then_some(Video { codec, pix_fmt, width, height, fps, stream: None })
 }
 
 /// `1920x1080` или `1920x1080 [SAR 1:1 DAR 16:9]`.

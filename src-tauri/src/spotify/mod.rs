@@ -14,7 +14,7 @@ mod callback;
 mod pkce;
 mod store;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -188,24 +188,58 @@ pub struct Session {
     /// две разные задачи, и одной частотой они не решаются: под первую нужна
     /// отзывчивость, под вторую — не сжечь лимит за ночь.
     touched: Mutex<Option<Instant>>,
+    /// Номер подключения: растёт на входе и отключении. Снимок, начатый при
+    /// прежнем номере, не публикуется — иначе ответ, ушедший в сеть до
+    /// «Отключить», возвращал бы на пульт трек уже снятой учётки.
+    generation: AtomicU64,
+    /// Проверка поколения и запись трека неделимы со сменой подключения.
+    connection: Mutex<()>,
+}
+
+/// Снятое с плеера вместе с тем, когда и при каком подключении его сняли.
+struct Seen {
+    view: View,
+    generation: u64,
+    asked_at: Instant,
 }
 
 impl Session {
     pub fn new(app: &AppHandle) -> Self {
+        Self::from_stored(store::load(app))
+    }
+
+    fn from_stored(stored: Stored) -> Self {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
             .expect("HTTP-клиент собирается");
 
+        // Первый вид — из того, что лежит на диске, а не «нет Client ID»:
+        // окно, открытое до первого опроса (или при спрятанном пульте, когда
+        // опроса нет вовсе), иначе звало бы ввести то, что уже введено
+        let view = match stored.refresh_token() {
+            Some(_) => View::Idle { last: stored.last_player.clone() },
+            None => View::needs_auth(&stored),
+        };
+
         Self {
             client,
-            store: Store::new(store::load(app)),
+            store: Store::new(stored),
             access: tokio::sync::Mutex::new(None),
-            view: Mutex::new(View::NeedsClientId),
+            view: Mutex::new(view),
             authorizing: AtomicBool::new(false),
             quiet_until: Mutex::new(None),
             touched: Mutex::new(None),
+            generation: AtomicU64::new(0),
+            connection: Mutex::new(()),
         }
+    }
+
+    /// Новое подключение или снятое: всё, что спрашивали при прежнем, —
+    /// мимо.
+    fn next_generation(&self) {
+        let _connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.generation.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Отмечает нажатие на пульте.
@@ -283,6 +317,35 @@ impl Session {
         let _ = app.emit(EVENT, view);
     }
 
+    /// Публикует снятое с плеера — если оно ещё правда.
+    ///
+    /// ВАЖНО: снимок, начатый до нажатия, показывать нельзя — он старше того,
+    /// что уже видно в окне. Кнопка «пауза» от такого мигала плей-паузой-
+    /// плеем: сперва фронт показывал ожидаемое, потом приезжал заказанный ещё
+    /// до нажатия ответ с играющим плеером. То же у снимка прежнего
+    /// подключения. Проверка и запись под замком вида: отключение, поднявшее
+    /// номер, публикует после нас или застаёт нас уже ушедшими.
+    fn publish_seen(&self, app: &AppHandle, seen: Seen) {
+        let mut view = self.view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.generation.load(Ordering::SeqCst) != seen.generation
+            || self.touched_at().is_some_and(|moment| moment >= seen.asked_at)
+        {
+            return;
+        }
+        *view = seen.view.clone();
+        let _ = app.emit(EVENT, seen.view);
+    }
+
+    /// Что показать, когда спросить плеер нельзя: кнопку входа или
+    /// последний трек.
+    fn resting(&self) -> View {
+        let stored = self.store.get();
+        match stored.refresh_token() {
+            Some(_) => self.idle(),
+            None => View::needs_auth(&stored),
+        }
+    }
+
     fn persist(&self, app: &AppHandle, change: impl FnOnce(&mut Stored) -> Result<(), String>) -> Result<Stored, String> {
         self.store.try_update(change, |next| store::save(app, next))
             .map(|(stored, ())| stored)
@@ -345,7 +408,7 @@ impl Session {
                 }
                 Err(TokenError::NeedsAuth)
             }
-            Err(AuthError::Transport(detail)) => Err(TokenError::Failed(detail)),
+            Err(AuthError::Transport(detail)) => Err(TokenError::Offline(detail)),
         }
     }
 
@@ -361,23 +424,35 @@ impl Session {
     /// Опрос идёт раз в две секунды, и писать файл с такой частотой незачем.
     /// Признак «играет» гасим: сохранённый трек уже никуда не движется, и
     /// иначе виджет досчитывал бы ползунок от давно прошедшего момента.
-    fn remember(&self, app: &AppHandle, player: &Player) {
+    fn remember(&self, app: &AppHandle, generation: u64, player: &Player) {
+        if let Err(error) = self.remember_with(generation, player, |stored| store::save(app, stored)) {
+            eprintln!("последний трек Spotify не сохранился: {error}");
+        }
+    }
+
+    fn remember_with(
+        &self,
+        generation: u64,
+        player: &Player,
+        save: impl FnOnce(&Stored) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let _connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Отсекаем ответ ДО чтения новых реквизитов и любых изменений диска
+        // или памяти. Тот же Client ID не означает ту же учётную запись.
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Ok(());
+        }
         let stored = self.store.get();
         if stored.refresh_token().is_none() || stored.last_player.as_ref().is_some_and(|last| {
             last.track == player.track && last.artists == player.artists
         }) {
-            return;
+            return Ok(());
         }
 
-        let _ = self.persist(app, |current| {
-            // Запоздалый опрос не возвращает трек после отключения или
-            // смены подключения; токен свежего снимка оставляем как есть.
-            if current.refresh_token().is_none() || current.client_id() != stored.client_id() {
-                return Err(tr!("spotify.error.needsAuth"));
-            }
+        self.store.try_update(|current| {
             current.last_player = Some(Player { is_playing: false, ..player.clone() });
             Ok(())
-        });
+        }, save).map(|_| ())
     }
 
     /// Будит первое доступное устройство: без этого «играть» при закрытом
@@ -405,7 +480,21 @@ impl Session {
     /// `None` означает «сказать нечего, оставьте прежнюю картинку». Так
     /// отвечаем на просьбу подождать: на пульте она означала бы красную
     /// строку вместо играющего трека, хотя ничего не сломалось.
-    async fn observe(&self, app: &AppHandle) -> Option<View> {
+    ///
+    /// Под просьбой Spotify подождать не спрашивает вовсе: каждый запрос под
+    /// лимитом продлевает наказание, откуда бы он ни шёл — из опроса, из
+    /// подтверждения команды или после входа.
+    async fn observe(&self, app: &AppHandle) -> Option<Seen> {
+        let generation = self.generation.load(Ordering::SeqCst);
+        let asked_at = Instant::now();
+        if self.quiet_for().is_some() {
+            return None;
+        }
+        let view = self.look(app, generation).await?;
+        Some(Seen { view, generation, asked_at })
+    }
+
+    async fn look(&self, app: &AppHandle, generation: u64) -> Option<View> {
         let credentials = self.store.get();
         if credentials.client_id().is_none() {
             return Some(View::NeedsClientId);
@@ -419,12 +508,22 @@ impl Session {
             let token = match self.access_token(app, forced).await {
                 Ok(token) => token,
                 Err(TokenError::NeedsAuth) => return Some(View::needs_auth(&credentials)),
+                // До accounts.spotify.com не достучались или он занят —
+                // картинку не трогаем, как при недоступном плеере ниже
+                Err(TokenError::Offline(detail)) => {
+                    eprintln!("[спотифай] токен не обновился: {detail}");
+                    return None;
+                }
                 Err(TokenError::Failed(reason)) => return Some(View::Error { reason }),
             };
 
-            return match api::player(&self.client, &token).await {
+            let response = api::player(&self.client, &token).await;
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return None;
+            }
+            return match response {
                 Ok(Some(player)) => {
-                    self.remember(app, &player);
+                    self.remember(app, generation, &player);
                     Some(View::Active { player })
                 }
                 // Пустой ответ и «нет активного устройства» — одно и то же
@@ -453,14 +552,27 @@ impl Session {
     }
 
     async fn authorize(&self, app: &AppHandle, client_id: String) -> Result<(), String> {
+        let generation = self.generation.load(Ordering::SeqCst);
         // Client ID сохраняем сразу: даже если вход сорвётся, набирать его
         // заново не придётся
+        //
+        // Другой Client ID — другое приложение в дашборде: токен прежнего ему
+        // не годится, и держать его значило бы ловить отказ на первом же
+        // обновлении
         {
-            let _access = self.access.lock().await;
+            let mut access = self.access.lock().await;
+            let before = self.store.get();
             self.persist(app, |current| {
+                if current.client_id() != Some(client_id.as_str()) {
+                    current.refresh_token = None;
+                    current.last_player = None;
+                }
                 current.client_id = Some(client_id.clone());
                 Ok(())
             })?;
+            if before.client_id() != Some(client_id.as_str()) {
+                *access = None;
+            }
         }
 
         let callback = callback::bind().await?;
@@ -500,11 +612,26 @@ impl Session {
             .ok_or_else(|| tr!("spotify.error.noRefresh"))?;
 
         let mut access = self.access.lock().await;
-        self.persist(app, |current| {
-            current.refresh_token = Some(refresh);
+        self.finish_authorization(generation, || {
+            self.persist(app, |current| {
+                current.refresh_token = Some(refresh);
+                Ok(())
+            })?;
+            *access = Some(tokens.access);
             Ok(())
-        })?;
-        *access = Some(tokens.access);
+        })
+    }
+
+    fn finish_authorization(&self, generation: u64, save: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        // «Отключить» за время браузерного диалога отменяет этот вход.
+        // Проверка и сохранение неделимы со сменой подключения.
+        let _connection = self.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(tr!("spotify.error.needsAuth"));
+        }
+        save()?;
+        // Ответы со старым токеном больше не относятся к этому подключению.
+        self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -545,15 +672,15 @@ async fn confirmed(
     for pause in [SETTLE_DELAY, RESTRICTION_RECHECK] {
         tokio::time::sleep(pause).await;
 
-        let Some(view) = session.observe(app).await else {
+        let Some(seen) = session.observe(app).await else {
             continue;
         };
 
         let done = matches!(
-            &view,
+            &seen.view,
             View::Active { player } if already_done(action, before, player)
         );
-        session.publish(app, view);
+        session.publish_seen(app, seen);
 
         if done {
             return true;
@@ -595,6 +722,8 @@ fn already_done(action: &Action, before: Option<&Player>, now: &Player) -> bool 
 enum TokenError {
     /// Подключаться надо заново — руками, через браузер.
     NeedsAuth,
+    /// Сеть или сбой на стороне Spotify: токен цел, повторим позже.
+    Offline(String),
     Failed(String),
 }
 
@@ -602,7 +731,7 @@ impl TokenError {
     fn message(&self) -> String {
         match self {
             TokenError::NeedsAuth => tr!("spotify.error.needsAuth"),
-            TokenError::Failed(detail) => detail.clone(),
+            TokenError::Offline(detail) | TokenError::Failed(detail) => detail.clone(),
         }
     }
 }
@@ -681,21 +810,11 @@ async fn poll_once(app: &AppHandle) -> Duration {
         return left;
     }
 
-    let asked_at = Instant::now();
-
     match session.observe(app).await {
-        Some(view) => {
-            let next = cadence(&view, session.touched_ago());
-
-            // ВАЖНО: снимок, начатый до нажатия, показывать нельзя — он
-            // старше того, что уже видно в окне. Кнопка «пауза» от такого
-            // мигала плей-паузой-плеем: сперва фронт показывал ожидаемое,
-            // потом сюда приезжал заказанный ещё до нажатия ответ с играющим
-            // плеером, и только следующий тик возвращал правду
-            if session.touched_at().is_none_or(|moment| moment < asked_at) {
-                session.publish(app, view);
-            }
-
+        Some(seen) => {
+            let next = cadence(&seen.view, session.touched_ago());
+            // Опоздавший к нажатию снимок publish_seen молча выбросит
+            session.publish_seen(app, seen);
             next
         }
         // Промолчали по просьбе Spotify — столько и ждём
@@ -740,6 +859,106 @@ fn cadence(view: &View, touched_ago: Option<Duration>) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnect_during_authorization_prevents_any_token_save() {
+        let session = Session::from_stored(Stored {
+            client_id: Some("sample-client".into()), ..Stored::default()
+        });
+        let generation = session.generation.load(Ordering::SeqCst);
+        session.next_generation();
+        let result = session.finish_authorization(generation, || {
+            panic!("отменённый вход не должен писать токен ни в память, ни на диск");
+        });
+        assert_eq!(result.unwrap_err(), tr!("spotify.error.needsAuth"));
+        assert!(session.store.get().refresh_token().is_none());
+        assert_eq!(session.generation.load(Ordering::SeqCst), generation + 1);
+    }
+
+    #[test]
+    fn authorization_changes_generation_only_after_a_successful_save() {
+        let session = Session::from_stored(Stored::default());
+        assert!(session.finish_authorization(0, || Err("отказ записи".into())).is_err());
+        assert_eq!(session.generation.load(Ordering::SeqCst), 0);
+        session.finish_authorization(0, || {
+            assert!(session.connection.try_lock().is_err(), "смена подключения ждёт запись");
+            session.store.try_update(|stored| {
+                stored.refresh_token = Some("sample-refresh".into());
+                Ok(())
+            }, |_| Ok(())).map(|_| ())
+        }).unwrap();
+        assert_eq!(session.store.get().refresh_token(), Some("sample-refresh"));
+        assert_eq!(session.generation.load(Ordering::SeqCst), 1);
+    }
+
+    /// Даже с прежним Client ID поздний ответ A не запоминается в учётке B.
+    #[test]
+    fn an_old_connection_cannot_remember_a_track_in_the_new_account() {
+        let session = Session::from_stored(Stored {
+            client_id: Some("sample-client".to_owned()),
+            refresh_token: Some("sample-token-a".to_owned()),
+            last_player: None,
+        });
+        let old_generation = session.generation.load(Ordering::SeqCst);
+        session.next_generation();
+        session.store.try_update(|current| {
+            current.refresh_token = Some("sample-token-b".to_owned());
+            current.last_player = None;
+            Ok(())
+        }, |_| Ok(())).unwrap();
+        let old_player = Player { track: "Track A".to_owned(), ..Player::default() };
+        session.remember_with(old_generation, &old_player, |_| {
+            panic!("ответ A не должен даже пытаться писать файл B");
+        }).unwrap();
+        assert!(session.store.get().last_player.is_none());
+        assert!(matches!(session.idle(), View::Idle { last: None }));
+
+        let fresh = Player { track: "Track B".to_owned(), is_playing: true, ..Player::default() };
+        let mut disk = String::new();
+        session.remember_with(session.generation.load(Ordering::SeqCst), &fresh, |stored| {
+            disk = serde_json::to_string(&stored.last_player).unwrap();
+            Ok(())
+        }).unwrap();
+        let before = disk.clone();
+        session.remember_with(old_generation, &old_player, |_| {
+            disk.clear();
+            Err("устаревший ответ дошёл до диска".to_owned())
+        }).unwrap();
+        assert_eq!(disk, before);
+        let saved = session.store.get().last_player.unwrap();
+        assert_eq!(saved.track, "Track B");
+        assert!(!saved.is_playing);
+    }
+
+    /// Проверка поколения защищает запись целиком, а не только чтение номера.
+    #[test]
+    fn a_connection_change_waits_for_a_track_save() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let session = Session::from_stored(Stored {
+            client_id: Some("sample-client".to_owned()),
+            refresh_token: Some("sample-token".to_owned()),
+            last_player: None,
+        });
+        let (saving, saved) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        thread::scope(|threads| {
+            let session = &session;
+            threads.spawn(move || {
+                session.remember_with(0, &Player::default(), |_| {
+                    saving.send(()).unwrap();
+                    released.recv().unwrap();
+                    Ok(())
+                }).unwrap();
+            });
+            saved.recv().unwrap();
+            assert!(session.connection.try_lock().is_err(), "замок держится до конца записи");
+            threads.spawn(move || session.next_generation());
+            release.send(()).unwrap();
+        });
+        assert_eq!(session.generation.load(Ordering::SeqCst), 1);
+    }
 
     /// Форму отказа читает `failureOf` в `src/lib/spotify.ts`: разойдись имя
     /// поля или вида — «играть некуда» пришло бы строкой отказа, и слой запуска
@@ -973,15 +1192,17 @@ pub async fn spotify_connect(
 ) -> Result<(), String> {
     let client_id = client_id.trim().to_owned();
     if client_id.is_empty() {
-        return Err("Client ID пуст — возьмите его в Spotify Developer Dashboard".to_owned());
+        return Err(tr!("spotify.error.noClientId"));
     }
 
     // swap отдаёт прежнее значение: если там уже true, вход идёт в другой
     // вкладке и второй сервер на том же порту не поднимется
     if session.authorizing.swap(true, Ordering::SeqCst) {
-        return Err("вход уже начат — закончите его в браузере".to_owned());
+        return Err(tr!("spotify.error.signingIn"));
     }
     let started = Authorizing(&session.authorizing);
+    // Снимок, ушедший в сеть до входа, не перекроет «идёт вход»
+    session.next_generation();
     session.publish(&app, View::Authorizing);
 
     let outcome = session.authorize(&app, client_id).await;
@@ -990,8 +1211,10 @@ pub async fn spotify_connect(
 
     // Состояние пересчитываем в любом случае: после отказа виджет должен
     // вернуться к кнопке входа, а не застрять в «идёт авторизация»
-    if let Some(view) = session.observe(&app).await {
-        session.publish(&app, view);
+    match session.observe(&app).await {
+        Some(seen) => session.publish_seen(&app, seen),
+        // Спросить нельзя (лимит, нет сети) — всё равно не «идёт вход»
+        None => session.publish(&app, session.resting()),
     }
 
     outcome
@@ -1011,12 +1234,14 @@ pub async fn spotify_disconnect(
     // Тот же порядок замков, что у обновления: access, затем Store.
     // Отключение не даст запоздалому refresh снова наполнить кеш.
     let mut access = session.access.lock().await;
+    let _connection = session.connection.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let credentials = session.persist(&app, |current| {
         current.refresh_token = None;
         current.last_player = None;
         Ok(())
     })?;
     *access = None;
+    session.generation.fetch_add(1, Ordering::SeqCst);
     session.publish(&app, View::needs_auth(&credentials));
     Ok(())
 }
@@ -1030,7 +1255,7 @@ pub async fn spotify_control(
     // Кнопка под лимитом бесполезна вдвойне: команда не пройдёт, а запрос
     // зачтётся и продлит паузу
     if let Some(left) = session.quiet_for() {
-        return Err(format!("Spotify просит подождать {} с", left.as_secs()).into());
+        return Err(tr!("spotify.error.wait", seconds = left.as_secs().max(1)).into());
     }
 
     let mut forced = false;
@@ -1091,8 +1316,8 @@ pub async fn spotify_control(
 
     // Не ждём очередного тика: пульт должен отзываться сразу
     tokio::time::sleep(SETTLE_DELAY).await;
-    if let Some(view) = session.observe(&app).await {
-        session.publish(&app, view);
+    if let Some(seen) = session.observe(&app).await {
+        session.publish_seen(&app, seen);
     }
 
     Ok(())
@@ -1104,7 +1329,7 @@ pub async fn spotify_playlists(
     session: State<'_, Session>,
 ) -> Result<Vec<Playlist>, String> {
     if let Some(left) = session.quiet_for() {
-        return Err(format!("Spotify просит подождать {} с", left.as_secs()));
+        return Err(tr!("spotify.error.wait", seconds = left.as_secs().max(1)));
     }
 
     let mut forced = false;

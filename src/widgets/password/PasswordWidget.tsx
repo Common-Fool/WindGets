@@ -10,7 +10,7 @@ import {
   type CharClass,
   type Options,
 } from "../../lib/password";
-import { copySecret } from "../../lib/copy";
+import { copySecret, copySelectionAsSecret } from "../../lib/copy";
 import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
@@ -121,7 +121,7 @@ export function PasswordWidget() {
               Поэтому же он помечен как не-ручка — иначе окно уезжало бы за
               курсором вместо выделения.
             */}
-            <output className="pass__value" data-no-drag>
+            <output className="pass__value" data-no-drag onCopy={copySelectionAsSecret}>
               {[...value].map((character, index) => (
                 <span key={index} data-class={classOf(character)}>
                   {character}

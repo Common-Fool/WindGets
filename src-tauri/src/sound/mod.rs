@@ -402,7 +402,10 @@ fn work(app: AppHandle, inbox: Receiver<Action>) {
     // Не открылись — пробуем снова, а не выходим: на автозапуске аудиослужба
     // бывает ещё не готова, и вышедший поток оставил бы виджет мёртвым до
     // перезапуска приложения. Команды, пришедшие до этого, исполнять не на чем
+    // — кроме одной: какая панель раскрыта. Её фронт шлёт только при смене, и
+    // потерянная, она оставила бы раскрытый микшер пустым до ручного щелчка
     let mut told = false;
+    let mut asked_panel = Panel::None;
     let endpoints = loop {
         match endpoints::Endpoints::open() {
             Ok(endpoints) => break endpoints,
@@ -415,6 +418,7 @@ fn work(app: AppHandle, inbox: Receiver<Action>) {
         }
         match inbox.recv_timeout(std::time::Duration::from_secs(5)) {
             Err(RecvTimeoutError::Disconnected) => return,
+            Ok(Action::Panel { panel }) => asked_panel = panel,
             _ => continue,
         }
     };
@@ -427,7 +431,7 @@ fn work(app: AppHandle, inbox: Receiver<Action>) {
     }
 
     // Что раскрыто в окне: под это и собираем списки
-    let mut panel = Panel::None;
+    let mut panel = asked_panel;
 
     loop {
         // Пришла команда — исполняем и тут же перечитываем: значение обязано
@@ -506,6 +510,10 @@ fn work(app: AppHandle, inbox: Receiver<Action>) {
     }
 }
 
+/// Программы, чей значок не дался: их не спрашиваем снова до выхода.
+#[cfg(windows)]
+static NO_ICON: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+
 /// Снимает значки программ, которых ещё не видели.
 ///
 /// ВАЖНО: **только новых.** Поход в оболочку за значком — самое дорогое, что
@@ -530,7 +538,14 @@ fn remember_icons(app: &AppHandle, tracks: &[Track]) {
         let Some(path) = track.path.as_deref() else {
             continue;
         };
+        // Не дался однажды — не просим снова: exe заменён на лету или лежит
+        // на уснувшем сетевом диске, и поход в оболочку повторялся бы дважды
+        // в секунду в том же потоке, что принимает громкость
+        if NO_ICON.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains(&track.id) {
+            continue;
+        }
         let Some(icon) = appicon::of(path) else {
+            NO_ICON.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(track.id.clone());
             continue;
         };
 

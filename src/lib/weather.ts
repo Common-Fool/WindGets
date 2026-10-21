@@ -1,6 +1,5 @@
-import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { liveSnapshot } from "./live";
 import type { Accent } from "./accent";
 
 /** Погода за окном. Раскладывает код WMO в это Rust — там же, где тесты. */
@@ -75,48 +74,13 @@ export type WeatherState =
     }
   | { status: "failed"; place: string; reason: string };
 
-type Listener = (state: WeatherState) => void;
-
 /*
- * Подписка одна на окно, как у пинга и телеметрии. Событие тут приходит раз в
- * четверть часа, и заводить по listen на каждый вызов хука тем более незачем.
+ * Подписка одна на окно, как у пинга и телеметрии, и снимается, когда
+ * слушателей не осталось (`live.ts`). Там же порядок: сперва подписка, потом
+ * снимок — событие, ушедшее между ними, иначе пропадало бы, и карточка стояла
+ * бы на «Смотрим в окно…» до следующего захода через четыре часа.
  */
-let current: WeatherState = { status: "noPlace" };
-const listeners = new Set<Listener>();
-let started = false;
-
-function publish(next: WeatherState) {
-  current = next;
-  for (const listener of listeners) listener(next);
-}
-
-function start() {
-  if (started) return;
-  started = true;
-
-  // Спрашиваем сразу: следующего события ждать четверть часа
-  invoke<WeatherState>("weather_state")
-    .then(publish)
-    .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
-    });
-
-  listen<WeatherState>("weather", (event) => publish(event.payload)).catch(() => {
-    // Вне Tauri (обычный браузер) погоды просто нет
-  });
-}
-
-function subscribe(listener: Listener): () => void {
-  start();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function useWeather(): WeatherState {
-  return useSyncExternalStore(subscribe, () => current);
-}
+export const useWeather = liveSnapshot<WeatherState>("weather_state", "weather", { status: "noPlace" });
 
 /**
  * Обновить прогноз сейчас, не дожидаясь четырёхчасового шага.

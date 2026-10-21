@@ -143,6 +143,11 @@
   font-size: var(--text-xs);
 }
 
+/* Отказ очистки буфера — на месте счёта: высота подвала та же */
+.clip__count[data-error] {
+  color: var(--status-danger);
+}
+
 .clip__foot .btn {
   width: var(--control-icon-size);
   height: var(--control-icon-size);

@@ -113,8 +113,12 @@ namespace HwSensors
                     return value.ToString("F0", culture) + " L/h";
                 case SensorType.Factor:
                     return value.ToString("F3", culture);
+                // До мегабайта, а не до десятой гигабайта: счётчики трафика сети
+                // (Data Downloaded / Uploaded) с шагом в 0,1 ГБ давали «0 B»
+                // при живом трафике, а адаптер, выбираемый по наибольшему из
+                // них, при равенстве нулей брался первым в дереве
                 case SensorType.Data:
-                    return value.ToString("F1", culture) + " GB";
+                    return value.ToString("F3", culture) + " GB";
                 case SensorType.SmallData:
                     return value.ToString("F1", culture) + " MB";
                 case SensorType.Energy:

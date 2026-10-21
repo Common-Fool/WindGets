@@ -71,6 +71,8 @@ type Listener = (snapshot: Snapshot) => void;
 let current: Snapshot = { view: { status: "needsClientId" }, at: Date.now() };
 const listeners = new Set<Listener>();
 let unlisten: Promise<() => void> | null = null;
+// Ответы снятой подписки не должны возвращать прежнее состояние
+let generation = 0;
 
 function publish(view: SpotifyView) {
   current = { view, at: Date.now() };
@@ -80,20 +82,28 @@ function publish(view: SpotifyView) {
 function start() {
   if (unlisten !== null) return;
 
-  invoke<SpotifyView>("spotify_view")
-    .then(publish)
-    .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
-    });
-
-  unlisten = listen<SpotifyView>("spotify", (event) => publish(event.payload));
-  unlisten.catch(() => {
-    // Вне Tauri (обычный браузер) событий просто нет
+  const started = ++generation;
+  let heard = false;
+  const registered = listen<SpotifyView>("spotify", (event) => {
+    if (generation !== started) return;
+    heard = true;
+    publish(event.payload);
   });
+  unlisten = registered;
+
+  registered
+    .then(() => generation === started ? invoke<SpotifyView | null>("spotify_view") : null)
+    .then((initial) => {
+      if (generation === started && !heard && initial !== null) publish(initial);
+    })
+    .catch(() => {
+      // Вне Tauri данных нет — состояние остаётся прежним
+    });
 }
 
 function stopIfIdle() {
   if (listeners.size > 0 || unlisten === null) return;
+  ++generation;
   const pending = unlisten;
   unlisten = null;
   pending.then((stop) => stop()).catch(() => {});

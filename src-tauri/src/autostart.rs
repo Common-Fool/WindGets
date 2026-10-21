@@ -61,9 +61,34 @@ fn schtasks(args: &[&str]) -> Result<(), String> {
         return Ok(());
     }
 
-    // Планировщик пишет по-русски в кодировке консоли, и осмысленной строки из
-    // этого не собрать: отдаём код возврата, а подробности уходят в лог
-    Err(format!("schtasks вернул {}", outcome.status))
+    // Планировщик пишет на языке Windows в кодировке консоли: человеку такую
+    // строку не покажешь, а в журнале она — единственная подсказка, почему
+    let said = console_text(&outcome.stderr);
+    Err(format!("schtasks вернул {}: {}", outcome.status, said.trim()))
+}
+
+/// Вывод консольной программы — в кодировке консоли (OEM), а не в UTF-8.
+#[cfg(windows)]
+fn console_text(bytes: &[u8]) -> String {
+    use windows::Win32::Globalization::{MultiByteToWideChar, CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS};
+
+    if bytes.is_empty() {
+        return String::new();
+    }
+    // SAFETY: оба буфера — срезы с длиной; первый вызов только меряет
+    let length = unsafe { MultiByteToWideChar(CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None) };
+    if length <= 0 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let mut wide = vec![0u16; length as usize];
+    let written =
+        unsafe { MultiByteToWideChar(CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, Some(&mut wide)) };
+    String::from_utf16_lossy(&wide[..written.max(0) as usize])
+}
+
+#[cfg(not(windows))]
+fn console_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Заводит задачу на вход в систему.
@@ -88,17 +113,93 @@ pub fn enable() -> Result<(), String> {
 }
 
 /// Убирает задачу. Отсутствие задачи ошибкой не считаем: цель достигнута.
+///
+/// Сперва удаляем, потом спрашиваем, а не наоборот: отказ самого вопроса
+/// (служба планировщика занята) прежде читался как «задачи нет», и галочка
+/// снималась при живой задаче.
 pub fn disable() -> Result<(), String> {
-    if !is_enabled() {
-        return Ok(());
-    }
-
-    schtasks(&["/Delete", "/TN", TASK, "/F"])
+    confirm_disabled(schtasks(&["/Delete", "/TN", TASK, "/F"]), is_enabled)
 }
 
-/// Есть ли задача в планировщике.
-pub fn is_enabled() -> bool {
-    schtasks(&["/Query", "/TN", TASK]).is_ok()
+fn confirm_disabled(deleted: Result<(), String>, query: impl FnOnce() -> Result<bool, String>) -> Result<(), String> {
+    let Err(error) = deleted else {
+        return Ok(());
+    };
+    match query() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(error),
+        Err(check) => Err(format!("{error}; отсутствие задачи не подтверждено: {check}")),
+    }
+}
+
+/// Есть / подтверждённо нет / проверить не удалось. Обычный schtasks
+/// возвращает один код и для отсутствия задачи, и для отказа доступа.
+pub fn is_enabled() -> Result<bool, String> {
+    match schtasks(&["/Query", "/TN", TASK]) {
+        Ok(()) => Ok(true),
+        Err(error) => query_missing().map_err(|check| format!("{error}; {check}")),
+    }
+}
+
+/// Только код отсутствия от GetTask подтверждает удаление. Локализованный
+/// текст schtasks для этого не годится. COM живёт в отдельном PowerShell,
+/// чтобы не пересекаться с COM главного потока WebView2; обычный удачный
+/// /Query до этого пути не доходит.
+#[cfg(windows)]
+fn query_missing() -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
+
+    let script = presence_script(TASK);
+    let outcome = Command::new(system_exe("System32\\WindowsPowerShell\\v1.0\\powershell.exe"))
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| format!("проверка планировщика не запустилась: {error}"))?;
+    presence_result(outcome.status.code(), &String::from_utf8_lossy(&outcome.stderr))
+}
+
+#[cfg(not(windows))]
+fn query_missing() -> Result<bool, String> {
+    Err("проверка планировщика доступна только в Windows".to_owned())
+}
+
+#[cfg(any(windows, test))]
+fn presence_script(task: &str) -> String {
+    // Имя передаётся строкой PowerShell, а не частью выполняемого выражения.
+    let task = task.replace('\'', "''");
+    format!(r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {{
+    $scheduler = New-Object -ComObject Schedule.Service
+    $scheduler.Connect()
+    $folder = $scheduler.GetFolder('\')
+}} catch {{
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}}
+try {{
+    $null = $folder.GetTask('{task}')
+    exit 0
+}} catch {{
+    $failure = $_.Exception
+    while ($failure.InnerException) {{ $failure = $failure.InnerException }}
+    if ($failure.HResult -eq -2147024894) {{ exit 2 }}
+    [Console]::Error.WriteLine($failure.Message)
+    exit 1
+}}
+"#)
+}
+
+#[cfg(any(windows, test))]
+fn presence_result(code: Option<i32>, said: &str) -> Result<bool, String> {
+    match code {
+        Some(0) => Ok(true),
+        // Собственный код скрипта: HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+        // именно от GetTask, а не от запуска COM или подключения к службе.
+        Some(2) => Ok(false),
+        _ => Err(format!("планировщик не подтвердил наличие задачи (код {code:?}): {}", said.trim())),
+    }
 }
 
 /// Кем задача будет выполняться — нынешний пользователь с доменом.
@@ -107,10 +208,14 @@ pub fn is_enabled() -> bool {
 /// и из привилегированного процесса.
 fn whoami() -> String {
     let name = std::env::var("USERNAME").unwrap_or_default();
+    let domain = std::env::var("USERDOMAIN").ok();
+    account_name(&name, domain.as_deref())
+}
 
-    match std::env::var("USERDOMAIN") {
-        Ok(domain) if !domain.is_empty() && !name.is_empty() => format!("{domain}\\{name}"),
-        _ => name,
+fn account_name(name: &str, domain: Option<&str>) -> String {
+    match domain {
+        Some(domain) if !domain.is_empty() && !name.is_empty() => format!("{domain}\\{name}"),
+        _ => name.to_owned(),
     }
 }
 
@@ -121,12 +226,10 @@ mod tests {
     /// Имя пользователя обязано собираться в вид, который принимает `/RU`.
     #[test]
     fn the_user_is_named_the_way_schtasks_expects() {
-        let user = whoami();
-        assert!(!user.is_empty(), "имя пользователя не собралось");
-        assert!(
-            !user.starts_with('\\') && !user.ends_with('\\'),
-            "разделитель домена повис без половины: {user}"
-        );
+        assert_eq!(account_name("sample", Some("DOMAIN")), "DOMAIN\\sample");
+        assert_eq!(account_name("sample", None), "sample");
+        assert_eq!(account_name("sample", Some("")), "sample");
+        assert_eq!(account_name("", Some("DOMAIN")), "");
     }
 
     /// Круг «завести — проверить — убрать» на живом планировщике.
@@ -136,13 +239,13 @@ mod tests {
     #[test]
     #[ignore = "трогает живой планировщик задач, нужны права администратора"]
     fn the_task_appears_and_goes() {
-        let had = is_enabled();
+        let had = is_enabled().expect("состояние задачи проверено");
 
         enable().expect("задача заводится");
-        assert!(is_enabled(), "заведённой задачи не видно");
+        assert!(is_enabled().expect("состояние задачи проверено"), "заведённой задачи не видно");
 
         disable().expect("задача убирается");
-        assert!(!is_enabled(), "задача осталась после удаления");
+        assert!(!is_enabled().expect("состояние задачи проверено"), "задача осталась после удаления");
 
         // Возвращаем как было: тест не должен менять настройки машины
         if had {
@@ -176,5 +279,27 @@ mod tests {
             .expect("хук перед удалением есть");
         assert!(body.contains(&format!("/Delete /TN \"{TASK}\" /F")), "та же задача, что заводит приложение");
         assert!(body.contains("$UpdateMode <> 1"), "обновление поверх задачу не трогает");
+    }
+
+    #[test]
+    fn failed_delete_needs_confirmed_absence() {
+        assert!(confirm_disabled(Err("удаление запрещено".to_owned()), || Err("служба недоступна".to_owned())).is_err());
+        assert!(confirm_disabled(Err("удаление запрещено".to_owned()), || Ok(true)).is_err());
+        assert!(confirm_disabled(Err("задачи нет".to_owned()), || Ok(false)).is_ok());
+        assert!(confirm_disabled(Ok(()), || panic!("успешное удаление не требует нового запроса")).is_ok());
+    }
+
+    #[test]
+    fn task_presence_has_three_outcomes() {
+        assert_eq!(presence_result(Some(0), "").unwrap(), true);
+        assert_eq!(presence_result(Some(2), "").unwrap(), false);
+        for code in [None, Some(1), Some(5), Some(-1)] {
+            assert!(presence_result(code, "проверка не удалась").is_err());
+        }
+    }
+
+    #[test]
+    fn a_task_name_stays_a_literal_in_the_probe() {
+        assert!(presence_script("name'quoted").contains("GetTask('name''quoted')"));
     }
 }

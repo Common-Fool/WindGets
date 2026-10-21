@@ -8,7 +8,7 @@
 //! ВАЖНО: **чужой тип — отказ, а не «сойдёт».** `otpauth://hotp/…` считается по
 //! счётчику, а не по времени: принятый как TOTP, он давал бы вечно неверный код.
 
-use super::code::{Algorithm, Shape, DEFAULT_DIGITS, DEFAULT_PERIOD};
+use super::code::{Algorithm, Shape, DEFAULT_DIGITS, DEFAULT_PERIOD, MAX_DIGITS, MIN_DIGITS};
 
 /// Что удалось вынуть из ссылки.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,11 +91,22 @@ pub fn parse(link: &str) -> Result<Parsed, String> {
         match name.to_ascii_lowercase().as_str() {
             "secret" => secret = value,
             "issuer" => from_query = value.trim().to_owned(),
-            // Непонятное число — это умолчание, а не отказ: ссылку отдал сервис,
-            // и терять из-за опечатки в необязательном поле всю запись незачем
-            "digits" => digits = value.parse().unwrap_or(DEFAULT_DIGITS),
+            // Явное число цифр нельзя подменять умолчанием: минус, мусор и
+            // переполнение тоже дали бы код, которого сервис не ждёт.
+            "digits" => {
+                let asked = value.trim();
+                digits = asked.parse::<u64>()
+                    .ok()
+                    .filter(|digits| (u64::from(MIN_DIGITS)..=u64::from(MAX_DIGITS)).contains(digits))
+                    .ok_or_else(|| tr!("totp.error.digits", digits = asked))? as u8;
+            }
             "period" => period = value.parse().unwrap_or(DEFAULT_PERIOD),
-            "algorithm" => algorithm = Algorithm::from_name(&value).unwrap_or(Algorithm::Sha1),
+            // Чужой алгоритм не подменяется SHA-1: то же «нули опаснее
+            // пропусков», что у датчиков, — код был бы неверным всегда
+            "algorithm" => match Algorithm::from_name(&value) {
+                Some(asked) => algorithm = asked,
+                None => return Err(tr!("totp.error.algorithm", name = value.trim())),
+            },
             _ => {}
         }
     }
@@ -200,15 +211,38 @@ mod tests {
         assert_eq!(got.shape.algorithm, Algorithm::Sha256);
     }
 
-    /// Чужое число в необязательном поле — умолчание, а не потеря записи;
-    /// а ноль в окне приводится там же, где и всё остальное.
+    /// Нулевой период приводится к умолчанию там же, где и всё остальное.
     #[test]
     fn a_broken_shape_falls_back_to_the_defaults() {
-        let got = parse("otpauth://totp/A:b?secret=JBSWY3DP&digits=нет&period=0&algorithm=md5")
+        let got = parse("otpauth://totp/A:b?secret=JBSWY3DP&period=0")
             .expect("с мусором в форме");
         assert_eq!(got.shape.digits, DEFAULT_DIGITS);
         assert_eq!(got.shape.period, DEFAULT_PERIOD);
         assert_eq!(got.shape.algorithm, Algorithm::Sha1);
+    }
+
+    /// Чужой алгоритм и число цифр вне шести—восьми — отказ, а не тихая
+    /// подмена: с ней код был бы неверным всегда.
+    #[test]
+    fn an_unknown_algorithm_or_digit_count_is_refused() {
+        assert!(parse("otpauth://totp/A:b?secret=JBSWY3DP&algorithm=md5").is_err());
+        assert!(parse("otpauth://totp/A:b?secret=JBSWY3DP&digits=10").is_err());
+        assert!(parse("otpauth://totp/A:b?secret=JBSWY3DP&digits=5").is_err());
+        assert!(parse("otpauth://totp/A:b?secret=JBSWY3DP&digits=8&algorithm=SHA256").is_ok());
+    }
+
+    /// Явное неподдерживаемое значение не должно превращаться в шесть цифр.
+    #[test]
+    fn invalid_explicit_digits_use_the_digits_error() {
+        for digits in ["256", "-1", "18446744073709551616", "", "нет", "6.0", "0", "9"] {
+            let error = parse(&format!("otpauth://totp/A:b?secret=JBSWY3DP&digits={digits}"))
+                .expect_err("неподдерживаемая форма отвергается");
+            assert_eq!(error, tr!("totp.error.digits", digits = digits));
+        }
+        for digits in [6, 7, 8] {
+            assert_eq!(parse(&format!("otpauth://totp/A:b?secret=JBSWY3DP&digits={digits}"))
+                .expect("поддерживаемая форма").shape.digits, digits);
+        }
     }
 
     /// Ссылка без секрета — не запись, а опечатка.

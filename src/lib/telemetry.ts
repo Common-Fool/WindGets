@@ -118,8 +118,13 @@ const listeners = new Set<Listener>();
  */
 let unlisten: Promise<() => void> | null = null;
 
-/** Пришло ли событие после нынешнего запуска: тогда ответ на запрос старше. */
-let fresh = false;
+/**
+ * Номер запуска подписки. Ответ на вопрос годится только своему запуску:
+ * признак «событие уже было» прежде был общим, и новый запуск сбрасывал его —
+ * запоздавший ответ прежнего тогда затирал свежее состояние, а `Idle`,
+ * который опрос шлёт один раз, мог так и не вернуться.
+ */
+let generation = 0;
 
 function publish(next: SourceState) {
   current = next;
@@ -128,26 +133,29 @@ function publish(next: SourceState) {
 
 function start() {
   if (unlisten !== null) return;
-  fresh = false;
+  const mine = ++generation;
+  let heard = false;
 
-  // Спрашиваем текущее состояние сразу, чтобы не ждать первого тика — и после
-  // перерыва тоже: запомненный снимок к тому времени устарел. Если событие
-  // успело прийти раньше ответа — оно свежее, не затираем.
-  invoke<SourceState>("telemetry_state")
-    .then((initial) => {
-      if (!fresh) publish(initial);
-    })
-    .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
-    });
-
-  unlisten = listen<SourceState>("telemetry", (event) => {
-    fresh = true;
+  // Сперва подписка, потом вопрос (как в `live.ts`): событие, ушедшее до
+  // слушателя, иначе пропало бы. Спрашиваем текущее состояние сразу, чтобы не
+  // ждать первого тика — и после перерыва тоже: запомненный снимок к тому
+  // времени устарел. Если событие успело прийти раньше ответа — оно свежее,
+  // не затираем.
+  const registered = listen<SourceState>("telemetry", (event) => {
+    heard = true;
     publish(event.payload);
   });
-  unlisten.catch(() => {
-    // Вне Tauri (обычный браузер) потока телеметрии просто нет
-  });
+  unlisten = registered;
+
+  registered
+    .then(() => invoke<SourceState>("telemetry_state"))
+    .then((initial) => {
+      if (!heard && mine === generation) publish(initial);
+    })
+    .catch(() => {
+      // Вне Tauri (обычный браузер) потока телеметрии просто нет, а до
+      // готовности бэкенда молчим — состояние придёт событием
+    });
 }
 
 function stopIfIdle() {

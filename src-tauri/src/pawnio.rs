@@ -52,9 +52,9 @@ const INSTALLER_LIMIT: Duration = Duration::from_secs(300);
 /// Как часто опрос датчиков проверяет, не поставили ли драйвер мимо нас.
 const RECHECK: Duration = Duration::from_secs(10);
 
-/// Пауза между гашением сайдкара и установщиком: процесс уходит не мгновенно,
-/// а открытый им драйвер установщик заменить не сможет.
-const SIDECAR_GONE: Duration = Duration::from_millis(1500);
+/// Сколько ждать подтверждённого выхода сайдкара (`poller::held`). По
+/// истечении срока отказываем: открытый драйвер менять нельзя.
+const SIDECAR_GONE: Duration = Duration::from_secs(15);
 
 /// Коды выхода установщика — ошибки DOS (с PawnIO 2.2.0). 3010 и 1641 —
 /// «готово, нужна перезагрузка»: это не отказ.
@@ -322,17 +322,21 @@ pub fn publish(app: &AppHandle) {
 ///
 /// Только пока он не готов и не чаще [`RECHECK`]. Стал готов — сайдкар
 /// перезапускается, иначе LHM так и читал бы без драйвера до выхода.
-pub fn watch(app: &AppHandle) {
+///
+/// `true` — состояние сменилось, и окнам надо сказать ([`publish`]). Говорит
+/// опрос, а не эта функция: сперва он гасит прежний сайдкар, иначе окна
+/// увидели бы «готов» поверх снимка, снятого без драйвера.
+pub fn watch(app: &AppHandle) -> bool {
     let Some(pawnio) = app.try_state::<Pawnio>() else {
-        return;
+        return false;
     };
     if pawnio.busy.load(Ordering::SeqCst) {
-        return;
+        return false;
     }
     {
         let inner = pawnio.lock();
         if inner.seen == Some(Status::Ready) || inner.checked.is_some_and(|at| at.elapsed() < RECHECK) {
-            return;
+            return false;
         }
     }
 
@@ -346,8 +350,9 @@ pub fn watch(app: &AppHandle) {
         if status == Status::Ready {
             crate::poller::restart();
         }
-        publish(app);
+        return true;
     }
+    false
 }
 
 /// Опускает `busy` и снимает ход работы — и при панике тоже.
@@ -432,10 +437,11 @@ async fn install(app: &AppHandle) -> Result<(), Problem> {
 async fn run_quietly(mut command: Command, args: &[&str]) -> Option<i32> {
     command.args(args);
     crate::poller::hold(true);
-    tokio::time::sleep(SIDECAR_GONE).await;
-
-    // Процесс ждём в пуле, а не в потоке рантайма
-    let ran = tauri::async_runtime::spawn_blocking(move || crate::child::run(command, INSTALLER_LIMIT)).await;
+    // Создаём задание только после подтверждения: срок ожидания не даёт
+    // разрешения ставить поверх ещё работающего сайдкара.
+    let ran = run_after_stop(crate::poller::held, SIDECAR_GONE, || {
+        tauri::async_runtime::spawn_blocking(move || crate::child::run(command, INSTALLER_LIMIT))
+    }).await?.await;
     match ran {
         Ok(Ok((code, lines))) => {
             for line in lines.iter().filter(|line| !line.text().trim().is_empty()) {
@@ -451,6 +457,23 @@ async fn run_quietly(mut command: Command, args: &[&str]) -> Option<i32> {
             eprintln!("[pawnio] поток установщика упал: {error}");
             None
         }
+    }
+}
+
+/// Пауза без процесса подтверждается сразу; живой или открывающий железо
+/// сайдкар обязан сперва отпустить драйвер. Отдельно ради теста без установки.
+async fn run_after_stop<T>(held: impl Fn() -> bool, wait: Duration, run: impl FnOnce() -> T) -> Option<T> {
+    let until = Instant::now() + wait;
+    loop {
+        if held() {
+            return Some(run());
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            eprintln!("[pawnio] выход сайдкара не подтверждён за {} с, операция отменена", wait.as_secs());
+            return None;
+        }
+        tokio::time::sleep(left.min(Duration::from_millis(100))).await;
     }
 }
 
@@ -570,5 +593,31 @@ mod tests {
     fn a_download_failure_keeps_its_meaning() {
         assert_eq!(Problem::from(Download::BadChecksum).code, Code::BadChecksum);
         assert_eq!(Problem::from(Download::Unpack).code, Code::Disk);
+    }
+
+    #[test]
+    fn an_unconfirmed_stop_never_starts_the_installer_or_uninstaller() {
+        tauri::async_runtime::block_on(async {
+            for _ in [Job::Installing, Job::Removing] {
+                let ran = std::cell::Cell::new(false);
+                let outcome = run_after_stop(|| false, Duration::from_millis(10), || ran.set(true)).await;
+                assert!(outcome.is_none());
+                assert!(!ran.get(), "без подтверждения процесс не запускается");
+            }
+        });
+    }
+
+    #[test]
+    fn the_installer_waits_for_confirmation_and_no_poller_needs_no_delay() {
+        tauri::async_runtime::block_on(async {
+            let checks = std::cell::Cell::new(0);
+            let outcome = run_after_stop(|| {
+                checks.set(checks.get() + 1);
+                checks.get() > 1
+            }, Duration::from_secs(2), || 42).await;
+            assert_eq!(outcome, Some(42));
+            assert!(checks.get() > 1);
+            assert_eq!(run_after_stop(|| true, Duration::ZERO, || 7).await, Some(7));
+        });
     }
 }

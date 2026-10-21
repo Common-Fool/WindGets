@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use reqwest::Url;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 /// Порты, зарегистрированные в дашборде Spotify. Порядок важен: первый
@@ -68,11 +68,17 @@ impl Callback {
     /// и не считаются за ответ Spotify.
     pub async fn wait_for_code(&self, expected_state: &str) -> Result<String, String> {
         loop {
-            let (mut stream, _) = self
-                .listener
-                .accept()
-                .await
-                .map_err(|error| tr!("spotify.error.notAccepted", error = error))?;
+            let (mut stream, _) = match self.listener.accept().await {
+                Ok(accepted) => accepted,
+                // Сброшенное до приёма соединение (браузер открыл его впрок и
+                // закрыл) на Windows приходит отказом самого accept. Вход от
+                // этого не сорван — ждём следующее
+                Err(error) if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ) => continue,
+                Err(error) => return Err(tr!("spotify.error.notAccepted", error = error)),
+            };
 
             let waited = tokio::time::timeout(REQUEST_WAIT, read_request_target(&mut stream)).await;
 
@@ -164,8 +170,10 @@ fn read_outcome(target: &str, expected_state: &str) -> Outcome {
     }
 }
 
-/// Читает первую строку запроса и достаёт из неё путь с параметрами.
-async fn read_request_target(stream: &mut TcpStream) -> Option<String> {
+/// Путь берём из первой строки, но заголовки дочитываем до конца: закрытие
+/// сокета с непрочитанными байтами на Windows сбрасывает соединение, и браузер
+/// теряет страницу успешного входа.
+async fn read_request_target(stream: &mut (impl AsyncRead + Unpin)) -> Option<String> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 1024];
 
@@ -176,12 +184,13 @@ async fn read_request_target(stream: &mut TcpStream) -> Option<String> {
         }
         buffer.extend_from_slice(&chunk[..read]);
 
-        if let Some(end) = find_line_end(&buffer) {
-            let line = std::str::from_utf8(&buffer[..end]).ok()?;
-            return request_target(line).map(str::to_owned);
-        }
         if buffer.len() > MAX_REQUEST {
             return None;
+        }
+        if buffer.windows(4).any(|end| end == b"\r\n\r\n") {
+            let end = find_line_end(&buffer)?;
+            let line = std::str::from_utf8(&buffer[..end]).ok()?;
+            return request_target(line).map(str::to_owned);
         }
     }
 }
@@ -244,6 +253,46 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn waits_for_headers_split_across_reads() {
+        let (mut browser, mut socket) = tokio::io::duplex(MAX_REQUEST * 2);
+        let reading = tokio::spawn(async move { read_request_target(&mut socket).await });
+        browser.write_all(b"GET /callback?code=abc HTTP/1.1\r\n").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!reading.is_finished(), "первая строка ещё не весь запрос");
+        browser.write_all(b"Host: 127.0.0.1\r\nUser-Agent: Test\r\n\r").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!reading.is_finished(), "конец заголовков ещё не пришёл");
+        browser.write_all(b"\n").await.unwrap();
+        assert_eq!(reading.await.unwrap().as_deref(), Some("/callback?code=abc"));
+    }
+
+    #[tokio::test]
+    async fn request_limit_includes_headers_and_requires_their_end() {
+        for length in [MAX_REQUEST, MAX_REQUEST + 1] {
+            let (mut browser, mut socket) = tokio::io::duplex(MAX_REQUEST * 2);
+            let mut request = b"GET /callback HTTP/1.1\r\nX-Test: ".to_vec();
+            request.resize(length - 4, b'x');
+            request.extend_from_slice(b"\r\n\r\n");
+            browser.write_all(&request).await.unwrap();
+            browser.shutdown().await.unwrap();
+            assert_eq!(read_request_target(&mut socket).await.as_deref(),
+                (length == MAX_REQUEST).then_some("/callback"));
+        }
+        let (mut browser, mut socket) = tokio::io::duplex(256);
+        browser.write_all(b"GET /callback HTTP/1.1\r\nHost: test\r\n").await.unwrap();
+        browser.shutdown().await.unwrap();
+        assert_eq!(read_request_target(&mut socket).await, None);
+    }
+
+    #[tokio::test]
+    async fn incomplete_headers_remain_subject_to_the_request_deadline() {
+        let (mut browser, mut socket) = tokio::io::duplex(256);
+        browser.write_all(b"GET /callback HTTP/1.1\r\n").await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(20),
+            read_request_target(&mut socket)).await.is_err());
+    }
 
     #[test]
     fn takes_code_when_state_matches() {

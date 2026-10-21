@@ -19,6 +19,7 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,11 @@ use tauri::{AppHandle, Manager};
 use super::api::Player;
 
 const FILE: &str = "spotify.json";
+
+/// `spotify.json` при запуске не прочитался: до перезапуска его не пишем —
+/// первая же запись (вход, запомненный трек) легла бы поверх Client ID и
+/// токена, которых мы просто не видели.
+static UNREADABLE: AtomicBool = AtomicBool::new(false);
 
 /// Рабочие данные в памяти. Этот тип намеренно не сериализуется напрямую.
 #[derive(Clone, Default)]
@@ -144,7 +150,13 @@ fn encode(credentials: &Stored) -> Result<String, String> {
 /// Ошибка DPAPI отключает подключение, но не переписывает исходный файл.
 pub fn load(app: &AppHandle) -> Stored {
     match file_path(app) {
-        Ok(path) => load_from_path(&path),
+        Ok(path) => {
+            let (stored, unreadable) = load_from_path(&path);
+            if unreadable {
+                UNREADABLE.store(true, Ordering::SeqCst);
+            }
+            stored
+        }
         Err(error) => {
             eprintln!("Spotify: {error}");
             Stored::default()
@@ -152,21 +164,31 @@ pub fn load(app: &AppHandle) -> Stored {
     }
 }
 
-fn load_from_path(path: &Path) -> Stored {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
+/// Второе в ответе — «файл есть, но не прочитался»: такой не переписываем.
+/// «Файла нет» и «не прочитался» — разные исходы (`disk::read_existing`), а
+/// неразобравшийся откладывается рядом как `spotify.bad.json`.
+fn load_from_path(path: &Path) -> (Stored, bool) {
+    let text = match crate::disk::read_existing(path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return (Stored::default(), false),
         Err(error) => {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Spotify: не прочитать spotify.json: {error}");
-            }
-            return Stored::default();
+            eprintln!("Spotify: spotify.json не прочитался, до перезапуска не пишется: {error}");
+            return (Stored::default(), true);
         }
     };
     let (stored, rewrite) = match parse(&text) {
         Ok(parsed) => parsed,
         Err(error) => {
-            eprintln!("Spotify: {error}; файл сохранён без изменений");
-            return Stored::default();
+            return match crate::disk::set_aside(path) {
+                Ok(aside) => {
+                    eprintln!("Spotify: {error}, файл отложен в {}", aside.display());
+                    (Stored::default(), false)
+                }
+                Err(failure) => {
+                    eprintln!("Spotify: {error} и не отложился: {failure}");
+                    (Stored::default(), true)
+                }
+            };
         }
     };
     if rewrite {
@@ -174,11 +196,14 @@ fn load_from_path(path: &Path) -> Stored {
             eprintln!("Spotify: не записать миграцию токена под DPAPI: {error}");
         }
     }
-    stored
+    (stored, false)
 }
 
 /// Вызывается под замком Store; при начальной миграции Store ещё не создан.
 pub fn save(app: &AppHandle, credentials: &Stored) -> Result<(), String> {
+    if UNREADABLE.load(Ordering::SeqCst) {
+        return Err("spotify.json при запуске не прочитался — до перезапуска не пишется".to_owned());
+    }
     save_to_path(&file_path(app)?, credentials)
 }
 
@@ -243,13 +268,14 @@ mod tests {
     fn legacy_file_is_immediately_migrated_and_survives_a_reload() {
         let path = test_path();
         fs::write(&path, r#"{"client_id":"sample-client","refresh_token":"sample-refresh-token"}"#).unwrap();
-        let stored = load_from_path(&path);
+        let (stored, unreadable) = load_from_path(&path);
+        assert!(!unreadable);
         assert!(stored.same_connection(&credentials()));
         assert!(stored.last_player.is_none());
         let text = fs::read_to_string(&path).unwrap();
         assert!(!text.contains("sample-refresh-token"));
         assert!(serde_json::from_str::<serde_json::Value>(&text).unwrap().get("refresh_token").is_none());
-        assert!(load_from_path(&path).same_connection(&stored));
+        assert!(load_from_path(&path).0.same_connection(&stored));
         fs::remove_file(&path).unwrap();
     }
 
@@ -258,11 +284,26 @@ mod tests {
         let path = test_path();
         let text = r#"{"client_id":"sample-client","refresh_token":"legacy-must-not-be-used","refresh_token_protected":"broken!"}"#;
         fs::write(&path, text).unwrap();
-        let stored = load_from_path(&path);
+        let (stored, _) = load_from_path(&path);
         assert_eq!(stored.client_id(), Some("sample-client"));
         assert_eq!(stored.refresh_token(), None);
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_garbled_file_is_set_aside_and_a_missing_one_is_just_empty() {
+        let path = test_path();
+        let (stored, unreadable) = load_from_path(&path);
+        assert!(!unreadable && stored.client_id().is_none());
+
+        fs::write(&path, "{ оборвано").unwrap();
+        let (stored, unreadable) = load_from_path(&path);
+        assert!(!unreadable && stored.client_id().is_none());
+        let aside = path.with_extension("bad.json");
+        assert_eq!(fs::read_to_string(&aside).unwrap(), "{ оборвано");
+        assert!(!path.exists());
+        fs::remove_file(&aside).unwrap();
     }
 
     #[test]

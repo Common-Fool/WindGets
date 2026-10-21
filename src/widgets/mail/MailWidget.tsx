@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useWindowDrag } from "../../lib/drag";
 import { useText, type Key } from "../../lib/i18n";
+import { LetterBrowser, LetterIncomplete } from "./LetterBrowser";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
 import { ReferenceLetterPopupContent, ReferenceLetterRow } from "./MailReference";
@@ -304,17 +305,7 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
                 <CheckIcon />
               </button>
             )}
-            {letter.link !== null && (
-              <button
-                type="button"
-                className="mail__popup-btn"
-                title={t("mail.openBrowser")}
-                aria-label={t("mail.openBrowser")}
-                onClick={() => openLink(letter.link!)}
-              >
-                <ExternalLinkIcon />
-              </button>
-            )}
+            {letter.link !== null && !body?.truncated && <LetterBrowser link={letter.link} className="mail__popup-btn" />}
             <button
               type="button"
               className="mail__popup-btn"
@@ -366,6 +357,7 @@ function LetterPopup({ letter, onClose, busy, onMarkRead, reference = false }: L
               ))}
             </ul>
           )}
+          {body?.truncated && <LetterIncomplete link={letter.link} />}
         </div>
       </div>
     </div>
@@ -497,9 +489,12 @@ export function MailWidget() {
    * обещал бы свежую почту, которой нет. Ответ приходит всегда — на нажатие
    * кнопки Rust шлёт состояние даже тогда, когда оно не изменилось.
    */
+  // Занятость писем этот снимок не снимает: он мог прийти от опроса другого
+  // ящика, пока удаление ещё ждёт сервер, — и кнопка, вернувшаяся раньше
+  // времени, пускала второе удаление (на сервере без MOVE — дубль в корзине).
+  // Её снимает конец самого действия, см. `act` и `bulk`
   useEffect(() => {
     setSpinning(false);
-    setBusy([]);
     setMarkingAll(false);
   }, [mail]);
 
@@ -543,7 +538,10 @@ export function MailWidget() {
       const inboxes = answers.flatMap((answer) => (answer.status === "fulfilled" ? [answer.value] : []));
       setLooking(false);
       if (inboxes.length < answers.length) setTrouble("search failed");
-      if (inboxes.length === 0 && answers.length > 0) return;
+      if (inboxes.length === 0 && answers.length > 0) {
+        setFound(null);
+        return;
+      }
 
       // Поиск тоже может первым увидеть новое поколение, раньше фонового опроса.
       setSelectedLetter((selected) => {
@@ -653,9 +651,8 @@ export function MailWidget() {
   /**
    * Сделать и сказать, если не вышло.
    *
-   * Кружок гасит не этот `catch`, а приход нового состояния: команда возвращает
-   * управление, сделав своё дело на сервере, но карточка обновится только
-   * следующим опросом, и до него письмо ещё выглядит по-старому.
+   * Кружок гасит конец самого действия: к этому мигу `settled` уже поправил
+   * показанное, и письмо не выглядит по-старому до следующего опроса.
    */
   function act(letter: Letter, work: Promise<void>, failed: string, kind: "read" | "delete") {
     const key = letterKey(letter);
@@ -666,8 +663,8 @@ export function MailWidget() {
       .catch((error: unknown) => {
         if (accountVersion !== liveVersion.current) return;
         setTrouble(String(error) === t(STALE_LIST_KEY) ? "stale" : failed);
-        setBusy((was) => was.filter((one) => one !== key));
-      });
+      })
+      .finally(() => setBusy((was) => was.filter((one) => one !== key)));
   }
 
   const inboxes = inTab.flatMap((box) => {
@@ -686,7 +683,10 @@ export function MailWidget() {
    * Что показывает список: найденное, пока поиск открыт и что-то нашлось, —
    * иначе обычные входящие.
    */
-  const filtering = query.trim() !== "" || unseenOnly;
+  // Отбор — то, что правда искали, а не текст в поле: пока его набирают до
+  // Enter, список не пропадает, а стёртый запрос возвращает входящие, а не
+  // прежнее найденное
+  const filtering = unseenOnly || (query.trim() !== "" && (found !== null || looking));
   const shown = (filtering ? (found?.letters ?? []) : letters).filter((letter) =>
     inTab.some((box) => box.id === letter.account && box.revision === letter.revision),
   );
@@ -918,7 +918,7 @@ export function MailWidget() {
           */}
         {filtering && !looking && found !== null && found.letters.length === 0 && (
           <div className="mail__status">
-            <span className="mail__status-title">{t("weather.place.nothing")}</span>
+            <span className="mail__status-title">{t("mail.searchNothing")}</span>
           </div>
         )}
 

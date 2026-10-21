@@ -35,6 +35,9 @@ import "./totp-reference.css";
 /** Запас, с которым просим коды после границы периода. */
 const AFTER_BOUNDARY = 250;
 
+/** Наибольшая задержка, которую `setTimeout` отмеряет честно. */
+const LONGEST_TIMER = 2 ** 31 - 1;
+
 /** Сколько держится подпись «Copied». */
 const COPIED_FOR = 2000;
 
@@ -51,7 +54,7 @@ export function TotpWidget() {
 
   const [answer, setAnswer] = useState<Codes | null>(null);
   const [current, setCurrent] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [copied, setCopied] = useState<{ id: string } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<TotpCopyFeedback | null>(null);
   const copyRequest = useRef(0);
   const listPosition = useRef(0);
@@ -98,6 +101,11 @@ export function TotpWidget() {
 
     let alive = true;
     let timer: number | undefined;
+    // Ближайшая граница периода, секунды эпохи по часам Rust. Сверяет её
+    // ежесекундный такт: будильник отмеряет промежуток, а не мгновение, и
+    // переведённые вперёд часы иначе оставили бы на карточке код прежнего
+    // времени почти до конца периода
+    let due = Number.POSITIVE_INFINITY;
 
     const ask = () => {
       // Прежний будильник снимаем сразу: окно, спрятанное и показанное до
@@ -106,6 +114,7 @@ export function TotpWidget() {
       // модели
       window.clearTimeout(timer);
       timer = undefined;
+      due = Number.POSITIVE_INFINITY;
 
       // Спрятанное окно не просит ничего. На пустой ответ не перезапрашиваем
       // вовсе: разбудит нас `visibilitychange`, а не плотная петля IPC
@@ -129,8 +138,15 @@ export function TotpWidget() {
           if (!Number.isFinite(soonest)) return;
 
           // Запас не украшение: запрос, ушедший за миллисекунды до границы,
-          // вернул бы старый код с истёкшим `validUntil` — и мы ушли бы в петлю
-          const wait = Math.max((soonest - next.now) * 1000 + AFTER_BOUNDARY, AFTER_BOUNDARY);
+          // вернул бы старый код с истёкшим `validUntil` — и мы ушли бы в петлю.
+          // Отмеряем от своих часов с точностью до миллисекунды, а не от
+          // `next.now`: тот усечён до секунды, и запас выходил бы до 1,25 с —
+          // столько карточка показывала бы просроченный код. Сверху — предел
+          // таймера: больше 2^31 мс он срабатывает сразу, и период длиной в
+          // месяц превратил бы будильник в петлю запросов
+          due = soonest;
+          const left = soonest * 1000 - (Date.now() + offset.current * 1000);
+          const wait = Math.min(Math.max(left + AFTER_BOUNDARY, AFTER_BOUNDARY), LONGEST_TIMER);
           // Будильник всегда один: два ответа внахлёст (проснулись, пока
           // прошлый запрос ещё шёл) иначе завели бы два
           window.clearTimeout(timer);
@@ -149,7 +165,9 @@ export function TotpWidget() {
     document.addEventListener("visibilitychange", wake);
 
     const beat = window.setInterval(() => {
-      setSecond(Math.floor(Date.now() / 1000) + offset.current);
+      const second = Math.floor(Date.now() / 1000) + offset.current;
+      setSecond(second);
+      if (second >= due) ask();
     }, 1000);
 
     return () => {
@@ -166,7 +184,7 @@ export function TotpWidget() {
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  // GPT получает отдельный ответ, а прежний таймер Copied у Claude не меняется.
+  // GPT получает отдельный ответ с тем же сроком, что и Copied у Claude.
   useEffect(() => {
     if (copyFeedback === null) return;
     const timer = window.setTimeout(() => setCopyFeedback(null), COPIED_FOR);
@@ -186,9 +204,11 @@ export function TotpWidget() {
     const ticket = ++copyRequest.current;
     setCopyFeedback(null);
     void copySecret(code.code).then((done) => {
-      if (done) setCopied(id);
-      // Результат предыдущего щелчка не отменяет новое действие в GPT.
-      if (ticket === copyRequest.current) setCopyFeedback({ id, ok: done });
+      // Поздний ответ не отменяет новое действие ни в одном дизайне.
+      if (ticket !== copyRequest.current) return;
+      // Новый объект перезапускает срок Copied и при повторе той же записи.
+      if (done) setCopied({ id });
+      setCopyFeedback({ id, ok: done });
     }).catch(() => {
       if (ticket === copyRequest.current) setCopyFeedback({ id, ok: false });
     });
@@ -247,7 +267,7 @@ export function TotpWidget() {
                     </span>
 
                     <span className="totp__code tabular" data-open={open}>
-                      {cell(t, code, row, open, copied === row.id)}
+                      {cell(t, code, row, open, copied?.id === row.id)}
                     </span>
 
                     {/* Кольцо остатка: доля дорисовывается конической заливкой,

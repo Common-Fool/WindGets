@@ -1,6 +1,5 @@
-import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { liveSnapshot } from "./live";
 import type { Key } from "./i18n";
 
 /*
@@ -59,52 +58,13 @@ export type Codes = {
 
 const EMPTY: View = { accounts: [], trouble: null };
 
-type Listener = (state: View) => void;
-
-let current: View = EMPTY;
-const listeners = new Set<Listener>();
-let started = false;
-
-function publish(next: View) {
-  current = next;
-  for (const listener of listeners) listener(next);
-}
-
-function start() {
-  if (started) return;
-  started = true;
-
-  let heard = false;
-
-  // Спрашиваем и подписываемся разом, и порядок ответов не гарантирован:
-  // запоздавший снимок затёр бы список, только что пришедший событием
-  invoke<View>("totp_state")
-    .then((initial) => {
-      if (heard) return;
-      publish(initial);
-    })
-    .catch(() => {
-      // Вне Tauri записей просто нет
-    });
-
-  listen<View>("totp", (event) => {
-    heard = true;
-    publish(event.payload);
-  }).catch(() => {});
-}
-
-function subscribe(listener: Listener): () => void {
-  start();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** Список записей. Один на окно, как у звука. */
-export function useAccounts(): View {
-  return useSyncExternalStore(subscribe, () => current);
-}
+/**
+ * Список записей. Один на окно, как у звука, и снимается, когда слушателей не
+ * осталось (`live.ts`); там же порядок — сперва подписка, потом снимок:
+ * запись, добавленная из настроек в промежутке, иначе не появилась бы на
+ * карточке до следующей правки.
+ */
+export const useAccounts = liveSnapshot<View>("totp_state", "totp", EMPTY);
 
 /**
  * Коды для перечисленных записей; пустой список — для всех.

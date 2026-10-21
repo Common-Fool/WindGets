@@ -1,6 +1,7 @@
 import type { CharClass, Options, Strength } from "../../lib/password";
 import { classOf, MAX_LENGTH, MIN_LENGTH, STRENGTH_STEPS } from "../../lib/password";
 import { useText } from "../../lib/i18n";
+import { copySelectionAsSecret } from "../../lib/copy";
 import { Button } from "../../components/Button";
 import { Slider } from "../../components/Slider";
 import { SegmentMeter } from "../../components/SegmentMeter";
@@ -33,7 +34,7 @@ export function PasswordReference({ layout, options, value, strength, counts, co
   const variant = layout === 1 ? 1 : 0;
   const strengthDetails = t(strength.label) + " · " + t("password.strengthDetails", { bits: strength.bits, level: strength.level });
   const result = (
-    <output className="pass-reference__value" data-no-drag>
+    <output className="pass-reference__value" data-no-drag onCopy={copySelectionAsSecret}>
       <span className="pass-reference__chars">
         {[...value].map((character, index) => (
           <span key={index} data-class={classOf(character)}>{character}</span>

@@ -117,8 +117,10 @@ function Empty({ reference }: { reference: boolean }) {
     <div className="conv__empty">
       <p className="conv__lead">{t("converter.dropHere")}</p>
       <Button onClick={() => void pickFiles()}>{t("converter.choose")}</Button>
+      {/* Названия видов — из каталога, как у GPT: это не подписи показаний,
+          и английскими на любом языке им стоять незачем. Форматы — имена */}
       <p className="conv__hint">
-        Video → MP4, GIF, MP3 · Audio → MP3 · Images → PNG, JPG
+        {t("converter.state.video")} → MP4, GIF, MP3 · {t("converter.state.audio")} → MP3 · {t("converter.state.image")} → PNG, JPG
       </p>
     </div>
   );
@@ -187,7 +189,7 @@ function Batch({ view, reference }: { view: ConverterView; reference: boolean })
               variant="outline"
               icon={<FolderIcon />}
               label={t("converter.openFolder")}
-              onClick={() => void openOutputDir("converter")}
+              onClick={() => void openOutputDir("converter").catch(() => {})}
             />
             <span className="conv__spacer" />
             <Button onClick={() => void startConverting().catch(() => {})} disabled={!canStart}>
@@ -423,6 +425,9 @@ function TrimFields({ view, change }: { view: ConverterView; change: ChangeProps
       }}
       onBlur={() => {
         editing.current = false;
+        // Эхо могло прийти в фокусе или вовсе не изменить прежнее значение
+        setFrom(view.options.from);
+        setTo(view.options.to);
       }}
       onChange={(event) => apply(event.target.value)}
     />
@@ -523,9 +528,12 @@ function usePreview(view: ConverterView) {
   const hide = useRef<number | undefined>(undefined);
   // Запоздавший кадр прежнего отпускания не должен перебить новый
   const ticket = useRef(0);
+  const playTicket = useRef(0);
 
   // Волна — одна на файл; сменился файл — и кадр, и звук тоже чужие
   useEffect(() => {
+    ticket.current += 1;
+    window.clearTimeout(hide.current);
     setWave(null);
     void hideFrame().catch(() => {});
     if (kind !== "audio" || subject === null) return;
@@ -543,10 +551,11 @@ function usePreview(view: ConverterView) {
   // Звук не переживает ни смену файла, ни уход карточки
   useEffect(
     () => () => {
+      playTicket.current += 1;
       setPlaying(null);
       void hush().catch(() => {});
     },
-    [subject],
+    [kind, subject],
   );
 
   // Бегунок идёт по часам: позицию у `PlaySound` не спросить
@@ -563,6 +572,7 @@ function usePreview(view: ConverterView) {
   // Карточку закрыли — окно кадра над ней оставаться не должно
   useEffect(
     () => () => {
+      ticket.current += 1;
       window.clearTimeout(hide.current);
       void hideFrame().catch(() => {});
     },
@@ -575,8 +585,11 @@ function usePreview(view: ConverterView) {
   }
 
   function play(from: number, until: number, tail: boolean) {
+    const mine = ++playTicket.current;
     listenFrom(from, until, tail)
       .then((started) => {
+        // Ответ прежнего куска после остановки или новой просьбы уже чужой
+        if (mine !== playTicket.current) return;
         setNow(0);
         setPlaying({ ...started, since: performance.now() });
       })
@@ -589,6 +602,7 @@ function usePreview(view: ConverterView) {
     playhead: playing === null ? null : playing.start + Math.min(now, playing.length),
     play,
     stop() {
+      playTicket.current += 1;
       setPlaying(null);
       void hush().catch(() => {});
     },
@@ -607,11 +621,9 @@ function usePreview(view: ConverterView) {
       const mine = ++ticket.current;
       frameAt(edge === "from" ? from : until, handle)
         .then(() => {
-          // Пока кадр резался, ручку взяли снова — показанный уже чужой
-          if (mine !== ticket.current) {
-            void hideFrame().catch(() => {});
-            return;
-          }
+          // Rust проверяет билет до показа: запоздавший ответ не должен
+          // ни продлевать прежний кадр, ни прятать уже попрошенный новый
+          if (mine !== ticket.current) return;
           window.clearTimeout(hide.current);
           // Отпустили стрелками, а мышь где-то ещё — кадр всё равно покажем
           if (!hovering.current) linger();
@@ -707,7 +719,10 @@ function TrimBar({
     const handle = track.current?.querySelectorAll(".conv__trim-handle")[edge === "from" ? 0 : 1];
     if (!(handle instanceof HTMLElement)) return null;
     const rect = handle.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, top: rect.top, bottom: rect.bottom };
+    const rail = track.current!.getBoundingClientRect();
+    // После стрелки React ещё не переставил ручку: её центр считаем из
+    // нового значения, а высоту берём у той же ручки в нынешней раскладке
+    return { x: rail.left + (current.current[edge] / length) * rail.width, top: rect.top, bottom: rect.bottom };
   }
 
   function down(event: PointerEvent<HTMLDivElement>) {

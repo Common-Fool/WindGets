@@ -26,12 +26,18 @@ type Props = {
    * вопрос «как поставить курсор внутрь ссылки» — выйти из чтения в правку.
    */
   live?: boolean;
+  /**
+   * Ссылку со своим словом показывать всей записью, а не словом. Нужно
+   * подложке заметки: буквы под прозрачным полем обязаны совпадать с полем
+   * знак в знак, иначе курсор, выделение и перенос строк расходятся с текстом.
+   */
+  verbatim?: boolean;
 };
 
-export function Linked({ text, live = true }: Props) {
+export function Linked({ text, live = true, verbatim = false }: Props) {
   return (
     <>
-      {pieces(text).map((piece, at) =>
+      {pieces(text, verbatim).map((piece, at) =>
         piece.link ? (
           <span
             key={at}

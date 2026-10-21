@@ -16,6 +16,7 @@
 mod board;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -391,6 +392,16 @@ pub async fn clipboard_copy_secret(window: tauri::WebviewWindow, text: String) -
     }
 }
 
+/// Модуль выключили: история забывается на ближайшем тике, даже если его
+/// тут же включат снова. Сам тик видит выключенный модуль, только если попал
+/// в паузу, — «выключить — включить» быстрее полсекунды оставляло в истории
+/// всё скопированное, пароли извне тоже.
+static FORGET: AtomicBool = AtomicBool::new(false);
+
+pub fn forget() {
+    FORGET.store(true, Ordering::SeqCst);
+}
+
 /// Поднимает поток буфера. Живёт до конца работы приложения.
 pub fn spawn(app: AppHandle) {
     let (orders, inbox) = mpsc::channel();
@@ -458,6 +469,12 @@ fn work(app: AppHandle, inbox: Receiver<Order>) {
             changed |= obey_order(&app, order, &mut seen);
         }
 
+        if FORGET.swap(false, Ordering::SeqCst) {
+            // И номер свежий: скопированное при выключенном модуле — не новое
+            seen = board::sequence();
+            changed |= app.state::<Clipboard>().locked().clear();
+        }
+
         if recording(&app) {
             changed |= poll(&app, &mut seen);
         } else {
@@ -481,13 +498,26 @@ fn poll(app: &AppHandle, seen: &mut u32) -> bool {
     if now == *seen {
         return false;
     }
+
+    let text = match board::read() {
+        Ok(text) => text,
+        // Буфер держит чужое приложение (Excel с большим диапазоном, RDP,
+        // другой менеджер буфера). Номер не сдвигаем: следующий тик прочтёт
+        // снова, иначе эта запись пропала бы навсегда — номер больше не сменится
+        Err(_) => return false,
+    };
     *seen = now;
 
-    match board::read() {
-        Some(text) => app.state::<Clipboard>().locked().record(&text),
-        // Картинка, файлы или пометка «не для истории»: список не трогаем
-        None => false,
+    let clipboard = app.state::<Clipboard>();
+    let mut history = clipboard.locked();
+    let recorded = text.is_some_and(|text| history.record(&text));
+    if recorded {
+        return true;
     }
+    // Картинка, файлы, пометка «не для истории», пустое или слишком длинное:
+    // в буфере теперь не то, что было, и подсвечивать прежнюю строку как
+    // лежащую в нём — врать (Ctrl+V вставит другое)
+    history.current.take().is_some()
 }
 
 /// Отвечает только после попытки исполнения, даже если список не изменился.

@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
@@ -29,13 +29,51 @@ use crate::windows;
 /// Процессов тут нет: они читают систему сами, через `sysinfo`.
 pub const SENSOR_WIDGETS: &[&str] = &["gpu", "cpu", "disks", "network", "debug", "kitchensink"];
 
-/// Переходы модулей идут строго по одному.
+/// Переходы модулей идут строго по одному и в том порядке, в каком их просили.
 ///
 /// ВАЖНО: **без очереди быстрое «выключить — включить» теряет окно.**
 /// Разборка уходит главному потоку, а метка окна освобождается не сразу:
 /// включение, пришедшее следом, видело ещё живое окно, решало «уже загружен» —
 /// и разборка догоняла его, оставляя включённый модуль без окна.
-static TRANSITION: Mutex<()> = Mutex::new(());
+///
+/// ВАЖНО: **очередь по номерам, а не голый `Mutex`.** Обычный замок порядка
+/// ожидающих не обещает: «Включить все» и следом «выключить конвертер», оба
+/// пришедшие во время чужого перехода, могли пройти задом наперёд — и
+/// конвертер включился бы вопреки последнему нажатию. Номер берётся в момент
+/// просьбы, до ухода в пул ([`ticket`]).
+struct Turns {
+    issued: u64,
+    serving: u64,
+}
+
+static TURNS: Mutex<Turns> = Mutex::new(Turns { issued: 0, serving: 0 });
+static TURN: Condvar = Condvar::new();
+
+/// Номер в очереди переходов. Брать его сразу, в потоке просьбы.
+pub fn ticket() -> u64 {
+    let mut turns = TURNS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let number = turns.issued;
+    turns.issued += 1;
+    number
+}
+
+/// Подошедшая очередь; уходя, пропускает следующего — и при панике тоже.
+struct Turn;
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        TURNS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).serving += 1;
+        TURN.notify_all();
+    }
+}
+
+fn wait_turn(number: u64) -> Turn {
+    let mut turns = TURNS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    while turns.serving != number {
+        turns = TURN.wait(turns).unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+    Turn
+}
 
 /// Фоновые работы, которые уже запущены. Каждая запускается один раз и живёт
 /// до выхода: остановки у них нет, а выключенный модуль они не трогают сами —
@@ -131,14 +169,19 @@ fn detach(id: &str) {
 /// ВАЖНО: **не из главного потока.** Сборка окна ждёт главный поток, и
 /// вызванная из него она ждала бы сама себя — ровно так зависала синхронная
 /// команда (см. [`windows::create`]). Из обработчиков меню и событий окна зовут
-/// [`set_later`].
-pub fn set(app: &AppHandle, widget: &'static Widget, on: bool) -> Result<(), String> {
-    let _turn = TRANSITION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+/// [`set_later`]. `turn` — номер из [`ticket`], взятый в момент просьбы.
+pub fn set(app: &AppHandle, turn: u64, widget: &'static Widget, on: bool) -> Result<(), String> {
+    let _turn = wait_turn(turn);
+
+    // Галочку видеокарты без дискретной карты гасит окно настроек; эта
+    // проверка — на случай, если просьба придёт мимо него. Выключать можно
+    // всегда: после обновления драйвера карта бывает не видна до перезапуска
+    if on && widget.id == "gpu" && crate::poller::lacks_graphics_card() {
+        return Err(tr!("settings.widgets.noGpu"));
+    }
 
     let state = app.state::<SettingsState>();
-    let settings = settings::update(app, &state, |settings| {
+    settings::update(app, &state, |settings| {
         settings.edit_widget(widget, |own| {
             own.enabled = on;
             true
@@ -149,7 +192,7 @@ pub fn set(app: &AppHandle, widget: &'static Widget, on: bool) -> Result<(), Str
     crate::settings_window::emit(app);
 
     if on {
-        enable(app, widget, !settings.hidden_all)
+        enable(app, widget)
     } else {
         unload(app, widget.id);
         Ok(())
@@ -158,10 +201,8 @@ pub fn set(app: &AppHandle, widget: &'static Widget, on: bool) -> Result<(), Str
 
 /// Все модули разом — строка «Все» в списке виджетов. Одна запись настроек на
 /// нажатие, а не по одной на каждый модуль.
-pub fn set_all(app: &AppHandle, on: bool) -> Result<(), String> {
-    let _turn = TRANSITION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+pub fn set_all(app: &AppHandle, turn: u64, on: bool) -> Result<(), String> {
+    let _turn = wait_turn(turn);
 
     let state = app.state::<SettingsState>();
     // Дискретной видеокарты нет — её виджет «Включить все» пропускает:
@@ -169,7 +210,7 @@ pub fn set_all(app: &AppHandle, on: bool) -> Result<(), String> {
     // Признак помнится и тогда, когда опрос уснул вместе с модулями железа
     let no_gpu = on && crate::poller::lacks_graphics_card();
     let mut touched: Vec<&'static Widget> = Vec::new();
-    let settings = settings::update(app, &state, |settings| {
+    settings::update(app, &state, |settings| {
         for widget in widgets::shown() {
             // Отладку и витрину включают только своей галочкой: «Все» —
             // это виджеты, а не служебные окна (12 октября, слово пользователя)
@@ -195,7 +236,7 @@ pub fn set_all(app: &AppHandle, on: bool) -> Result<(), String> {
     let mut errors = Vec::new();
     for widget in touched {
         if on {
-            if let Err(error) = enable(app, widget, !settings.hidden_all) {
+            if let Err(error) = enable(app, widget) {
                 errors.push(error);
             }
         } else {
@@ -209,14 +250,15 @@ pub fn set_all(app: &AppHandle, on: bool) -> Result<(), String> {
 /// возвращается сразу. Зовут меню виджета и крестик окна с рамкой.
 pub fn set_later(app: &AppHandle, widget: &'static Widget, on: bool) {
     let app = app.clone();
+    let turn = ticket();
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = set(&app, widget, on);
+        let _ = set(&app, turn, widget, on);
     });
 }
 
 /// Неудавшееся включение откатывается и для одной галочки, и для «Все».
-fn enable(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(), String> {
-    if let Err(error) = load(app, widget, visible) {
+fn enable(app: &AppHandle, widget: &'static Widget) -> Result<(), String> {
+    if let Err(error) = load(app, widget) {
         eprintln!("модуль «{}» не включился: {error}", widget.id);
         settings::update_widget(app, &app.state::<SettingsState>(), widget, |_, own| {
             own.enabled = false;
@@ -232,7 +274,7 @@ fn enable(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(),
 }
 
 /// Грузит модуль: собирает окно, если его нет, и запускает работы.
-fn load(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(), String> {
+fn load(app: &AppHandle, widget: &'static Widget) -> Result<(), String> {
     let existing = app.get_webview_window(widget.id);
     let fresh = existing.is_none();
     let window = match existing {
@@ -247,8 +289,10 @@ fn load(app: &AppHandle, widget: &'static Widget, visible: bool) -> Result<(), S
         if pending.load(Ordering::SeqCst) || app.get_webview_window(widget.id).is_none() {
             return Err(format!("доводка окна «{}» отменена", widget.id));
         }
-        // За время сборки могли нажать «Спрятать все».
-        let visible = visible && !app.state::<SettingsState>().get().hidden_all;
+        // Рубильник «Спрятать все» — нынешний, а не снятый до сборки: его
+        // могли и поднять, и опустить, пока собирался webview, а `show_all`
+        // окна, ещё не зарегистрированного, не видит
+        let visible = !app.state::<SettingsState>().get().hidden_all;
         if fresh {
             windows::finish(&app, &window, widget, false);
         }
@@ -280,8 +324,18 @@ fn unload(app: &AppHandle, id: &'static str) {
     // Тот же путь, что у кнопки «Отмена»: рабочий поток гасит Job Object
     // и убирает недописанное; загрузчик также прерывает обновление yt-dlp.
     match id {
-        "converter" => crate::converter::converter_cancel(app.clone()),
+        // Кадр над ручкой — своё окно GDI поверх всех, а прослушивание —
+        // PlaySound: гасит их уборка карточки, а у разобранного окна её нет
+        "converter" => {
+            crate::converter::converter_cancel(app.clone());
+            crate::converter::converter_hush(app.clone());
+            crate::converter::converter_frame_hide(app.clone());
+        }
         "downloader" => crate::downloader::downloader_cancel(app.clone()),
+        // Замер идёт сам по себе, восемью соединениями: окно ушло, а он бы
+        // лил и отдавал дальше и дописал бы историю выключенному модулю
+        "speedtest" => crate::speedtest::cancel(app),
+        "clipboard" => crate::clipboard::forget(),
         _ => {}
     }
 
@@ -291,7 +345,9 @@ fn unload(app: &AppHandle, id: &'static str) {
         };
 
         detach(id);
-        // До разборки: разобранное окно координат уже не отдаёт
+        // До разборки: разобранное окно координат уже не отдаёт. Поднятое под
+        // раскрытую панель записалось бы поднятым
+        windows::return_lift(&window);
         windows::save_places(&app);
         window.destroy().map_err(|error| format!("окно «{id}» не разобралось: {error}"))
     }) {
@@ -344,7 +400,8 @@ fn wait_for_main(finished: std::sync::mpsc::Receiver<Result<(), String>>, limit:
 #[tauri::command]
 pub async fn set_module(app: AppHandle, id: String, on: bool) -> Result<(), String> {
     let widget = widgets::find(&id).ok_or_else(|| tr!("common.failed"))?;
-    tauri::async_runtime::spawn_blocking(move || set(&app, widget, on)).await.map_err(|error| {
+    let turn = ticket();
+    tauri::async_runtime::spawn_blocking(move || set(&app, turn, widget, on)).await.map_err(|error| {
         eprintln!("переключение модуля не завершилось: {error}");
         tr!("common.failed")
     })?
@@ -353,7 +410,8 @@ pub async fn set_module(app: AppHandle, id: String, on: bool) -> Result<(), Stri
 /// Все модули разом — строка «Все». Тоже async, по той же причине.
 #[tauri::command]
 pub async fn set_all_modules(app: AppHandle, on: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || set_all(&app, on)).await.map_err(|error| {
+    let turn = ticket();
+    tauri::async_runtime::spawn_blocking(move || set_all(&app, turn, on)).await.map_err(|error| {
         eprintln!("переключение всех модулей не завершилось: {error}");
         tr!("common.failed")
     })?

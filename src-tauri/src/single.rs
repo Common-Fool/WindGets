@@ -25,7 +25,9 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 use ::windows::core::{w, PCWSTR};
-use ::windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
+use ::windows::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0,
+};
 use ::windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,
 };
@@ -75,6 +77,9 @@ fn wake_first() {
             if let Err(error) = unsafe { SetEvent(event) } {
                 eprintln!("первый экземпляр не разбужен: {error}");
             }
+            // Закрываем сразу: при перезапуске этот процесс остаётся жить, и
+            // открытый описатель держал бы событие первого и после его ухода
+            let _ = unsafe { CloseHandle(event) };
         }
         // Первый ещё не завёл событие (сам только поднимается) — будить некого
         Err(error) => eprintln!("событие первого экземпляра не открылось: {error}"),
@@ -104,9 +109,9 @@ pub fn listen(app: &AppHandle) {
                 return;
             }
             // Будит и новый процесс перезапуска, пока этот уходит: уходящему
-            // показывать настройки незачем
+            // показывать настройки незачем, и слушать дальше тоже
             if app.state::<crate::windows::Shutdown>().started() {
-                continue;
+                return;
             }
             crate::windows::on_main(&app, |app| crate::settings_window::show(&app));
         }

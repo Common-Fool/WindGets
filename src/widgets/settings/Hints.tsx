@@ -36,17 +36,31 @@ export function Hints() {
   useEffect(() => {
     let current: HTMLElement | null = null;
     let timer = 0;
+    /*
+     * Кому подсказка служит описанием и что у него стояло до неё.
+     *
+     * Это не всегда носитель `data-hint`: у галочки с подписью он — обёртка
+     * `label`, у ползунка — `div.field`, а фокус стоит на самом контроле
+     * внутри. Описание предка контрол не наследует, и диктор его не прочёл бы.
+     */
+    let described: { element: HTMLElement; before: string | null } | null = null;
+
+    const undescribe = () => {
+      if (described === null) return;
+      const { element, before } = described;
+      if (before === null) element.removeAttribute("aria-describedby");
+      else element.setAttribute("aria-describedby", before);
+      described = null;
+    };
 
     const hide = () => {
       window.clearTimeout(timer);
-      if (current) {
-        current.removeAttribute("aria-describedby");
-        current = null;
-      }
+      undescribe();
+      current = null;
       setShown(null);
     };
 
-    const show = (target: HTMLElement) => {
+    const show = (target: HTMLElement, focused?: HTMLElement) => {
       current = target;
       timer = window.setTimeout(() => {
         const text = target.dataset.hint;
@@ -55,7 +69,9 @@ export function Hints() {
         // меряется там — у края окна её ширину урезало бы
         setPlace(null);
         setShown({ text, anchor: target.getBoundingClientRect() });
-        target.setAttribute("aria-describedby", id);
+        const element = focused ?? target;
+        described = { element, before: element.getAttribute("aria-describedby") };
+        element.setAttribute("aria-describedby", id);
       }, DELAY);
     };
 
@@ -93,7 +109,7 @@ export function Hints() {
       hide();
       if (target === null) return;
 
-      show(target);
+      show(target, event.target instanceof HTMLElement ? event.target : undefined);
     };
 
     const onBlur = (event: FocusEvent) => {
@@ -117,9 +133,7 @@ export function Hints() {
 
     return () => {
       window.clearTimeout(timer);
-      if (current) {
-        current.removeAttribute("aria-describedby");
-      }
+      undescribe();
       document.removeEventListener("pointerover", over);
       document.removeEventListener("pointerout", out);
       document.removeEventListener("pointerdown", pressed, true);

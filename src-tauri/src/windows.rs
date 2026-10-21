@@ -139,6 +139,10 @@ pub fn save_places(app: &AppHandle) {
         }
     } else {
         sound_panel::save_anchor(app);
+        // Хорошая копия и число мониторов при записи (`places.rs`)
+        if let Ok(dir) = app.path().app_config_dir() {
+            crate::places::after_save(&dir);
+        }
     }
 }
 
@@ -413,12 +417,12 @@ pub fn set_size(app: &AppHandle, id: &str, index: usize) {
     let scale = settings.scale_of(widget);
     let was_side_panel = id == "sound" && sound_panel::restore_base(&window);
     apply_preset(&window, widget, index, view, scale);
-    // Смена вида тоже может убрать раскрытую панель. Возвращаем её подъём,
-    // насколько новый размер помещается снизу, тем же расчётом, что у роста.
-    if id == "sound" {
-        if let (Ok(place), Ok(size)) = (window.outer_position(), window.inner_size()) {
-            settle(&window, place, size.height);
-        }
+    // Готовый размер убирает раскрытую панель у любого виджета (`widget-size`
+    // её сворачивает), а не только у звука. Возвращаем её подъём, насколько
+    // новый размер помещается снизу, тем же расчётом, что у роста: иначе
+    // пульт или погода, поднятые под плейлисты и прогноз, висели бы над краем
+    if let (Ok(place), Ok(size)) = (window.outer_position(), window.inner_size()) {
+        settle(&window, place, size.height);
     }
     if was_side_panel || (id == "sound" && view == 2) {
         sound_panel::clamp_base(&window);
@@ -464,6 +468,11 @@ pub fn grow(window: &WebviewWindow, by: f64) {
         return;
     }
 
+    // Секунду после переноса Snap держит прежний размер (`snap::guard_size`)
+    // и отбрасывает любой другой молча: раскрытая сразу после переноса панель
+    // не выросла бы, а фронт уже записал бы прибавку и при закрытии сжал бы
+    // окно ниже основы
+    crate::snap::release_size_guard(window);
     let height = (size.height as i32 + step).max(1) as u32;
     let _ = window.set_size(PhysicalSize::new(size.width, height));
     settle(window, place, height);
@@ -763,7 +772,10 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     let own = settings.widget(widget);
     let scale = settings.scale_of(widget);
 
-    // Окно встаёт под свой масштаб — с него и отсчёт для пересчёта
+    // Окно встаёт под свой масштаб — с него и отсчёт для пересчёта. Прежний
+    // запоминаем: выключенное окно пересчёт масштаба пропускал, и гибкому
+    // виджету его ручной размер надо домножить самим (ниже)
+    let measured_at = layout_scale(widget.id, scale);
     set_layout_scale(widget.id, scale);
 
     // ВАЖНО: **первым, пока окно спрятано, а не последним.** Защита правит
@@ -784,10 +796,21 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     }
     let _ = window.restore_state(state_flags());
     sound_panel::restore_anchor(window);
-    if widget.id == "sound" {
-        // Модуль мог разобрать прежнее окно с раскрытой панелью. Новое
-        // начинает с основы и не наследует долг её старого роста вниз.
-        LIFTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(widget.id);
+    // Модуль мог разобрать прежнее окно с раскрытой панелью. Новое начинает с
+    // основы и не наследует долг её старого роста вниз — у любого виджета, не
+    // только у звука: подъём вернули при разборке ([`return_lift`])
+    LIFTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(widget.id);
+
+    // Гибкое окно хранит размер, накрученный руками при прежнем масштабе: пока
+    // модуль был выключен, `rescale` его не видел
+    if widget.flexible && measured_at > 0.0 && (measured_at - scale).abs() > f64::EPSILON {
+        if let Ok(size) = window.inner_size() {
+            let ratio = scale / measured_at;
+            let _ = window.set_size(PhysicalSize::new(
+                (f64::from(size.width) * ratio).round() as u32,
+                (f64::from(size.height) * ratio).round() as u32,
+            ));
+        }
     }
 
     // ВАЖНО: **после восстановления, а не вместо него.** Плагин окон вернёт
@@ -814,8 +837,11 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     watch_closing(app, window, widget.id);
     snap::attach(app, window, widget.id, widget.chrome);
 
-    // Рубильник «спрятать все» поднят — окно собрано, но на экран не выходит
-    if visible {
+    // Рубильник «спрятать все» поднят — окно собрано, но на экран не выходит.
+    // Смотрим и на нынешний рубильник, а не только на переданный: окно
+    // собирается в пуле, и поднятый за это время рубильник своё окно уже не
+    // нашёл бы — оно показалось бы вопреки ему
+    if visible && !settings.hidden_all {
         let _ = window.show();
     }
 }
@@ -878,8 +904,12 @@ pub fn retitle(app: &AppHandle) {
 /// Фокус при этом не трогаем: восемь окон подряд перетягивали бы его друг у
 /// друга, и последнее отобрало бы его у окна настроек, где рубильник и
 /// опустили.
+///
+/// Окно выключенного модуля, ещё не разобранное (разборка ждёт своей очереди
+/// в главном потоке), не показываем: мигнуло бы на экране перед уходом.
 pub fn show_all(app: &AppHandle) {
-    for widget in widgets::shown() {
+    let settings = app.state::<SettingsState>().get();
+    for widget in widgets::shown().filter(|widget| settings.widget(widget).enabled) {
         if let Some(window) = app.get_webview_window(widget.id) {
             let _ = window.show();
         }
@@ -1121,8 +1151,16 @@ pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<sett
                 let _ = window.set_size(PhysicalSize::new(physical_width, size.height));
             }
         }
-        let now = f64::from(size.height) / factor;
-        grow(&window, height - now);
+        // ВАЖНО: **цель — целое число физических точек, а не логическая
+        // разница.** При масштабе 125 % 150 логических — это 187,5 физической:
+        // разница ±0,4 округлялась то вверх, то вниз, и окно качалось между
+        // 187 и 188 от своей же подгонки — карточки железа шлют замер на
+        // каждое изменение размера без мёртвой зоны (`fitWidth`)
+        let target = (height * factor).round() as i32;
+        let step = target - size.height as i32;
+        if step != 0 {
+            grow(&window, f64::from(step) / factor);
+        }
     });
 }
 
@@ -1198,6 +1236,13 @@ pub fn apply_by_id(app: &AppHandle, id: &str, own: WidgetSettings) {
     apply(&window, own, resizes(widget, &settings, own));
 }
 
+/// Окна, чьё закрытие пришло только что: по их числу Alt+F4 отличается от
+/// просьбы закрыться, пришедшей извне.
+static CLOSING: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+/// Сколько ждём, не придёт ли закрытие и другим окнам.
+const CLOSING_BURST: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// Крестик на окне с рамкой (отладка, витрина) и Alt+F4 означают «выключить
 /// модуль», а не «спрятать до перезапуска»: иначе галочка в окне настроек
 /// осталась бы врать.
@@ -1205,6 +1250,13 @@ pub fn apply_by_id(app: &AppHandle, id: &str, own: WidgetSettings) {
 /// Закрытие отменяем и отдаём модулю: он запишет настройку и разберёт окно
 /// той же дорогой, что и галочка. Сам обработчик живёт в главном потоке, а
 /// разборка ждёт его же — поэтому через пул (`modules::set_later`).
+///
+/// ВАЖНО: **закрытие нескольких окон разом — это выход, а не выключение.**
+/// `taskkill` без `/F`, «Снять задачу» и Restart Manager установщиков шлют
+/// `WM_CLOSE` всем окнам процесса сразу. Читай каждое как Alt+F4, приложение
+/// выключило бы все модули и записало бы это в настройки: после запуска на
+/// экране не было бы ни одного виджета. Поэтому сперва короткая пауза, и два
+/// окна и больше — штатный выход с сохранением мест, модули не трогаются.
 fn watch_closing(app: &AppHandle, window: &WebviewWindow, id: &'static str) {
     let handle = app.clone();
 
@@ -1217,16 +1269,59 @@ fn watch_closing(app: &AppHandle, window: &WebviewWindow, id: &'static str) {
         }
 
         api.prevent_close();
+        closing(&handle, id);
+    });
+}
 
-        if let Some(widget) = widgets::find(id) {
-            crate::modules::set_later(&handle, widget, false);
+/// Закрытие окна, уже отменённое: выключить модуль или, если закрывают
+/// несколько окон разом, выйти. Окно настроек тоже отмечается здесь — оно
+/// прячется само, а считается, чтобы с одним виджетом `taskkill` не
+/// выключил его. Не виджет — ничего не выключается.
+pub fn closing(app: &AppHandle, id: &'static str) {
+    let first = {
+        let mut closing = CLOSING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !closing.contains(&id) {
+            closing.push(id);
+        }
+        closing.len() == 1
+    };
+    if !first {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSING_BURST);
+        let closing = std::mem::take(&mut *CLOSING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        if closing.len() > 1 {
+            eprintln!("закрытие извне, окон разом: {} — выходим, модули не трогаем", closing.len());
+            on_main(&app, |app| quit(&app));
+        } else if let Some(widget) = closing.first().and_then(|id| widgets::find(id)) {
+            crate::modules::set_later(&app, widget, false);
         }
     });
+}
+
+/// Возвращает окну подъём под раскрытую панель — перед тем как место окна
+/// запишут насовсем. Долг живёт только в памяти, и поднятое место, ушедшее в
+/// файл, после запуска стало бы местом основы: окно висело бы над краем.
+/// Окно, сдвинутое с тех пор руками, не трогаем — долг уже не наш.
+pub fn return_lift(window: &WebviewWindow) {
+    let lift = LIFTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(window.label());
+    let (Some(lift), Ok(place)) = (lift, window.outer_position()) else {
+        return;
+    };
+    if lift.y == place.y && lift.owed != 0 {
+        let _ = window.set_position(PhysicalPosition::new(place.x, place.y + lift.owed));
+    }
 }
 
 /// Сохраняет положение всех окон и завершает приложение.
 pub fn quit(app: &AppHandle) {
     app.state::<Shutdown>().begin();
+    for window in app.webview_windows().values() {
+        return_lift(window);
+    }
     save_places(app);
     app.exit(0);
 }

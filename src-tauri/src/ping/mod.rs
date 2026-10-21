@@ -180,8 +180,14 @@ pub fn spawn(app: AppHandle) {
             ticker.tick().await;
 
             // Пинг нужен одной карточке сети: выключен модуль — пакеты не шлём.
-            // Задача при этом живёт: включат сеть снова — продолжит с того же
+            // Задача при этом живёт, а прошлое забывает: включённая через час
+            // сеть иначе показала бы часовой замер как живой, а потери и
+            // разброс считала бы через разрыв ещё два десятка секунд
             if !crate::modules::on(&app, "network") {
+                if windows.iter().any(|attempts| !attempts.tries.is_empty()) {
+                    windows = std::array::from_fn(|_| Attempts::default());
+                    publish(&app, Ping::default());
+                }
                 continue;
             }
 

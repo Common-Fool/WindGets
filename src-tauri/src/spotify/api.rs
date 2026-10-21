@@ -153,7 +153,10 @@ fn cooldown(response: &Response) -> Duration {
 /// (пустой ответ 204), то есть ни одно устройство сейчас не играет.
 pub async fn player(client: &reqwest::Client, token: &str) -> Result<Option<Player>, ApiError> {
     let response = client
-        .get(format!("{API}/me/player"))
+        // Без `additional_types=episode` на играющем подкасте Spotify отдаёт
+        // `item: null`, и пульт показывал бы «ничего не играет», хотя разбор
+        // эпизода (передача вместо исполнителя) давно написан
+        .get(format!("{API}/me/player?additional_types=episode"))
         .bearer_auth(token)
         .send()
         .await
@@ -206,12 +209,7 @@ pub async fn devices(client: &reqwest::Client, token: &str) -> Result<Vec<String
     let list: DeviceListDto = serde_json::from_str(&body)
         .map_err(|error| ApiError::Other(tr!("spotify.error.devicesGarbled", error = error)))?;
 
-    // Устройство без идентификатора адресовать нечем — оно нам бесполезно
-    Ok(list
-        .devices
-        .into_iter()
-        .filter_map(|device| device.id)
-        .collect())
+    Ok(list.controllable())
 }
 
 /// Переносит воспроизведение на устройство и сразу запускает его.
@@ -297,10 +295,13 @@ pub(super) fn repeat_mode(mode: &str) -> &str {
 async fn read_body(response: Response) -> Result<String, ApiError> {
     let status = response.status();
     let wait = cooldown(&response);
-    let body = response
-        .text()
-        .await
-        .map_err(|error| ApiError::Other(tr!("spotify.error.unreadable", error = error)))?;
+    let body = match response.text().await {
+        Ok(body) => body,
+        // Статус и Retry-After уже известны: обрыв тела не должен мешать
+        // обновлению токена или превращать лимит в обычную ошибку.
+        Err(_) if !status.is_success() => return Err(classify(status, wait, "")),
+        Err(error) => return Err(ApiError::Other(tr!("spotify.error.unreadable", error = error))),
+    };
 
     if status.is_success() {
         Ok(body)
@@ -538,6 +539,19 @@ struct DeviceListDto {
 struct DeviceEntryDto {
     #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
+    is_restricted: bool,
+}
+
+impl DeviceListDto {
+    fn controllable(self) -> Vec<String> {
+        // Ограниченное устройство видно в Connect, но команды Web API оно
+        // не принимает; без идентификатора его тоже не адресовать.
+        self.devices.into_iter()
+            .filter(|device| !device.is_restricted)
+            .filter_map(|device| device.id)
+            .collect()
+    }
 }
 
 #[derive(Deserialize)]
@@ -582,13 +596,15 @@ struct TracksDto {
 /// Spotify отдаёт 640/300/64: качать 640 ради миниатюры плейлиста незачем,
 /// а довольствоваться 64 в шапке виджета — мыло.
 fn pick_cover(images: &[ImageDto]) -> Option<String> {
-    let big_enough = images
-        .iter()
+    // CSP разрешает сетевые картинки только по HTTPS; неподходящий адрес
+    // не должен вытеснить рабочую обложку ни в основном выборе, ни в запасном.
+    let allowed = || images.iter().filter(|image| image.url.starts_with("https://"));
+    let big_enough = allowed()
         .filter(|image| image.width.unwrap_or(0) >= COVER_MIN_WIDTH)
         .min_by_key(|image| image.width.unwrap_or(u32::MAX));
 
     big_enough
-        .or_else(|| images.iter().max_by_key(|image| image.width.unwrap_or(0)))
+        .or_else(|| allowed().max_by_key(|image| image.width.unwrap_or(0)))
         .map(|image| image.url.clone())
 }
 
@@ -611,6 +627,65 @@ mod tests {
         assert_eq!(refused("Something else"), "Something else");
     }
     use super::*;
+
+    #[tokio::test]
+    async fn broken_error_bodies_keep_status_and_retry_after() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        for status in [401, 429, 200] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                    request.push(byte[0]);
+                }
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: 100\r\nRetry-After: 17\r\nConnection: close\r\n\r\nx").unwrap();
+            });
+            let response = reqwest::Client::builder().no_proxy()
+                .timeout(Duration::from_secs(5)).build().unwrap()
+                .get(format!("http://{address}")).send().await.unwrap();
+            server.join().unwrap();
+            let error = read_body(response).await.unwrap_err();
+            match status {
+                401 => assert!(matches!(error, ApiError::Unauthorized)),
+                429 => assert!(matches!(error, ApiError::RateLimited(wait) if wait == Duration::from_secs(17))),
+                _ => assert!(matches!(error, ApiError::Other(_))),
+            }
+        }
+    }
+
+    #[test]
+    fn restricted_devices_are_never_candidates_for_waking() {
+        let list: DeviceListDto = serde_json::from_str(r#"{"devices":[
+            {"id":"restricted","is_restricted":true},
+            {"id":"ready","is_restricted":false},
+            {"id":null}, {"id":"legacy"}
+        ]}"#).unwrap();
+        assert_eq!(list.controllable(), vec!["ready", "legacy"]);
+        let list: DeviceListDto = serde_json::from_str(r#"{"devices":[
+            {"id":"restricted","is_restricted":true}
+        ]}"#).unwrap();
+        assert!(list.controllable().is_empty());
+    }
+
+    #[test]
+    fn covers_use_only_https_in_both_selection_paths() {
+        let mixed = vec![
+            ImageDto { url: "http://example.test/300".into(), width: Some(300) },
+            ImageDto { url: "https://example.test/640".into(), width: Some(640) },
+            ImageDto { url: "https://example.test/64".into(), width: Some(64) },
+        ];
+        assert_eq!(pick_cover(&mixed).as_deref(), Some("https://example.test/640"));
+        let small = vec![mixed[0].clone(), mixed[2].clone()];
+        assert_eq!(pick_cover(&small).as_deref(), Some("https://example.test/64"));
+        assert_eq!(pick_cover(&mixed[..1]), None);
+    }
 
     fn images(widths: &[u32]) -> Vec<ImageDto> {
         widths

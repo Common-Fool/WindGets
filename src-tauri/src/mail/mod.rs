@@ -156,6 +156,9 @@ pub struct Letter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LetterBody {
+    /// Предел выборки или текста не позволил показать письмо целиком.
+    #[serde(default)]
+    pub truncated: bool,
     /// Очищенный текст письма.
     pub text: Option<String>,
     /// Вложения письма.
@@ -292,7 +295,10 @@ fn credentials(store: &Store, id: &str, revision: Option<&str>) -> Result<Creden
     let stored = store.get();
     let account = stored
         .account(id)
-        .ok_or_else(|| "ящика с таким ключом нет".to_owned())?;
+        .ok_or_else(|| {
+            eprintln!("почта: ящика с таким ключом нет");
+            tr!("mail.error.gone")
+        })?;
 
     if revision.is_some_and(|expected| expected != account.revision) {
         return Err(tr!("mail.error.changed"));
@@ -300,18 +306,21 @@ fn credentials(store: &Store, id: &str, revision: Option<&str>) -> Result<Creden
 
     let host = account
         .host()
-        .ok_or_else(|| "учётная запись не задана".to_owned())?
+        .ok_or_else(|| imap::MailError::NoAccount.user_message())?
         .to_owned();
     let login = account
         .login()
-        .ok_or_else(|| "учётная запись не задана".to_owned())?
+        .ok_or_else(|| imap::MailError::NoAccount.user_message())?
         .to_owned();
     let secret = account
         .secret()
-        .ok_or_else(|| "учётная запись не задана".to_owned())?;
+        .ok_or_else(|| imap::MailError::NoAccount.user_message())?;
 
     let password =
-        dpapi::unprotect(secret).map_err(|e| format!("ошибка расшифровки пароля: {e}"))?;
+        dpapi::unprotect(secret).map_err(|error| {
+            eprintln!("почта: ошибка расшифровки пароля: {error}");
+            tr!("mail.error.passwordUnavailable")
+        })?;
 
     Ok(Credentials {
         host,
@@ -330,7 +339,7 @@ fn letter_result<T>(state: &Mail, answer: Result<T, imap::MailError>) -> Result<
         if matches!(error, imap::MailError::Stale) {
             state.trigger_refresh();
         }
-        error.to_string()
+        error.user_message()
     })
 }
 
@@ -389,7 +398,7 @@ pub async fn mail_search(
         on.preview,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.user_message())?;
 
     let generation_changed = state.locked().iter().any(|kept| {
         kept.id == account && kept.revision == on.revision
@@ -419,7 +428,7 @@ pub async fn mail_mark_all_read(state: State<'_, Mail>, account: String, revisio
 
     imap::mark_all_read(&on.host, on.port, &on.login, &on.password)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message())?;
 
     state.trigger_refresh();
     Ok(())
@@ -585,7 +594,10 @@ pub fn set_mail_preview(state: State<'_, Mail>, app: AppHandle, on: bool) -> Res
     let (next, ()) = state.store.try_update(|stored| {
         stored.preview = on;
         Ok(())
-    }, |next| store::save(&app, next))?;
+    }, |next| store::save(&app, next).map_err(|error| {
+        eprintln!("почта: строка содержимого не записалась: {error}");
+        tr!("common.notSaved")
+    }))?;
     publish_rebuilt(&app, &next);
 
     // Строка содержимого — это выборка тел, и приходит она с опросом: без
@@ -982,6 +994,16 @@ mod tests {
         assert!(!state.forced.load(Ordering::Relaxed));
     }
 
+    #[test]
+    fn credentials_failures_use_catalog_messages() {
+        let empty = Store::new(Stored::default());
+        assert_eq!(credentials(&empty, "missing", None).err().unwrap(), tr!("mail.error.gone"));
+        let incomplete = Store::new(Stored { accounts: vec![account("one", false)], preview: false });
+        assert_eq!(credentials(&incomplete, "one", None).err().unwrap(), tr!("mail.noAccount"));
+        let invalid = Store::new(Stored { accounts: vec![account("one", true)], preview: false });
+        assert_eq!(credentials(&invalid, "one", None).err().unwrap(), tr!("mail.error.passwordUnavailable"));
+    }
+
     fn moment(watched: bool, since: Option<Duration>, failing: bool) -> Moment {
         Moment {
             has_account: true,
@@ -1268,6 +1290,7 @@ mod tests {
         assert!(ready.contains(r#""link":"https://example.com""#));
 
         let body = LetterBody {
+            truncated: false,
             text: Some("Текст письма".to_owned()),
             attachments: vec![Attachment {
                 name: "документ.pdf".to_owned(),

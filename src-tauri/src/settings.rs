@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -487,10 +487,15 @@ pub struct Settings {
     /// Проверять обновления самим, раз в неделю (`update.rs`). Снято — в
     /// сеть за выпусками не ходим, остаётся «Проверить сейчас».
     pub update_auto: bool,
-    /// Когда спрашивали GitHub о выпуске, секунды Unix. От неё и считается
-    /// неделя: машину включают каждый день, и проверка «при запуске» была бы
-    /// ежедневной.
+    /// Когда GitHub в последний раз ответил о выпуске, секунды Unix: это
+    /// «Проверено …» в «Общих».
     pub update_checked_at: Option<i64>,
+    /// Когда спрашивали в последний раз, удачно или нет. От неё и считается
+    /// неделя: машину включают каждый день, и проверка «при запуске» была бы
+    /// ежедневной, а сеть, упавшая на неделе, — не повод спрашивать каждые
+    /// шесть часов. Отдельно от удачной: прежде одна метка на обе, и после
+    /// перезапуска неудавшаяся проверка выглядела как «Проверено сегодня».
+    pub update_asked_at: Option<i64>,
 }
 
 /// Состояние напоминания о донатах. Сроки и правило — в `support_reminder.rs`.
@@ -555,6 +560,7 @@ impl Default for Settings {
             support_reminder: SupportReminder::default(),
             update_auto: true,
             update_checked_at: None,
+            update_asked_at: None,
         }
     }
 }
@@ -828,10 +834,14 @@ pub fn load(app: &AppHandle) -> Settings {
         // Не разобрался — значит, первая же запись затёрла бы его умолчаниями
         // целиком: город, ящики, выбор датчиков. Откладываем в сторону, чтобы
         // было что восстановить руками
-        let aside = path.with_extension("bad.json");
-        match fs::rename(&path, &aside) {
-            Ok(()) => eprintln!("настройки не разобрались, файл отложен в {}", aside.display()),
-            Err(error) => eprintln!("настройки не разобрались и не отложены: {error}"),
+        match crate::disk::set_aside(&path) {
+            Ok(aside) => eprintln!("настройки не разобрались, файл отложен в {}", aside.display()),
+            Err(error) => {
+                // Не отложился — значит, лежит на месте, и первая же запись
+                // затёрла бы его умолчаниями: та же дорога, что у непрочитанного
+                eprintln!("настройки не разобрались и не отложены, до перезапуска не сохраняются: {error}");
+                UNREADABLE.store(true, Ordering::SeqCst);
+            }
         }
     }
     settings
@@ -1020,6 +1030,13 @@ static SAVING: Mutex<()> = Mutex::new(());
 static UNREADABLE: AtomicBool = AtomicBool::new(false);
 
 /// Пишет на диск нынешние настройки.
+/// `settings.json` при запуске не прочитался, и правки до перезапуска живут
+/// только в памяти. Окно настроек говорит это строкой в «Данных»: иначе
+/// человек настроил бы всё заново и потерял бы это на перезапуске молча.
+pub fn unsaved() -> bool {
+    UNREADABLE.load(Ordering::SeqCst)
+}
+
 fn persist(app: &AppHandle, state: &SettingsState) {
     let _turn = SAVING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if UNREADABLE.load(Ordering::SeqCst) {
@@ -1071,7 +1088,63 @@ where
 ///
 /// Настройку меняем только вслед за успешной записью: иначе переключатель
 /// показывал бы то, чего в системе нет. Отдаём то, что вышло на самом деле.
-pub fn set_autostart(app: &AppHandle, next: bool) -> bool {
+///
+/// Последняя просьба галочки автозапуска: 0 — не было, 1 — выключить,
+/// 2 — включить. Работы в пуле берут её, а не своё значение (`set_flag`).
+static WANTED: AtomicU8 = AtomicU8::new(0);
+/// Одна работа с планировщиком за раз.
+static AUTOSTART: Mutex<()> = Mutex::new(());
+
+/// Запоминает просьбу — в потоке команды, до ухода в пул.
+pub fn want_autostart(next: bool) {
+    WANTED.store(if next { 2 } else { 1 }, Ordering::SeqCst);
+}
+
+/// Приводит задачу к последней просьбе. Две работы подряд сходятся на одном:
+/// вторая застанет уже сделанное и ничего не изменит.
+pub fn apply_autostart(app: &AppHandle) {
+    let _turn = AUTOSTART.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match WANTED.load(Ordering::SeqCst) {
+        2 => {
+            switch_autostart(app, true);
+        }
+        1 => {
+            switch_autostart(app, false);
+        }
+        _ => {}
+    }
+}
+
+/// При запуске галочка сверяется с планировщиком: задачу снимает удаление
+/// программы (хук установщика) и человек в самом планировщике, а
+/// `settings.json` остаётся прежним — и галочка стояла бы при задаче, которой
+/// нет. Задачу заново не заводим: в разработке её путь вёл бы в `target`.
+pub fn reconcile_autostart(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _turn = AUTOSTART.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let state = app.state::<SettingsState>();
+        let actual = checked_autostart(state.get().autostart, crate::autostart::is_enabled());
+        if state.get().autostart != actual {
+            eprintln!("галочка автозапуска расходилась с планировщиком, теперь {actual}");
+            update(&app, &state, |settings| settings.autostart = actual);
+            crate::settings_window::emit(&app);
+        }
+    });
+}
+
+/// Неудачный вопрос не меняет сохранённое желание человека.
+fn checked_autostart(saved: bool, checked: Result<bool, String>) -> bool {
+    match checked {
+        Ok(actual) => actual,
+        Err(error) => {
+            eprintln!("автозапуск не проверился, галочка сохранена: {error}");
+            saved
+        }
+    }
+}
+
+fn switch_autostart(app: &AppHandle, next: bool) -> bool {
     let state = app.state::<SettingsState>();
 
     let outcome = if next {
@@ -1096,6 +1169,15 @@ pub fn set_autostart(app: &AppHandle, next: bool) -> bool {
 mod tests {
     use super::*;
     use crate::widgets;
+
+    #[test]
+    fn a_failed_autostart_check_preserves_the_saved_choice() {
+        for saved in [false, true] {
+            assert_eq!(checked_autostart(saved, Err("планировщик недоступен".to_owned())), saved);
+            assert_eq!(checked_autostart(saved, Ok(true)), true);
+            assert_eq!(checked_autostart(saved, Ok(false)), false);
+        }
+    }
 
     /// Файл с прошлых этапов знает только про размытие. Он должен читаться,
     /// а недостающее — доставаться из реестра.
@@ -1212,6 +1294,7 @@ mod tests {
             support_reminder: SupportReminder { first_run: 1_700_000_000, last_shown: Some(1_710_000_000), rare: true },
             update_auto: false,
             update_checked_at: Some(1_720_000_000),
+            update_asked_at: Some(1_730_000_000),
         };
         settings.set_widget("spotify", WidgetSettings::default());
 
@@ -1242,6 +1325,7 @@ mod tests {
         assert_eq!(back.support_reminder, settings.support_reminder);
         assert!(!back.update_auto);
         assert_eq!(back.update_checked_at, Some(1_720_000_000));
+        assert_eq!(back.update_asked_at, Some(1_730_000_000));
 
         let city = back.weather.expect("город пережил запись");
         assert_eq!(city.name, "Грац");

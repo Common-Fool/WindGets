@@ -126,6 +126,9 @@ function Panel({ view, ready, reference, layout }: {
   const history = view.history;
   // Очищенная история сворачивает и панель: пустой раскрытой ей быть незачем
   const shown = historyOpen && history.length > 0;
+  // Очищенный список сворачивается сам: иначе флаг оставался поднятым, и
+  // следующая загрузка раскрывала бы список без спроса, растя окно
+  if (historyOpen && history.length === 0) setHistoryOpen(false);
 
   function choose(mode: Mode, quality: Quality) {
     void setDownloadOptions(mode, quality);
@@ -213,7 +216,7 @@ function Panel({ view, ready, reference, layout }: {
           variant="outline"
           icon={<FolderIcon />}
           label={t("downloader.openFolder")}
-          onClick={() => void openOutputDir("downloader")}
+          onClick={() => void openOutputDir("downloader").catch(() => {})}
         />
       </span>
       {history.length > 0 && (

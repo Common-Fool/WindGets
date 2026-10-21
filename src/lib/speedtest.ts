@@ -1,6 +1,5 @@
-import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { liveSnapshot } from "./live";
 import type { Text } from "./i18n";
 
 /** Мегабиты в секунду, задержка — в миллисекундах. `null` — этапа не было. */
@@ -31,46 +30,14 @@ export type Snapshot = SpeedtestView & {
   server: string | null;
 };
 
-type Listener = (snapshot: Snapshot) => void;
-
-let current: Snapshot = { status: "idle", history: [], server: null };
-const listeners = new Set<Listener>();
-let started = false;
-
-function publish(next: Snapshot) {
-  current = next;
-  for (const listener of listeners) listener(next);
-}
-
-function start() {
-  if (started) return;
-  started = true;
-
-  // Замер идёт в фоне и переживает закрытие окна: спрашиваем, что там сейчас
-  invoke<Snapshot>("speedtest_view")
-    .then((initial) => {
-      if (current.status === "idle") publish(initial);
-    })
-    .catch(() => {
-      // До готовности бэкенда молчим — состояние придёт событием
-    });
-
-  listen<Snapshot>("speedtest", (event) => publish(event.payload)).catch(() => {
-    // Вне Tauri мерить нечем
-  });
-}
-
-function subscribe(listener: Listener): () => void {
-  start();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function useSpeedtest(): Snapshot {
-  return useSyncExternalStore(subscribe, () => current);
-}
+/*
+ * Замер идёт в фоне и переживает закрытие окна, поэтому окно спрашивает, что
+ * там сейчас. Подписка одна на окно и снимается, когда слушателей не осталось
+ * (`live.ts`); там же порядок — сперва подписка, потом вопрос: финальное
+ * событие, ушедшее до слушателя, иначе пропало бы, и карточка стояла бы на
+ * «идёт замер» без кнопки запуска.
+ */
+export const useSpeedtest = liveSnapshot<Snapshot>("speedtest_view", "speedtest", { status: "idle", history: [], server: null });
 
 /** Запускает замер. Отказ приходит, только если один уже идёт. */
 export function runSpeedtest(): Promise<void> {

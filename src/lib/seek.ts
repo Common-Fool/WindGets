@@ -34,6 +34,10 @@ export type SeekDrag = {
  * единицах, что `total`), но не дольше четырёх секунд: не прошла перемотка —
  * полоса вернётся к правде.
  *
+ * Удержание принадлежит треку (`subject`): отпустили полосу на конце одного и
+ * тут же переключили — новый трек до четырёх секунд стоял бы на том же месте
+ * своей длины.
+ *
  * ВАЖНО: **полоса обязана нести `data-no-drag`.** Иначе протяжка по ней
  * уводила бы окно — перетаскивание ловит любое нажатие мимо `KEEPS_THE_MOUSE`.
  */
@@ -43,9 +47,19 @@ export function useSeekDrag(
   close: number,
   enabled: boolean,
   onSeek: (share: number) => void,
+  subject: string,
 ): SeekDrag {
   const [dragged, setDragged] = useState<number | null>(null);
   const [held, setHeld] = useState<number | null>(null);
+  const [heldFor, setHeldFor] = useState(subject);
+
+  // Сменился трек — прежний выбор к нему не относится. Сбрасываем прямо в
+  // отрисовке, а не эффектом: эффект показал бы один кадр старого места
+  if (heldFor !== subject) {
+    setHeldFor(subject);
+    setDragged(null);
+    setHeld(null);
+  }
 
   useEffect(() => {
     if (held !== null && Math.abs(ratio - held) * total < close) setHeld(null);

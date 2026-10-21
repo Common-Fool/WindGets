@@ -124,6 +124,10 @@ pub fn start(app: &AppHandle) {
             return;
         }
 
+        // Первый запуск отмечаем сразу, а не после паузы: короткие сеансы,
+        // кончавшиеся раньше десяти минут, иначе откладывали бы начало срока
+        // до первого длинного
+        mark_first_run(&app);
         std::thread::sleep(SETTLE);
         loop {
             check(&app);
@@ -135,13 +139,22 @@ pub fn start(app: &AppHandle) {
     }
 }
 
+/// Отмечает первый запуск, если его ещё нет.
+fn mark_first_run(app: &AppHandle) {
+    let state = app.state::<SettingsState>();
+    if state.get().support_reminder.first_run == 0 {
+        let now = now();
+        settings::update(app, &state, |settings| settings.support_reminder.first_run = now);
+    }
+}
+
 /// Одна проверка: отметить первый запуск, сверить срок и условия, показать.
 fn check(app: &AppHandle) {
     let state = app.state::<SettingsState>();
     let now = now();
 
     if state.get().support_reminder.first_run == 0 {
-        settings::update(app, &state, |settings| settings.support_reminder.first_run = now);
+        mark_first_run(app);
         return;
     }
 

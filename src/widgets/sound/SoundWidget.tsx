@@ -21,13 +21,40 @@ import "./sound.css";
 /** Опрос не должен перебивать значение под мышью до подтверждения команды. */
 const HOLD_MS = 400;
 
+/**
+ * Сколько ждём подтверждения команды, прежде чем вернуть то, что говорит
+ * система: команда могла не пройти (отказ драйвера), а громкость — встать
+ * округлённой (просили 43, стоит 42). Rust тогда не шлёт ничего нового.
+ */
+const SETTLE_MS = 600;
+
 function useAhead<T>(polled: T): [T, (next: T) => void] {
   const [shown, setShown] = useState(polled);
   const sentAt = useRef(0);
+  const latest = useRef(polled);
+  latest.current = polled;
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
   useEffect(() => {
-    if (Date.now() - sentAt.current >= HOLD_MS) setShown(polled);
+    const left = HOLD_MS - (Date.now() - sentAt.current);
+    if (left <= 0) {
+      setShown(polled);
+      return;
+    }
+    // Пришло в защитный срок — не теряем, а применяем по его концу: иначе
+    // снимок другого устройства, пришедший сразу после правки, не лёг бы
+    // никогда — одинаковых снимков Rust повторно не шлёт
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShown(latest.current), left);
   }, [polled]);
-  return [shown, (next) => { sentAt.current = Date.now(); setShown(next); }];
+
+  return [shown, (next) => {
+    sentAt.current = Date.now();
+    setShown(next);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShown(latest.current), HOLD_MS + SETTLE_MS);
+  }];
 }
 
 type ButtonProps = {
@@ -89,8 +116,15 @@ function AppIcon({ name }: { name: string }) {
     if (icon === null) return;
     const context = canvas.current?.getContext("2d");
     if (!context) return;
-    const bytes = Uint8ClampedArray.from(atob(icon.pixels), (letter) => letter.charCodeAt(0));
-    context.putImageData(new ImageData(bytes, icon.width, icon.height), 0, 0);
+    // Битый ответ не должен уронить всю карточку из эффекта; очищаем и
+    // прежний рисунок, если этот canvas уже показывал другой значок.
+    context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+    try {
+      const bytes = Uint8ClampedArray.from(atob(icon.pixels), (letter) => letter.charCodeAt(0));
+      context.putImageData(new ImageData(bytes, icon.width, icon.height), 0, 0);
+    } catch {
+      // Пустая плашка остаётся на месте значка.
+    }
   }, [icon, name]);
   if (icon === undefined || icon === null) return <span className="sound__app-icon sound__app-fallback"><MixerIcon /></span>;
   return <canvas className="sound__app-icon" ref={canvas} width={icon.width} height={icon.height} />;
@@ -168,8 +202,13 @@ export function SoundWidget() {
   });
 
   const temporary = overlay.layout === layout ? overlay.panel : "none";
-  const panel: Panel = temporary === "none" && view === 0 && !collapsed ? "mixer" : temporary;
-  useEffect(() => { control({ kind: "panel", panel }); }, [panel]);
+  const panel: Panel = own === undefined ? "none"
+    : temporary === "none" && view === 0 && !collapsed ? "mixer" : temporary;
+  useEffect(() => {
+    // До своих настроек неизвестны ни вид, ни сохранённое раскрытие.
+    if (own === undefined) return;
+    control({ kind: "panel", panel });
+  }, [own !== undefined, panel]);
 
   const panelBox = useRef<HTMLDivElement>(null);
   const opened = useHeight(panelBox);
@@ -249,12 +288,12 @@ export function SoundWidget() {
   const outputControl = (
     <div className="sound__output">
       <SoundButton className="sound__output-name" icon={<DeviceIcon kind={current?.kind ?? "other"} />}
-        disabled={!state.canSwitch} title={state.canSwitch
+        disabled={!state.canSwitch || current === null} title={state.canSwitch
           ? t("sound.outputCycle", { name: current?.name ?? t("sound.output") })
           : current?.name ?? t("sound.noOutput")} onClick={() => control({ kind: "nextDevice" })}>
         <span className="sound__caption" title={current?.name}>{current?.short ?? t("sound.noOutput")}</span>
       </SoundButton>
-      <SoundButton className="sound__small" icon={<CycleIcon />} disabled={!state.canSwitch}
+      <SoundButton className="sound__small" icon={<CycleIcon />} disabled={!state.canSwitch || current === null}
         title={t("sound.nextOutput")} onClick={() => control({ kind: "nextDevice" })} />
       <SoundButton className="sound__small" icon={<ChevronIcon />} disabled={!state.canSwitch}
         expanded={panel === "outputs"} title={t("sound.showOutputs")} onClick={() => toggleDevices("outputs")} />
@@ -337,7 +376,7 @@ export function SoundWidget() {
                     <button type="button" className="sound__tower-device" title={state.canSwitch
                       ? t("sound.outputCycle", { name: current?.name ?? t("sound.output") })
                       : current?.name ?? t("sound.noOutput")}
-                      disabled={!state.canSwitch} onClick={() => control({ kind: "nextDevice" })}>
+                      disabled={!state.canSwitch || current === null} onClick={() => control({ kind: "nextDevice" })}>
                       {current?.short ?? t("sound.noOutput")}
                     </button>
                   </div>

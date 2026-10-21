@@ -165,7 +165,15 @@ pub struct View {
 
 enum Order {
     Add(Vec<PathBuf>),
-    Start,
+    /// Снимок того, с чем нажали «Старт». Взят в команде, а не в рабочем
+    /// потоке: очередь могла стоять за пробой файлов, и чипы, тронутые после
+    /// нажатия, — по подписи это настройка следующей пачки — попали бы в эту.
+    ///
+    /// Файлы — тоже снимком: потолки и обрезка посчитаны по тем, что были
+    /// готовы в миг нажатия, а разобравшиеся позже (их пробы стоят в очереди
+    /// впереди) остаются следующей пачке — иначе 4K-ролик ушёл бы с потолком,
+    /// отсеянным по маленькому, и с чужой обрезкой.
+    Start { ids: Vec<u64>, target: Target, options: Options, trim: Option<Trim> },
 }
 
 struct Inner {
@@ -182,6 +190,11 @@ pub struct Converter {
     inner: Mutex<Inner>,
     orders: OnceLock<Sender<Order>>,
     cancel: AtomicBool,
+    /// Выход необратим: новый файл пачки после него запускать нельзя.
+    stopping: AtomicBool,
+    stopped: AtomicBool,
+    /// Процесс и занятые пути меняют владельца одним шагом при выходе.
+    active: Mutex<Option<Active>>,
     /// Чем кодирует этот ffmpeg — проба одна на запуск и на путь к нему:
     /// компонент могут обновить, а системный — сменить.
     encoder: Mutex<Option<(PathBuf, Encoder)>>,
@@ -191,6 +204,75 @@ pub struct Converter {
     previews: AtomicU64,
     /// Последняя просьба послушать: запоздавший ответ прежней не играет.
     listens: AtomicU64,
+    /// Номер последней просьбы о кадре или его уборки: кадр, вынутый после
+    /// «убрать» (мышь ушла, модуль выключили), не всплывает поверх всех.
+    frames: AtomicU64,
+}
+
+struct Active {
+    part: PathBuf,
+    reserved: PathBuf,
+    process: Option<child::Spawned>,
+}
+
+impl Active {
+    fn stop(&mut self) {
+        if let Some(mut process) = self.process.take() {
+            process.kill();
+            // Drop ждёт процесс; уборку файлов и выход он задерживать не должен.
+            std::thread::spawn(move || drop(process));
+        }
+    }
+
+    fn discard(&mut self) {
+        self.stop();
+        discard(&[&self.part, &self.reserved]);
+    }
+}
+
+/// Обычный выход откладывается до уборки, главный поток продолжает отвечать.
+/// Повторный ExitRequested пропускается только после завершения уборки.
+pub fn shutdown_later(app: &AppHandle, code: i32) -> bool {
+    let converter = app.state::<Converter>();
+    // Перезапуск runtime `prevent_exit` не слушает: уборку сделает `RunEvent::Exit`,
+    // а свой `app.exit` из потока превратил бы перезапуск в выход
+    if converter.stopped.load(Ordering::SeqCst) || code == tauri::RESTART_EXIT_CODE {
+        return false;
+    }
+    if !converter.stopping.swap(true, Ordering::SeqCst) {
+        converter.cancel.store(true, Ordering::SeqCst);
+        let app = app.clone();
+        std::thread::spawn(move || {
+            shutdown(&app);
+            app.state::<Converter>().stopped.store(true, Ordering::SeqCst);
+            app.exit(code);
+        });
+    }
+    true
+}
+
+fn clean_shutdown(app: &AppHandle) {
+    let converter = app.state::<Converter>();
+    converter.shutdown_files();
+}
+
+/// Запасной путь, когда runtime уже завершает цикл без ExitRequested.
+/// Ждём только ограниченную уборку, а не рабочий поток пачки или ffmpeg.
+pub fn shutdown(app: &AppHandle) {
+    if app.state::<Converter>().stopped.load(Ordering::SeqCst) {
+        return;
+    }
+    app.state::<Converter>().stopping.store(true, Ordering::SeqCst);
+    app.state::<Converter>().cancel.store(true, Ordering::SeqCst);
+    let (done, wait) = mpsc::channel();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        clean_shutdown(&app);
+        let _ = done.send(());
+    });
+    if wait.recv_timeout(Duration::from_secs(3)).is_err() {
+        eprintln!("[конвертер] срок уборки при выходе истёк");
+    }
 }
 
 /// Файл, у которого есть обрезка, — всё, что нужно превью.
@@ -233,6 +315,23 @@ impl Converter {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn hush(&self) {
+        // Отмена и остановка неделимы относительно запуска готового куска.
+        let _turn = SOUND_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.listens.fetch_add(1, Ordering::SeqCst);
+        preview::sound::stop();
+    }
+
+    fn shutdown_files(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        self.cancel.store(true, Ordering::SeqCst);
+        let mut active = self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(mut job) = active.take() {
+            job.discard();
+        }
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
     fn order(&self, order: Order) {
         if let Some(orders) = self.orders.get() {
             let _ = orders.send(order);
@@ -241,6 +340,16 @@ impl Converter {
 }
 
 impl Inner {
+    fn remove(&mut self, id: u64) {
+        let trimmed = self.trim_subject().is_some_and(|item| item.id == id);
+        self.items.retain(|item| item.id != id);
+        if trimmed {
+            // Поля принадлежали удалённому файлу, следующему они не подходят.
+            self.options.from.clear();
+            self.options.to.clear();
+        }
+    }
+
     fn runnable(&self) -> impl Iterator<Item = &Item> {
         self.items.iter().filter(|item| item.status == Status::Ready)
     }
@@ -467,9 +576,12 @@ pub fn refuse_drops() {}
 
 fn work(app: AppHandle, inbox: Receiver<Order>) {
     for order in inbox {
+        if app.state::<Converter>().stopping.load(Ordering::SeqCst) {
+            break;
+        }
         match order {
             Order::Add(paths) => add(&app, paths),
-            Order::Start => run_batch(&app),
+            Order::Start { ids, target, options, trim } => run_batch(&app, ids, target, options, trim),
         }
     }
 }
@@ -479,13 +591,16 @@ fn add(app: &AppHandle, paths: Vec<PathBuf>) {
     let converter = app.state::<Converter>();
     let ffmpeg = app.state::<Tools>().locate(Component::Ffmpeg);
 
+    // Папки не разворачиваем: пачка — это то, что выбрали, а не всё
+    // содержимое диска. Спрашиваем диск до замка: файл на уснувшем сетевом
+    // диске держал бы замок, а за ним ждали бы синхронные команды карточки —
+    // в главном потоке, вместе с приёмом IPC всех окон
+    let paths: Vec<PathBuf> = paths.into_iter().filter(|path| path.is_file()).collect();
     let fresh: Vec<(u64, PathBuf)> = {
         let mut inner = converter.lock();
         let mut fresh = Vec::new();
         for path in paths {
-            // Папки не разворачиваем: пачка — это то, что выбрали, а не всё
-            // содержимое диска
-            if !path.is_file() || inner.items.len() >= MAX_ITEMS {
+            if inner.items.len() >= MAX_ITEMS {
                 continue;
             }
             let queued = inner.items.iter().any(|item| {
@@ -520,6 +635,16 @@ fn add(app: &AppHandle, paths: Vec<PathBuf>) {
     publish(app);
 
     for (id, path) in fresh {
+        // Модуль выключили посреди проб — дальше ffmpeg не зовём: у
+        // выключенного модуля фоновой работы нет
+        if !crate::modules::on(app, "converter") {
+            // Неразобранные строки не висят «…» навсегда: удалению ffmpeg
+            // они казались бы работой, а включённый заново модуль их уже не
+            // разберёт — заказ ушёл
+            converter.lock().items.retain(|item| !matches!(item.status, Status::Probing));
+            publish(app);
+            break;
+        }
         let probed = ffmpeg.as_deref().map(|ffmpeg| probe_file(ffmpeg, &path));
         let mut inner = converter.lock();
         let Some(item) = inner.items.iter_mut().find(|item| item.id == id) else {
@@ -579,26 +704,22 @@ enum Outcome {
     Failed(String),
 }
 
-fn run_batch(app: &AppHandle) {
+fn run_batch(app: &AppHandle, chosen: Vec<u64>, target: Target, options: Options, trim: Option<Trim>) {
     let converter = app.state::<Converter>();
 
-    let (ids, target, options, trim) = {
+    let ids = {
         let mut inner = converter.lock();
-        let ids: Vec<u64> = inner.runnable().map(|item| item.id).collect();
-        let target = inner.target();
-        let trim = inner.trim().ok().flatten();
-        match target {
-            Some(target) if !ids.is_empty() => {
-                inner.batch = Some((0, ids.len()));
-                (ids, target, inner.working_options(), trim)
-            }
-            _ => {
-                inner.running = false;
-                drop(inner);
-                publish(app);
-                return;
-            }
+        // Из нажатого — то, что ещё в списке и ждёт: строку могли убрать,
+        // пока заказ стоял в очереди за пробами
+        let ids: Vec<u64> = inner.runnable().map(|item| item.id).filter(|id| chosen.contains(id)).collect();
+        if ids.is_empty() {
+            inner.running = false;
+            drop(inner);
+            publish(app);
+            return;
         }
+        inner.batch = Some((0, ids.len()));
+        ids
     };
     publish(app);
 
@@ -611,7 +732,7 @@ fn run_batch(app: &AppHandle) {
     };
 
     for id in ids {
-        if converter.cancel.load(Ordering::SeqCst) {
+        if converter.cancel.load(Ordering::SeqCst) || converter.stopping.load(Ordering::SeqCst) {
             break;
         }
         let image = matches!(target, Target::Png | Target::Jpg);
@@ -713,14 +834,23 @@ fn convert(app: &AppHandle, ffmpeg: &Path, id: u64, job: &Job, dir: &Path) -> Re
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "converted".to_owned());
+    // Занятие путей и передача уборке неделимы относительно выхода.
+    let mut active = converter.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if converter.stopping.load(Ordering::SeqCst) {
+        return Err(Outcome::Cancelled);
+    }
     let reserved = crate::output::reserve(dir, &stem, target.ext()).map_err(|error| {
         eprintln!("[конвертер] имя не заняли в {}: {error}", dir.display());
         Outcome::Failed(tr!("output.error.cannotWrite"))
     })?;
-    let part = reserved.with_file_name(format!(
-        "{}.part",
-        reserved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
-    ));
+    let part = crate::output::reserve_part(&reserved).map_err(|error| {
+        eprintln!("[конвертер] рабочий файл не заняли рядом с {}: {error}", reserved.display());
+        let _ = std::fs::remove_file(&reserved);
+        Outcome::Failed(tr!("output.error.cannotWrite"))
+    })?;
+
+    *active = Some(Active { part: part.clone(), reserved: reserved.clone(), process: None });
+    drop(active);
 
     let length = if matches!(target, Target::Png | Target::Jpg) {
         None
@@ -741,14 +871,21 @@ fn convert(app: &AppHandle, ffmpeg: &Path, id: u64, job: &Job, dir: &Path) -> Re
         publish(app);
         outcome = run(Encoder::X264);
     }
+    let mut active = converter.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(mut owned) = active.take() else {
+        return Err(Outcome::Cancelled);
+    };
+    if converter.stopping.load(Ordering::SeqCst) || converter.cancel.load(Ordering::SeqCst) {
+        outcome = Err(Outcome::Cancelled);
+    }
     if let Err(outcome) = outcome {
-        discard(&[&part, &reserved]);
+        owned.discard();
         return Err(outcome);
     }
 
     crate::output::place(&part, &reserved).map_err(|error| {
         eprintln!("[конвертер] готовый файл не встал на место: {error}");
-        discard(&[&part, &reserved]);
+        owned.discard();
         Outcome::Failed(tr!("output.error.cannotWrite"))
     })?;
     Ok(reserved)
@@ -767,19 +904,47 @@ fn encode(
     let converter = app.state::<Converter>();
     let mut command = Command::new(ffmpeg);
     command.args(arguments);
-    let mut spawned = child::spawn(command).map_err(|error| {
-        eprintln!("[конвертер] ffmpeg не запустился: {error}");
-        Outcome::Failed(tr!("converter.error.noStart"))
-    })?;
+    {
+        let mut active = converter.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if converter.stopping.load(Ordering::SeqCst) || converter.cancel.load(Ordering::SeqCst) {
+            return Err(Outcome::Cancelled);
+        }
+        let owned = active.as_mut().ok_or(Outcome::Cancelled)?;
+        owned.stop();
+        owned.process = Some(child::spawn(command).map_err(|error| {
+            eprintln!("[конвертер] ffmpeg не запустился: {error}");
+            Outcome::Failed(tr!("converter.error.noStart"))
+        })?);
+    }
 
     let mut shown = Instant::now();
     let mut complaints: Vec<String> = Vec::new();
 
-    loop {
-        if converter.cancel.load(Ordering::SeqCst) {
-            spawned.kill();
+    let code = loop {
+        if converter.stopping.load(Ordering::SeqCst) || converter.cancel.load(Ordering::SeqCst) {
+            return Err(Outcome::Cancelled);
         }
-        match spawned.next(Duration::from_millis(200)) {
+        let next = {
+            let mut active = converter.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let owned = active.as_mut().ok_or(Outcome::Cancelled)?;
+            let process = owned.process.as_mut().ok_or(Outcome::Cancelled)?;
+            match process.next(Duration::from_millis(200)) {
+                Next::Closed => match process.try_wait() {
+                    Ok(Some(status)) => {
+                        // Процесс уже завершился: Drop здесь больше не ждёт.
+                        owned.process.take();
+                        break status.code();
+                    }
+                    Ok(None) => Next::Idle,
+                    Err(error) => {
+                        eprintln!("[конвертер] конец ffmpeg не проверился: {error}");
+                        return Err(Outcome::Failed(tr!("converter.error.failed")));
+                    }
+                },
+                next => next,
+            }
+        };
+        match next {
             Next::Line(Line::Out(text)) => {
                 if let (Some(Some(done)), Some(length)) = (args::progress_seconds(&text), length) {
                     set_item(&converter, id, |item| item.progress = Some(args::fraction(done, length)));
@@ -797,13 +962,10 @@ fn encode(
                     }
                 }
             }
-            Next::Idle => {}
-            Next::Closed => break,
+            Next::Idle => std::thread::sleep(Duration::from_millis(10)),
+            Next::Closed => unreachable!(),
         }
-    }
-
-    let code = spawned.wait();
-    drop(spawned);
+    };
 
     if converter.cancel.load(Ordering::SeqCst) {
         return Err(Outcome::Cancelled);
@@ -821,13 +983,18 @@ fn encode(
 /// Убитый ffmpeg отпускает файл не мгновенно, поэтому несколько попыток с
 /// паузой: брошенный `.part` в папке вывода выглядел бы готовым файлом.
 fn discard(paths: &[&Path]) {
-    for path in paths {
-        for _ in 0..10 {
-            if !path.exists() || std::fs::remove_file(path).is_ok() {
-                break;
-            }
+    let mut pending = paths.to_vec();
+    for attempt in 0..10 {
+        pending.retain(|path| path.exists() && std::fs::remove_file(path).is_err());
+        if pending.is_empty() {
+            return;
+        }
+        if attempt < 9 {
             std::thread::sleep(Duration::from_millis(200));
         }
+    }
+    for path in pending {
+        eprintln!("[конвертер] недописанный файл не удалился: {}", path.display());
     }
 }
 
@@ -853,21 +1020,21 @@ pub fn converter_pick(app: AppHandle, window: WebviewWindow) {
 #[tauri::command]
 pub fn converter_remove(app: AppHandle, id: u64) {
     // Звучать файлу, которого в списке уже нет, незачем
-    preview::sound::stop();
+    app.state::<Converter>().hush();
     {
         let converter = app.state::<Converter>();
         let mut inner = converter.lock();
         if inner.running {
             return;
         }
-        inner.items.retain(|item| item.id != id);
+        inner.remove(id);
     }
     publish(&app);
 }
 
 #[tauri::command]
 pub fn converter_clear(app: AppHandle) {
-    preview::sound::stop();
+    app.state::<Converter>().hush();
     {
         let converter = app.state::<Converter>();
         let mut inner = converter.lock();
@@ -890,11 +1057,15 @@ pub fn converter_set(app: AppHandle, options: Options) {
 
 #[tauri::command]
 pub fn converter_start(app: AppHandle) -> Result<(), String> {
-    preview::sound::stop();
+    app.state::<Converter>().hush();
     if !app.state::<Tools>().ready(Module::Converter) {
         return Err("notReady".to_owned());
     }
     let converter = app.state::<Converter>();
+    if converter.stopping.load(Ordering::SeqCst) {
+        return Err("busy".to_owned());
+    }
+    let order;
     {
         let mut inner = converter.lock();
         if inner.running {
@@ -910,9 +1081,15 @@ pub fn converter_start(app: AppHandle) -> Result<(), String> {
             return Err("badTrim".to_owned());
         }
         inner.running = true;
+        order = Order::Start {
+            ids: inner.runnable().map(|item| item.id).collect(),
+            target: inner.target().expect("цель проверена выше"),
+            options: inner.working_options(),
+            trim: inner.trim().ok().flatten(),
+        };
     }
     converter.cancel.store(false, Ordering::SeqCst);
-    converter.order(Order::Start);
+    converter.order(order);
     publish(&app);
     Ok(())
 }
@@ -941,6 +1118,10 @@ pub fn converter_reveal(app: AppHandle, id: u64) {
 /// чтение вывода двоичного не переживёт, а свой читатель ради двух случаев
 /// дороже временного файла.
 fn preview_setup(app: &AppHandle) -> Result<(PathBuf, Subject, PathBuf), String> {
+    // Окно уже разбирают: ни кадр, ни волна, ни звук никому не нужны
+    if !crate::modules::on(app, "converter") {
+        return Err("off".to_owned());
+    }
     let tools = app.state::<Tools>();
     let ffmpeg = tools.locate(Component::Ffmpeg).ok_or("noFfmpeg")?;
     let subject = app.state::<Converter>().lock().subject().ok_or("noSubject")?;
@@ -1021,11 +1202,10 @@ fn listen(app: &AppHandle, from: f64, until: f64, tail: bool) -> Result<Playing,
     let output = dir.join(format!("clip-{ticket}.wav"));
     let wav = render(&ffmpeg, preview::clip_args(&subject.path, start, length, &output), &output)?;
 
-    // Пока резали этот кусок, попросили другой — этот уже не нужен
-    if app.state::<Converter>().listens.load(Ordering::SeqCst) != ticket {
-        return Err("superseded".to_owned());
-    }
-    preview::sound::play(wav)?;
+    // Пока резали этот кусок, попросили другой — этот уже не нужен. Проверка
+    // и запуск под одним замком с остановкой: иначе «Стоп», пришедший между
+    // ними, остановил бы тишину, а запоздавший кусок заиграл бы после него
+    play_current_sound(&app.state::<Converter>().listens, ticket, || preview::sound::play(wav))?;
     Ok(Playing { start, length })
 }
 
@@ -1041,10 +1221,14 @@ pub async fn converter_frame(app: AppHandle, window: WebviewWindow, at: f64, han
     let (box_width, box_height) = preview::FRAME_BOX;
     let (width, height) = ((box_width * scale).round() as u32, (box_height * scale).round() as u32);
 
+    let ticket = app.state::<Converter>().frames.fetch_add(1, Ordering::SeqCst) + 1;
     let task = app.clone();
     let image = tauri::async_runtime::spawn_blocking(move || frame(&task, at, width, height))
         .await
         .map_err(|error| error.to_string())??;
+    if app.state::<Converter>().frames.load(Ordering::SeqCst) != ticket || !crate::modules::on(&app, "converter") {
+        return Err("superseded".to_owned());
+    }
 
     #[cfg(windows)]
     {
@@ -1053,16 +1237,35 @@ pub async fn converter_frame(app: AppHandle, window: WebviewWindow, at: f64, han
             top: origin.y + (handle.top * scale).round() as i32,
             bottom: origin.y + (handle.bottom * scale).round() as i32,
         };
-        app.run_on_main_thread(move || popup::show(image, anchor, scale)).map_err(|error| error.to_string())?;
+        let main = app.clone();
+        app.run_on_main_thread(move || {
+            // Пока callback ждал очередь, модуль могли выключить и скрыть кадр.
+            // Проверка и показ идут одним шагом главного потока вместе с hide
+            show_current_frame(
+                &main.state::<Converter>().frames,
+                ticket,
+                crate::modules::on(&main, "converter"),
+                || popup::show(image, anchor, scale),
+            );
+        }).map_err(|error| error.to_string())?;
     }
     #[cfg(not(windows))]
     let _ = (image, origin, handle);
     Ok(())
 }
 
+#[cfg(any(windows, test))]
+fn show_current_frame(frames: &AtomicU64, ticket: u64, enabled: bool, show: impl FnOnce()) {
+    if frames.load(Ordering::SeqCst) == ticket && enabled {
+        show();
+    }
+}
+
 /// Убрать кадр: мышь ушла с полосы, ручку взяли снова или файл сменился.
 #[tauri::command]
 pub fn converter_frame_hide(app: AppHandle) {
+    // И тот кадр, что ещё вынимается, показывать уже не надо
+    app.state::<Converter>().frames.fetch_add(1, Ordering::SeqCst);
     #[cfg(windows)]
     let _ = app.run_on_main_thread(popup::hide);
     #[cfg(not(windows))]
@@ -1087,14 +1290,106 @@ pub async fn converter_listen(app: AppHandle, from: f64, until: f64, tail: bool)
 
 #[tauri::command]
 pub fn converter_hush(app: AppHandle) {
-    // И тот кусок, что ещё режется, играть уже не должен
-    app.state::<Converter>().listens.fetch_add(1, Ordering::SeqCst);
-    preview::sound::stop();
+    app.state::<Converter>().hush();
 }
+
+fn play_current_sound(listens: &AtomicU64, ticket: u64, play: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let _turn = SOUND_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if listens.load(Ordering::SeqCst) != ticket {
+        return Err("superseded".to_owned());
+    }
+    play()
+}
+
+/// Проверка номера прослушивания и запуск звука — одним шагом против «Стоп».
+static SOUND_TURN: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_removes_only_the_active_pair_and_cannot_be_undone_by_batch_cancel_reset() {
+        let dir = std::env::temp_dir().join(format!("windgets-converter-shutdown-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let reserved = crate::output::reserve(&dir, "clip", "mp4").unwrap();
+        let part = crate::output::reserve_part(&reserved).unwrap();
+        std::fs::write(&part, b"unfinished").unwrap();
+        let finished = dir.join("finished.mp4");
+        std::fs::write(&finished, b"finished").unwrap();
+        let converter = Converter::default();
+        *converter.active.lock().unwrap() = Some(Active { part: part.clone(), reserved: reserved.clone(), process: None });
+        converter.shutdown_files();
+        converter.cancel.store(false, Ordering::SeqCst);
+        converter.shutdown_files();
+        assert!(converter.stopping.load(Ordering::SeqCst));
+        assert!(converter.stopped.load(Ordering::SeqCst));
+        assert!(converter.active.lock().unwrap().is_none());
+        assert!(!part.exists() && !reserved.exists());
+        assert_eq!(std::fs::read(&finished).unwrap(), b"finished");
+        std::fs::remove_file(finished).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    /// Фоновая нарезка закончилась после остановки: до звукового API не доходит.
+    #[test]
+    fn hush_cancels_a_clip_still_rendering_in_the_background() {
+        let converter = Converter::default();
+        let ticket = converter.listens.fetch_add(1, Ordering::SeqCst) + 1;
+        let played = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let (ready, wait) = mpsc::channel();
+            let converter = &converter;
+            let played = &played;
+            let pending = scope.spawn(move || {
+                wait.recv().unwrap();
+                play_current_sound(&converter.listens, ticket, || {
+                    played.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
+            converter.hush();
+            ready.send(()).unwrap();
+            assert_eq!(pending.join().unwrap(), Err("superseded".to_owned()));
+        });
+        assert!(!played.load(Ordering::SeqCst));
+        let fresh = converter.listens.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(play_current_sound(&converter.listens, fresh, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn removing_the_trim_subject_resets_its_range_only() {
+        let mut inner = Inner::default();
+        inner.items.push(item(1, Kind::Audio, true, Status::Ready));
+        inner.items.push(item(2, Kind::Audio, true, Status::Done));
+        inner.options.from = "10".to_owned();
+        inner.options.to = "20".to_owned();
+        inner.remove(2);
+        assert_eq!((&*inner.options.from, &*inner.options.to), ("10", "20"));
+        inner.remove(1);
+        inner.items.push(item(3, Kind::Audio, true, Status::Ready));
+        assert!(inner.options.from.is_empty() && inner.options.to.is_empty());
+        assert_eq!(inner.trim(), Ok(None));
+    }
+
+
+    /// Имитируем очередь главного потока: после постановки показа успели
+    /// скрыть кадр, попросить другой или выключить модуль без смены билета.
+    #[test]
+    fn a_queued_frame_checks_its_ticket_and_module_at_display_time() {
+        use std::cell::Cell;
+
+        for (current, enabled, expected) in [(1, true, true), (2, true, false), (1, false, false)] {
+            let frames = AtomicU64::new(1);
+            let module = Cell::new(true);
+            let shown = Cell::new(false);
+            let queued = || show_current_frame(&frames, 1, module.get(), || shown.set(true));
+            frames.store(current, Ordering::SeqCst);
+            module.set(enabled);
+            queued();
+            assert_eq!(shown.get(), expected);
+        }
+    }
 
     fn item(id: u64, kind: Kind, has_audio: bool, status: Status) -> Item {
         Item {
@@ -1159,6 +1454,7 @@ mod tests {
                 width,
                 height,
                 fps: None,
+                stream: None,
             });
             item
         };

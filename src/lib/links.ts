@@ -41,6 +41,22 @@ const ANY_LINK = new RegExp(`${LABELLED.source}|${LINK.source}`, "g");
  */
 const TAIL = /[.,;:!?)\]}»"']+$/;
 
+/**
+ * Закрывающая скобка, у которой в адресе есть пара, — часть адреса, а не
+ * предложения: `…/wiki/Rust_(programming_language)` без неё открывался бы
+ * обрезанным, «страница не найдена».
+ */
+function withPairedParens(whole: string, url: string): string {
+  let kept = url;
+  while (kept.length < whole.length && whole[kept.length] === ")") {
+    const opened = kept.split("(").length - 1;
+    const closed = kept.split(")").length - 1;
+    if (opened <= closed) break;
+    kept += ")";
+  }
+  return kept;
+}
+
 /** Кусок текста: обычный или ссылка. */
 export type Piece = {
   /** Что видно человеку. */
@@ -58,7 +74,7 @@ export type Piece = {
  *
  * Пустые куски не отдаём — из них потом получались бы пустые узлы разметки.
  */
-export function pieces(text: string): Piece[] {
+export function pieces(text: string, verbatim = false): Piece[] {
   const out: Piece[] = [];
   let at = 0;
 
@@ -71,14 +87,16 @@ export function pieces(text: string): Piece[] {
     }
 
     if (label !== undefined && target !== undefined) {
-      // Ссылка со своим словом: видно слово, открывается адрес
-      out.push({ text: label, link: true, href: target });
+      // Ссылка со своим словом: видно слово, открывается адрес. Дословно —
+      // вся запись целиком: подложке заметки нельзя показывать меньше знаков,
+      // чем стоит в поле над ней
+      out.push({ text: verbatim ? whole : label, link: true, href: target });
       at = start + whole.length;
       continue;
     }
 
     // Голая ссылка: хвостовые знаки предложения в адрес не входят
-    const url = whole.replace(TAIL, "");
+    const url = withPairedParens(whole, whole.replace(TAIL, ""));
     out.push({ text: url, link: true, href: url });
     at = start + url.length;
   }

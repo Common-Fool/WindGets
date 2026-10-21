@@ -70,10 +70,16 @@ pub fn sequence() -> u32 {
 
 /// Текст из буфера.
 ///
-/// `None` — текста там нет вовсе (картинка, файлы, пустой буфер) или его
-/// запретили запоминать.
-pub fn read() -> Option<String> {
-    let _open = Open::new(None).ok()?;
+/// `Ok(None)` — текста там нет вовсе (картинка, файлы, пустой буфер) или его
+/// запретили запоминать. `Err` — буфер держит чужое приложение: это не «текста
+/// нет», и прочесть его надо ещё раз, а не пропустить.
+pub fn read() -> Result<Option<String>, String> {
+    let _open = Open::new(None)?;
+    Ok(read_open())
+}
+
+/// Чтение из уже открытого буфера.
+fn read_open() -> Option<String> {
 
     if excluded() {
         return None;
@@ -242,16 +248,16 @@ mod tests {
 
         write(sample, None).expect("буфер принял текст");
 
-        assert_eq!(read().as_deref(), Some(sample));
+        assert_eq!(read().expect("буфер открылся").as_deref(), Some(sample));
         assert_ne!(sequence(), before, "номер последовательности обязан меняться");
 
         // Пустая строка — это тоже строка: буфер обязан принять её и вернуть.
         // В историю она не попадёт, но это решает `mod.rs`, а не здесь.
         write("", None).expect("буфер принял пустую строку");
-        assert_eq!(read().as_deref(), Some(""));
+        assert_eq!(read().expect("буфер открылся").as_deref(), Some(""));
 
         // А после очистки текста нет вовсе
         empty(None).expect("буфер очистился");
-        assert_eq!(read(), None);
+        assert_eq!(read(), Ok(None));
     }
 }

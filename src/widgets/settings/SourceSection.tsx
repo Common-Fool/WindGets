@@ -52,6 +52,7 @@ export function SourceSection() {
           value={settings.pollSeconds}
           min={1}
           max={5}
+          ariaLabel={t("settings.source.step")}
           onChange={(next) => setSource(next)}
         />
         <p className="note">{t("settings.source.stepNote")}</p>
@@ -62,6 +63,8 @@ export function SourceSection() {
           {t("settings.source.openFolder")}
         </Button>
         <p className="note">{t("settings.source.folderNote")}</p>
+        {/* Файл настроек не прочитался при запуске: правки живут до перезапуска */}
+        {settings.unsaved && <p className="note note--error" role="alert">{t("settings.source.unsaved")}</p>}
       </div>
 
       <div className="field">

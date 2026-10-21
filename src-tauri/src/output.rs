@@ -12,6 +12,7 @@
 use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -54,6 +55,26 @@ fn candidate(stem: &str, ext: &str, number: u32) -> String {
     }
 }
 
+/// Проверяет запись до долгой работы. Существующий каталог может быть только
+/// для чтения: create_dir_all этого не замечает, а чужой файл проба не трогает.
+pub fn probe_write(dir: &Path) -> io::Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::fs::create_dir_all(dir)?;
+    for _ in 0..ATTEMPTS {
+        let number = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!(".windgets-write-{}-{number}.tmp", std::process::id()));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                drop(file);
+                return std::fs::remove_file(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no free probe name"))
+}
+
 /// Занимает свободное имя в папке пустым файлом и отдаёт путь к нему.
 ///
 /// ВАЖНО: **имя занимается `create_new`, а не проверкой «есть ли такой».**
@@ -66,6 +87,25 @@ pub fn reserve(dir: &Path, stem: &str, ext: &str) -> io::Result<PathBuf> {
         let path = dir.join(candidate(stem, ext, number));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(_) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no free name"))
+}
+
+/// Занимает рабочего соседа для готового файла: `clip.mp4.part`, а занят —
+/// `clip.mp4.1.part` и дальше. Тем же `create_new`, что и само имя: ffmpeg
+/// пишет с `-y`, и чужой `.part` с тем же именем он затёр бы молча.
+pub fn reserve_part(reserved: &Path) -> io::Result<PathBuf> {
+    let name = reserved.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    for number in 0..ATTEMPTS {
+        let part = match number {
+            0 => reserved.with_file_name(format!("{name}.part")),
+            _ => reserved.with_file_name(format!("{name}.{number}.part")),
+        };
+        match OpenOptions::new().write(true).create_new(true).open(&part) {
+            Ok(_) => return Ok(part),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }
@@ -129,21 +169,45 @@ pub fn reset_output_dir(app: AppHandle, module: String) -> Result<(), String> {
 }
 
 /// Открывает папку вывода в проводнике — отдельным процессом, не `opener`.
+///
+/// Async и в пул: своя папка бывает на сетевом диске, и создание её на
+/// уснувшем сервере ждёт сеть — в главном потоке это стояло бы всё приложение.
 #[tauri::command]
-pub fn open_output_dir(app: AppHandle, module: String) -> Result<(), String> {
+pub async fn open_output_dir(app: AppHandle, module: String) -> Result<(), String> {
     let module = Module::from_id(&module).ok_or_else(|| "unknown module".to_owned())?;
     let (Some(dir), _) = dir_for(&app, module) else {
         return Err("no folder".to_owned());
     };
-    // Папка появляется с первым готовым файлом, а открыть её хотят и до него
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    crate::links::launch(&dir.to_string_lossy());
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        // Папка появляется с первым готовым файлом, а открыть её хотят и до него
+        std::fs::create_dir_all(&dir).map_err(|error| {
+            // Карточка отказ не показывает (места нет), журнал — обязан
+            eprintln!("папка вывода не открылась: {}: {error}", dir.display());
+            error.to_string()
+        })?;
+        crate::links::launch(&dir.to_string_lossy());
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_probe_leaves_existing_files_and_no_temporary_file() {
+        let dir = std::env::temp_dir().join(format!("hw-output-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("clip.mp4");
+        std::fs::write(&original, b"precious").unwrap();
+        probe_write(&dir).unwrap();
+        assert_eq!(std::fs::read(&original).unwrap(), b"precious");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(probe_write(&original).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn names_count_up_from_the_bare_one() {

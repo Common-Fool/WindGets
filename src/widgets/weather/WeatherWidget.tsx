@@ -192,8 +192,9 @@ function ClaudeWeather({ state, report, sky, open, hours, spinning, refresh, lea
   }, [hours.length, measured, geometry, growth]);
 
   // Уход к первому запуску закрывает прежнюю панель; смена дизайна уже поставила новую основу.
+  // Силой: к этой уборке хук роста уже погасил себя, и обычный возврат он бы отменил
   useEffect(() => () => {
-    if (leavingForSetup.current) growth.close();
+    if (leavingForSetup.current) growth.close(true);
   }, [growth, leavingForSetup]);
   return (
           <div className="weather">

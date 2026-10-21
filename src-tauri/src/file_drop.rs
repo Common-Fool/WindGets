@@ -49,7 +49,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, IsWindowVisible, KillTimer, RegisterClassW,
     SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, WindowFromPoint, GA_ROOT,
-    GUITHREADINFO, GUI_INMENUMODE, GUI_INMOVESIZE, GWLP_HINSTANCE, GWL_EXSTYLE, HWND_TOP, HWND_TOPMOST,
+    GUITHREADINFO, GUI_INMENUMODE, GUI_INMOVESIZE, GWLP_HINSTANCE, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST,
     LWA_ALPHA, MSGFLT_ALLOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_COPYDATA, WM_DESTROY,
     WM_DROPFILES, WM_TIMER, WNDCLASSW, WS_EX_ACCEPTFILES, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -90,6 +90,10 @@ thread_local! {
     static CATCHER: RefCell<Option<Rc<Catcher>>> = const { RefCell::new(None) };
 }
 
+// Нативные тесты меняют общий порядок окон: их шаги не должны перемешиваться.
+#[cfg(test)]
+pub(crate) static WINDOW_TEST_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn catcher() -> Option<Rc<Catcher>> {
     CATCHER.with(|slot| slot.borrow().clone())
 }
@@ -124,7 +128,14 @@ pub fn attach(
         }));
     });
 
-    if unsafe { SetTimer(Some(overlay), TIMER, TICK_MS, None) } == 0 {
+    timer_started(unsafe { SetTimer(Some(overlay), TIMER, TICK_MS, None) })
+}
+
+fn timer_started(timer: usize) -> Result<(), String> {
+    if timer == 0 {
+        // Без опроса подложка бесполезна; забываем её и разбираем окно,
+        // чтобы следующее включение конвертера смогло поставить новую.
+        detach();
         return Err("таймер подложки не завёлся".into());
     }
     Ok(())
@@ -274,7 +285,7 @@ unsafe fn show(catcher: &Catcher, visible: bool) {
         let topmost = GetWindowLongPtrW(catcher.converter, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0;
         let placed = SetWindowPos(
             catcher.overlay,
-            Some(if topmost { HWND_TOPMOST } else { HWND_TOP }),
+            Some(if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST }),
             rect.left,
             rect.top,
             rect.right - rect.left,
@@ -349,10 +360,91 @@ mod tests {
         DestroyWindow, GetWindow, GW_OWNER, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW,
     };
 
+    fn test_catcher(converter: HWND, overlay: HWND) -> Rc<Catcher> {
+        Rc::new(Catcher {
+            converter, overlay,
+            accepts: Box::new(|| true),
+            on_hover: Box::new(|_| {}),
+            on_drop: Box::new(|_| {}),
+            shown: Cell::new(false),
+            was_down: Cell::new(false),
+            pressed_here: Cell::new(false),
+        })
+    }
+
+    fn test_window() -> HWND {
+        unsafe {
+            CreateWindowExW(
+                Default::default(), w!("STATIC"), w!("owner"), WS_OVERLAPPEDWINDOW,
+                0, 0, 320, 240, None, None, None, None,
+            ).expect("тестовое окно")
+        }
+    }
+
+    #[test]
+    fn a_failed_timer_destroys_the_overlay_and_allows_a_retry() {
+        let _turn = WINDOW_TEST_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            let owner = test_window();
+            let overlay = create(owner).expect("первая подложка");
+            CATCHER.with(|slot| *slot.borrow_mut() = Some(test_catcher(owner, overlay)));
+            assert!(timer_started(0).is_err());
+            assert!(catcher().is_none());
+            assert!(!windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(overlay)).as_bool());
+
+            let retry = create(owner).expect("повторная подложка");
+            CATCHER.with(|slot| *slot.borrow_mut() = Some(test_catcher(owner, retry)));
+            assert!(timer_started(SetTimer(Some(retry), TIMER, TICK_MS, None)).is_ok());
+            assert!(catcher().is_some());
+            detach();
+            assert!(!windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(retry)).as_bool());
+            let _ = DestroyWindow(owner);
+        }
+    }
+
+    // В приложении очередь разбирает tao; в тестовом потоке это делаем сами.
+    fn pump_messages() {
+        use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+        unsafe {
+            let mut message = MSG::default();
+            while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+
+    #[test]
+    fn the_overlay_loses_topmost_when_the_converter_does() {
+        let _turn = WINDOW_TEST_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            let owner = test_window();
+            let overlay = create(owner).expect("подложка");
+            let catcher = test_catcher(owner, overlay);
+            SetWindowPos(owner, Some(HWND_TOPMOST), 0, 0, 320, 240, SWP_NOACTIVATE | SWP_SHOWWINDOW).unwrap();
+            pump_messages();
+            assert_ne!(GetWindowLongPtrW(owner, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0, 0);
+            show(&catcher, true);
+            pump_messages();
+            assert!(catcher.shown.get());
+            assert_ne!(GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0, 0);
+            show(&catcher, false);
+            SetWindowPos(owner, Some(HWND_NOTOPMOST), 0, 0, 320, 240, SWP_NOACTIVATE).unwrap();
+            pump_messages();
+            show(&catcher, true);
+            pump_messages();
+            assert!(catcher.shown.get());
+            assert_eq!(GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0, 0);
+            let _ = DestroyWindow(overlay);
+            let _ = DestroyWindow(owner);
+        }
+    }
+
     /// Настоящее окно: подложка ловит мышь и файлы, фокуса не берёт и до
     /// перетаскивания не видна.
     #[test]
     fn the_overlay_catches_files_but_stays_hidden_and_inert() {
+        let _turn = WINDOW_TEST_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             let owner = CreateWindowExW(
                 Default::default(),
