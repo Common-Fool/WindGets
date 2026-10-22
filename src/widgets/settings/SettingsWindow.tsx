@@ -1,23 +1,27 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { closeSettings, useSettings } from "../../lib/settings";
+import { closeSettings, setModule, setWidgetOption, useSettings, type WidgetRow } from "../../lib/settings";
 import { useLook } from "../../lib/look";
 import { useWindowDrag } from "../../lib/drag";
 import { useText, type Key } from "../../lib/i18n";
 import {
   ChevronIcon,
+  CloseIcon,
   DataIcon,
   DocumentIcon,
   HeartIcon,
+  LockIcon,
   PaletteIcon,
+  PinIcon,
   PlusIcon,
   SlidersIcon,
   TilesIcon,
+  UnlockIcon,
 } from "../../components/Icons";
 import { MAX_ACCOUNTS, useMail } from "../../lib/mail";
 import { WIDGET_ICONS } from "../icons";
-import { Navigate } from "./nav";
+import { Navigate, Picked } from "./nav";
 import { WidgetsSection } from "./WidgetsSection";
 import { WidgetPage } from "./WidgetPage";
 import { AppearanceSection, GeneralSection } from "./LookSection";
@@ -37,8 +41,13 @@ import "./settings-reference.css";
  * рядом.
  *
  * Страница виджета — лист дерева, а не раздел: разделы стоят в колонке всегда,
- * а виджетов столько, сколько включено. Открывают её и из колонки, и
- * шестерёнкой в таблице, и пунктом «Настройки…» в меню самого виджета.
+ * а виджетов столько, сколько включено. Открывают её и из колонки, и двойным
+ * щелчком по карточке в разделе «Виджеты», и пунктом «Настройки…» в меню
+ * самого виджета.
+ *
+ * У листа три кнопки (22 октября, слово пользователя): поверх всех окон,
+ * замок и крестик, выключающий модуль. Включённые «поверх» и «замок» видны
+ * всегда — по ним состояние читается без наведения; все три — при наведении.
  */
 
 type Section = {
@@ -162,6 +171,8 @@ export function SettingsWindow() {
       if (!next.delete(id)) next.add(id);
       return next;
     });
+  // Выбранная карточка раздела «Виджеты» — тоже до выхода, как ветки
+  const [picked, setPicked] = useState("");
 
   const section = SECTIONS.find((item) => item.id === active) ?? SECTIONS[0];
   const { Content } = section;
@@ -169,8 +180,8 @@ export function SettingsWindow() {
   // Цель бывает составной: `mail/<ключ ящика>` — страница ящика под почтой
   const [targetId, page] = target.includes("/") ? (target.split("/", 2) as [string, string]) : [target, undefined];
 
-  // Дерево — только включённые модули: выключенный не грузится, и настраивать
-  // его зовут шестерёнкой в таблице
+  // Дерево — только включённые модули: выключенный не грузится, и его
+  // страницу открывают двойным щелчком по карточке в разделе «Виджеты»
   const leaves = settings.widgets.filter((widget) => widget.enabled);
   const onLeaf = targetId !== "" && leaves.some((widget) => widget.id === targetId);
   const boxes = useMail()?.accounts ?? [];
@@ -249,7 +260,6 @@ export function SettingsWindow() {
                     const LeafIcon = WIDGET_ICONS[widget.id];
                     const leaf = (
                       <button
-                        key={widget.id}
                         type="button"
                         className="settings__tab settings__tab--leaf"
                         aria-current={target === widget.id}
@@ -260,7 +270,15 @@ export function SettingsWindow() {
                         <span className="settings__label">{widget.title}</span>
                       </button>
                     );
-                    if (widget.id !== MAIL) return leaf;
+                    const tools = <LeafTools widget={widget} held={settings.locked} />;
+                    if (widget.id !== MAIL) {
+                      return (
+                        <div key={widget.id} className="settings__row settings__row--leaf">
+                          {leaf}
+                          {tools}
+                        </div>
+                      );
+                    }
 
                     /*
                      * Почта — ветка второго уровня: ящики по адресу и «Добавить
@@ -270,8 +288,9 @@ export function SettingsWindow() {
                     const open = !folded.has(MAIL);
                     return (
                       <div key={widget.id} className="settings__branch">
-                        <div className="settings__row">
+                        <div className="settings__row settings__row--leaf">
                           {leaf}
+                          {tools}
                           <button
                             type="button"
                             className="settings__fold"
@@ -322,19 +341,73 @@ export function SettingsWindow() {
 
         <section className="settings__panel">
           <Navigate.Provider value={setTarget}>
-            {!shown ? null : target === "" ? (
-              <>
-                <h2 className="settings__heading caps">{t(section.title)}</h2>
-                <Content />
-              </>
-            ) : (
-              <WidgetPage id={targetId} page={page} />
-            )}
+            <Picked.Provider value={[picked, setPicked]}>
+              {!shown ? null : target === "" ? (
+                <>
+                  <h2 className="settings__heading caps">{t(section.title)}</h2>
+                  <Content />
+                </>
+              ) : (
+                <WidgetPage id={targetId} page={page} />
+              )}
+            </Picked.Provider>
           </Navigate.Provider>
         </section>
       </div>
 
       <Hints />
     </div>
+  );
+}
+
+/**
+ * Три кнопки листа дерева: поверх всех окон, замок, выключить модуль.
+ *
+ * Флаги те же, что пункты «Поверх всех окон» и «Закрепить окно» в меню самого
+ * виджета. Пока поднят общий рубильник «Заблокировать положение», замок
+ * погашен, но показывает свой флаг: тот цел и вернётся, когда рубильник
+ * опустят (`windows::resizes`).
+ */
+function LeafTools({ widget, held }: { widget: WidgetRow; held: boolean }) {
+  const t = useText();
+  const top = t("settings.widgets.topOne", { title: widget.title });
+  const lock = held ? t("settings.widgets.locksOverridden") : t("settings.widgets.lockOne", { title: widget.title });
+  const close = t("settings.widgets.disableOne", { title: widget.title });
+
+  return (
+    <span className="settings__tools">
+      <button
+        type="button"
+        className="settings__tool"
+        data-on={widget.alwaysOnTop || undefined}
+        aria-pressed={widget.alwaysOnTop}
+        aria-label={top}
+        title={top}
+        onClick={() => setWidgetOption(widget.id, "top", !widget.alwaysOnTop)}
+      >
+        <PinIcon />
+      </button>
+      <button
+        type="button"
+        className="settings__tool"
+        data-on={widget.locked || undefined}
+        aria-pressed={widget.locked}
+        aria-label={lock}
+        title={lock}
+        disabled={held}
+        onClick={() => setWidgetOption(widget.id, "lock", !widget.locked)}
+      >
+        {widget.locked ? <LockIcon /> : <UnlockIcon />}
+      </button>
+      <button
+        type="button"
+        className="settings__tool settings__tool--close"
+        aria-label={close}
+        title={close}
+        onClick={() => void setModule(widget.id, false).catch(() => {})}
+      >
+        <CloseIcon />
+      </button>
+    </span>
   );
 }

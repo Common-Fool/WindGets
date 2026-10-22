@@ -458,8 +458,6 @@ pub struct Settings {
     /// новый и в приложении. Та же логика `Option`, что у своей плотности
     /// виджета.
     pub language: Option<String>,
-    /// Значок, выбранный для области уведомлений Windows.
-    pub app_icon: String,
     /// Накопители, скрытые в карточке, — именами из выхлопа LHM (модель).
     ///
     /// ВАЖНО: **хранятся скрытые, а не показанные.** Новый диск появляется в
@@ -525,13 +523,6 @@ pub const SENSOR_SLOTS: &[&str] = &["cpuFan", "chassisFan", "boardTemp", "cpuVol
 /// «Не показывать» в ручном выборе: путь датчика так выглядеть не может.
 pub const PICK_OFF: &str = "off";
 
-/// Значок, который виден в области уведомлений Windows.
-pub const DEFAULT_APP_ICON: &str = "widget-mosaic";
-pub const APP_ICON_IDS: &[&str] = &[
-    "widget-mosaic",
-    "mono-mosaic",
-];
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -553,7 +544,6 @@ impl Default for Settings {
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::new(),
             language: None,
-            app_icon: DEFAULT_APP_ICON.to_owned(),
             hidden_disks: Vec::new(),
             hidden_metrics: BTreeMap::new(),
             sensor_picks: BTreeMap::new(),
@@ -573,8 +563,6 @@ pub struct WidgetSettings {
     /// значило «окно показано»: так старый `settings.json` читается как есть.
     pub enabled: bool,
     pub always_on_top: bool,
-    /// Окно не ловит мышь: щелчки уходят на рабочий стол под ним.
-    pub click_through: bool,
     /// Окно заперто поштучно: ни подвинуть мышью, ни растянуть.
     ///
     /// Общий рубильник `Settings::locked` от этого не отменяется и остаётся
@@ -655,7 +643,6 @@ impl Settings {
                 // Поверх всех — только по выбору человека: по умолчанию виджет
                 // не закрывает собой окна программ (12 октября, слово пользователя)
                 always_on_top: false,
-                click_through: false,
                 locked: false,
                 view: 0,
                 layout: usize::from(widget.id == "notes"),
@@ -664,10 +651,6 @@ impl Settings {
                 card_opacity: None,
                 scale: None,
             });
-
-        if widget.interactive {
-            own.click_through = false;
-        }
 
         // Пределы меняются между версиями: своя плотность в 50 % была годной,
         // пока нижний предел стоял на 50. Приводим тут, на общей дороге чтения,
@@ -753,10 +736,9 @@ impl Settings {
 /// нажатия, то есть виджет перестал бы работать целиком. В окне настроек такой
 /// галочки у него нет вовсе, но настройка могла остаться в файле с прошлых
 /// версий — включить её обратно всё равно нельзя.
-pub fn apply_option(own: &mut WidgetSettings, option: &str, value: bool, interactive: bool) -> bool {
+pub fn apply_option(own: &mut WidgetSettings, option: &str, value: bool) -> bool {
     match option {
         "top" => own.always_on_top = value,
-        "through" if !interactive => own.click_through = value,
         "lock" => own.locked = value,
         _ => return false,
     }
@@ -924,24 +906,12 @@ fn parse_settings_checked(text: &str) -> (Settings, bool) {
     settings.vivid = sane_vivid(settings.vivid);
     settings.poll_seconds = sane_poll_seconds(settings.poll_seconds);
     settings.weather = sane_place(settings.weather);
-    settings.app_icon = sane_app_icon(&settings.app_icon).to_owned();
     settings.output_dirs = sane_output_dirs(settings.output_dirs);
     settings.language = crate::i18n::sane(settings.language);
     settings.hidden_disks = sane_disks(settings.hidden_disks);
     settings.hidden_metrics = sane_metrics(settings.hidden_metrics);
     settings.sensor_picks = sane_picks(settings.sensor_picks);
     (settings, whole)
-}
-
-/// Незнакомый идентификатор из вручную исправленного файла заменяется выбором
-/// по умолчанию.
-pub fn sane_app_icon(id: &str) -> &'static str {
-    // Остались только два одобренных значка. Прежний белый/чёрно-белый выбор
-    // сохраняет монохром, цветные и неизвестные id получают оранжевые плитки.
-    match id {
-        "mono-mosaic" | "mono-window" | "white-windows" => "mono-mosaic",
-        _ => DEFAULT_APP_ICON,
-    }
 }
 
 /// Снятые ряды: только у процессора и видеокарты, только известные, без
@@ -1218,7 +1188,6 @@ mod tests {
             WidgetSettings {
                 enabled: false,
                 always_on_top: false,
-                click_through: true,
                 locked: false,
                 view: 0,
                 layout: 0,
@@ -1232,7 +1201,6 @@ mod tests {
         let stored = settings.widget(gpu);
         assert!(!stored.enabled);
         assert!(!stored.always_on_top);
-        assert!(stored.click_through);
     }
 
     /// Виджеты без записи в файле поверх всех не встают: окна программ они
@@ -1287,7 +1255,6 @@ mod tests {
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::from([("downloader".to_owned(), "D:\\Downloads".to_owned())]),
             language: Some("uk".to_owned()),
-            app_icon: "mono-mosaic".to_owned(),
             hidden_disks: vec!["Samsung SSD 970 EVO Plus 2TB".to_owned()],
             hidden_metrics: BTreeMap::from([("gpu".to_owned(), vec!["fan".to_owned(), "voltage".to_owned()])]),
             sensor_picks: BTreeMap::from([("chassisFan".to_owned(), "Board/Chip/Fans/Fan #2".to_owned())]),
@@ -1303,7 +1270,6 @@ mod tests {
 
         assert_eq!(back.card_opacity, 1.0);
         assert_eq!(back.scale, 1.15);
-        assert_eq!(back.app_icon, "mono-mosaic");
         assert_eq!(back.appearance.app.palette, "monochrome");
         assert_eq!(back.appearance.app.glass, "plum");
         assert_eq!(back.appearance.app.accent_color, "#33BBEE");
@@ -1759,23 +1725,12 @@ mod tests {
         let mut own = WidgetSettings::default();
         let before = own;
 
-        assert!(!apply_option(&mut own, "нет такого", true, false));
+        assert!(!apply_option(&mut own, "нет такого", true));
         assert_eq!(own.enabled, before.enabled);
         assert_eq!(own.always_on_top, before.always_on_top);
-        assert_eq!(own.click_through, before.click_through);
-    }
-
-    /// Прозрачность для мыши отключает приём нажатий целиком: нажимаемому
-    /// виджету её не включить ни из окна, ни правкой файла руками.
-    #[test]
-    fn clickable_widgets_never_take_click_through() {
-        let mut own = WidgetSettings::default();
-
-        assert!(!apply_option(&mut own, "through", true, true));
-        assert!(!own.click_through);
-
-        assert!(apply_option(&mut own, "through", true, false));
-        assert!(own.click_through);
+        assert_eq!(own.locked, before.locked);
+        // Прозрачности для мыши больше нет: старое имя столбца — тоже незнакомое
+        assert!(!apply_option(&mut own, "through", true));
     }
 
     #[test]
@@ -1783,75 +1738,14 @@ mod tests {
         let mut own = WidgetSettings::default();
 
         // Модуль так не включается: у него своя команда
-        assert!(!apply_option(&mut own, "show", true, true));
+        assert!(!apply_option(&mut own, "show", true));
         assert!(!own.enabled);
 
-        assert!(apply_option(&mut own, "top", false, true));
+        assert!(apply_option(&mut own, "top", false));
         assert!(!own.always_on_top);
 
-        assert!(apply_option(&mut own, "lock", true, true));
+        assert!(apply_option(&mut own, "lock", true));
         assert!(own.locked);
-    }
-
-    /// «Закрепить» есть и у нажимаемого виджета: мышь оно не отнимает, а
-    /// только запрещает двигать окно. Проверка `interactive` тут ни при чём,
-    /// и легко было бы приписать её заодно со «сквозь мышь».
-    #[test]
-    fn locking_is_offered_to_clickable_widgets_too() {
-        let mut own = WidgetSettings::default();
-
-        assert!(apply_option(&mut own, "lock", true, true));
-        assert!(own.locked);
-    }
-
-    /// Виджет мог быть несмотрибельным раньше, а стать нажимаемым позже —
-    /// ровно это случилось с погодой. Сохранённая тогда прозрачность для мыши
-    /// не должна доехать до окна: `windows::apply` ставит её, ни на что не
-    /// глядя, и виджет молча перестал бы отзываться на нажатия.
-    #[test]
-    fn a_stored_click_through_dies_at_the_door_of_a_clickable_widget() {
-        let mut settings = Settings::default();
-        settings.set_widget(
-            "weather",
-            WidgetSettings {
-                enabled: true,
-                always_on_top: true,
-                click_through: true,
-                locked: false,
-                view: 0,
-                layout: 0,
-                cover: 0,
-                size: 0,
-                card_opacity: None,
-                scale: None,
-            },
-        );
-
-        let weather = widgets::find("weather").expect("погода в реестре");
-        assert!(weather.interactive, "погоду нажимают: там правая кнопка");
-        assert!(
-            !settings.widget(weather).click_through,
-            "прозрачность для мыши дожила до нажимаемого виджета"
-        );
-
-        // У того, на кого только смотрят, настройка работает по-прежнему
-        settings.set_widget(
-            "gpu",
-            WidgetSettings {
-                enabled: true,
-                always_on_top: true,
-                click_through: true,
-                locked: false,
-                view: 0,
-                layout: 0,
-                cover: 0,
-                size: 0,
-                card_opacity: None,
-                scale: None,
-            },
-        );
-        let gpu = widgets::find("gpu").expect("видеокарта в реестре");
-        assert!(settings.widget(gpu).click_through);
     }
 
     /// Прежние вариации переводятся в ближайшее по смыслу, а не в

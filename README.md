@@ -9,6 +9,17 @@ no background work.
 
 ## Widgets
 
+<table>
+  <tr>
+    <th>GPT Design</th>
+    <th>Claude Design</th>
+  </tr>
+  <tr>
+    <td><a href="assets/screenshots/overview-gpt.webp"><img src="assets/screenshots/overview-gpt.webp" alt="Every widget in GPT Design"></a></td>
+    <td><a href="assets/screenshots/overview-claude.webp"><img src="assets/screenshots/overview-claude.webp" alt="Every widget in Claude Design"></a></td>
+  </tr>
+</table>
+
 - **Hardware** — CPU with RAM, GPU with VRAM, drives: load history, temperatures,
   fans, clocks, power. Sensors are matched by role, so the cards adapt to the
   hardware they run on and hide what your machine does not have.
@@ -26,6 +37,48 @@ no background work.
 - **Downloader** — video or audio by link via yt-dlp.
 
 The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
+
+<p align="center">
+  <img src="assets/screenshots/widgets.webp" alt="Every widget one by one, GPT Design" width="560">
+</p>
+
+<details>
+<summary>Every widget up close</summary>
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/gpu.webp" alt="GPU" width="260"><br>GPU</td>
+    <td align="center"><img src="assets/screenshots/cpu.webp" alt="CPU and RAM" width="260"><br>CPU and RAM</td>
+    <td align="center"><img src="assets/screenshots/disks.webp" alt="Drives" width="260"><br>Drives</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/network.webp" alt="Network" width="260"><br>Network</td>
+    <td align="center"><img src="assets/screenshots/processes.webp" alt="Processes" width="260"><br>Processes</td>
+    <td align="center"><img src="assets/screenshots/speedtest.webp" alt="Speedtest" width="260"><br>Speedtest</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/weather.webp" alt="Weather" width="260"><br>Weather</td>
+    <td align="center"><img src="assets/screenshots/sound.webp" alt="Sound" width="260"><br>Sound</td>
+    <td align="center"><img src="assets/screenshots/spotify.webp" alt="Spotify" width="260"><br>Spotify</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/media.webp" alt="Media" width="260"><br>Media</td>
+    <td align="center"><img src="assets/screenshots/mail.webp" alt="Mail" width="260"><br>Mail</td>
+    <td align="center"><img src="assets/screenshots/totp.webp" alt="2FA codes" width="260"><br>2FA codes</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/notes.webp" alt="Notes" width="260"><br>Notes</td>
+    <td align="center"><img src="assets/screenshots/todo.webp" alt="To-do" width="260"><br>To-do</td>
+    <td align="center"><img src="assets/screenshots/clipboard.webp" alt="Clipboard history" width="260"><br>Clipboard history</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/password.webp" alt="Password generator" width="260"><br>Password generator</td>
+    <td align="center"><img src="assets/screenshots/converter.webp" alt="Converter" width="260"><br>Converter</td>
+    <td align="center"><img src="assets/screenshots/downloader.webp" alt="Downloader" width="260"><br>Downloader</td>
+  </tr>
+</table>
+
+</details>
 
 ## Requirements
 
@@ -110,10 +163,6 @@ Why trust it anyway:
   [Actions](https://github.com/Common-Fool/WindGets/actions) page.
 - Each release lists the SHA-256 of the installer. To compare, run in
   PowerShell: `Get-FileHash .\Windgets_*_x64-setup.exe`.
-
-The project has applied for free code signing from the
-[SignPath Foundation](https://signpath.org). Once signing is in place, the
-warnings go away and this section will say so.
 
 ## Made with AI
 

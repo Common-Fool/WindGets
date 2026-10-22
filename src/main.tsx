@@ -1,3 +1,6 @@
+// Первым: в превью виджета (`?preview` в рамке окна настроек) подменяет IPC
+// Tauri демоданными раньше, чем хранилища успеют его позвать
+import "./preview/install";
 import { StrictMode, Suspense, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { resolveWidget, WIDGETS } from "./widgets/registry";

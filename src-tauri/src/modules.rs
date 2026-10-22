@@ -199,53 +199,6 @@ pub fn set(app: &AppHandle, turn: u64, widget: &'static Widget, on: bool) -> Res
     }
 }
 
-/// Все модули разом — строка «Все» в списке виджетов. Одна запись настроек на
-/// нажатие, а не по одной на каждый модуль.
-pub fn set_all(app: &AppHandle, turn: u64, on: bool) -> Result<(), String> {
-    let _turn = wait_turn(turn);
-
-    let state = app.state::<SettingsState>();
-    // Дискретной видеокарты нет — её виджет «Включить все» пропускает:
-    // показывать ему нечего, и в списке его галочка погашена (этап 57).
-    // Признак помнится и тогда, когда опрос уснул вместе с модулями железа
-    let no_gpu = on && crate::poller::lacks_graphics_card();
-    let mut touched: Vec<&'static Widget> = Vec::new();
-    settings::update(app, &state, |settings| {
-        for widget in widgets::shown() {
-            // Отладку и витрину включают только своей галочкой: «Все» —
-            // это виджеты, а не служебные окна (12 октября, слово пользователя)
-            if widget.chrome || (no_gpu && widget.id == "gpu") {
-                continue;
-            }
-            let changed = settings.edit_widget(widget, |own| {
-                let changed = own.enabled != on;
-                own.enabled = on;
-                changed
-            });
-            if changed.is_some() {
-                touched.push(widget);
-            }
-        }
-    });
-
-    if touched.is_empty() {
-        return Ok(());
-    }
-    crate::settings_window::emit(app);
-
-    let mut errors = Vec::new();
-    for widget in touched {
-        if on {
-            if let Err(error) = enable(app, widget) {
-                errors.push(error);
-            }
-        } else {
-            unload(app, widget.id);
-        }
-    }
-    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
-}
-
 /// То же, что [`set`], но из главного потока: работа уходит в пул и
 /// возвращается сразу. Зовут меню виджета и крестик окна с рамкой.
 pub fn set_later(app: &AppHandle, widget: &'static Widget, on: bool) {
@@ -256,7 +209,7 @@ pub fn set_later(app: &AppHandle, widget: &'static Widget, on: bool) {
     });
 }
 
-/// Неудавшееся включение откатывается и для одной галочки, и для «Все».
+/// Неудавшееся включение откатывается: `enabled` назад в `false`.
 fn enable(app: &AppHandle, widget: &'static Widget) -> Result<(), String> {
     if let Err(error) = load(app, widget) {
         eprintln!("модуль «{}» не включился: {error}", widget.id);
@@ -403,16 +356,6 @@ pub async fn set_module(app: AppHandle, id: String, on: bool) -> Result<(), Stri
     let turn = ticket();
     tauri::async_runtime::spawn_blocking(move || set(&app, turn, widget, on)).await.map_err(|error| {
         eprintln!("переключение модуля не завершилось: {error}");
-        tr!("common.failed")
-    })?
-}
-
-/// Все модули разом — строка «Все». Тоже async, по той же причине.
-#[tauri::command]
-pub async fn set_all_modules(app: AppHandle, on: bool) -> Result<(), String> {
-    let turn = ticket();
-    tauri::async_runtime::spawn_blocking(move || set_all(&app, turn, on)).await.map_err(|error| {
-        eprintln!("переключение всех модулей не завершилось: {error}");
         tr!("common.failed")
     })?
 }

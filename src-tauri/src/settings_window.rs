@@ -64,33 +64,15 @@ const TARGET_EVENT: &str = "settings-target";
 /// каждую секунду, никому его не показывая.
 const SHOWN_EVENT: &str = "settings-shown";
 
-/// Ширина держится списком виджетов, а не разделами: в списке пять столбцов
-/// постоянной ширины, а имя виджета занимает остаток. Замер при кегле 100 %:
-/// самое длинное имя («Витрина компонентов») просит 154 точки, и на 680 ему
-/// достаётся 164. Прежние 660 хватало ровно на три столбца галочек; замок
-/// стал четвёртым, и без этих двух десятков имя резалось бы эллипсисом уже в
-/// окне по умолчанию.
-///
-/// На крупном кегле имя всё равно уступает — это не поломка: столбцы галочек
-/// заданы точками и за кеглем не едут, а имени и раньше не хватало ширины
-/// начиная со 115 %.
-///
-/// С этапа 52 колонка разделов держит дерево виджетов со значками, и её ширину
-/// задаёт самое длинное имя виджета: замер на пяти языках — испанское
-/// «Generador de contraseñas», 198 точек со значком и отступом листа, плюс поля
-/// и рамка колонки, итого 216 (`.settings__nav` в settings.css) вместо прежних
-/// 168. Окно выросло на те же 48 точек, до 728, — чтобы имени в таблице
-/// виджетов остались его 164. Предел вырос на столько же.
-const WIDTH: f64 = 728.0;
-const HEIGHT: f64 = 520.0;
-// R17 A: только старт без сохранённой геометрии. restore_state ниже
-// сохраняет размеры пользователя; смена дизайна окно не пересоздаёт.
-fn initial_size(design: settings::Design) -> (f64, f64) {
-    match design {
-        settings::Design::Reference => (760.0, 560.0),
-        settings::Design::App => (WIDTH, HEIGHT),
-    }
-}
+/// Ширину держит раздел «Виджеты» (22 октября): колонка разделов с деревом
+/// (216 точек — замер самого длинного имени на пяти языках, испанского
+/// «Generador de contraseñas», `.settings__nav` в settings.css), справа
+/// карточки виджетов и живое превью выбранной рядом с ними. На 880 превью
+/// получает около 330 точек — полный размер большинства карточек уменьшается
+/// не больше чем вдвое. Уже ~520 точек раздела превью уходит само
+/// (`@container`), поэтому предел окна остался прежним.
+const WIDTH: f64 = 880.0;
+const HEIGHT: f64 = 600.0;
 const MIN_WIDTH: f64 = 628.0;
 const MIN_HEIGHT: f64 = 420.0;
 
@@ -103,7 +85,7 @@ pub const MIN_SIZE: (f64, f64) = (MIN_WIDTH, MIN_HEIGHT);
 const _: () = {
     // Окно тянут мышью, и предел должен помещаться внутрь размера по умолчанию
     assert!(MIN_WIDTH <= WIDTH && MIN_HEIGHT <= HEIGHT);
-    // Колонка разделов и таблица виджетов рядом требуют места: общий предел
+    // Колонка разделов и карточки виджетов рядом требуют места: общий предел
     // виджетов тут заведомо мал, и брать его нельзя
     assert!(MIN_WIDTH > widgets::MIN_WIDTH && MIN_HEIGHT > widgets::MIN_HEIGHT);
 };
@@ -115,14 +97,11 @@ pub struct WidgetRow {
     pub id: &'static str,
     /// Название на выбранном языке.
     pub title: String,
-    /// Виджет нажимают: прозрачности для мыши у него не бывает.
-    pub interactive: bool,
     /// Служебное окно (отладка, витрина): галочки «Все» его не трогают, а
     /// в таблице оно стоит отдельным блоком.
     pub service: bool,
     pub enabled: bool,
     pub always_on_top: bool,
-    pub click_through: bool,
     /// Окно заперто поштучно. Общий рубильник этого флага не меняет.
     pub locked: bool,
     /// Номер вида: по нему карточка решает, чем себя рисовать.
@@ -147,6 +126,10 @@ pub struct WidgetRow {
     pub card_opacity: Option<f64>,
     /// Свой масштаб. `None` — как у всех.
     pub scale: Option<f64>,
+    /// Размер окна при 100 % в нынешнем дизайне, виде, размере и компоновке:
+    /// под него собирается живое превью в разделе «Виджеты». У карточек с
+    /// высотой по содержимому это стартовая высота, точную сообщает превью.
+    pub preview: (f64, f64),
 }
 
 /// Один пункт списка выбора — тема, стекло или язык.
@@ -197,8 +180,6 @@ pub struct SettingsView {
     pub design: settings::Design,
     /// Выбранный язык. `None` — «как в Windows».
     pub language: Option<String>,
-    /// Значок системного трея.
-    pub app_icon: String,
     /// Все языки — самоназваниями, они не переводятся.
     pub languages: Vec<ChoiceRow>,
     /// Язык Windows: подпись «Как в Windows · Русский» говорит, что именно
@@ -227,6 +208,18 @@ pub struct SettingsView {
     pub unsaved: bool,
 }
 
+/// Размер окна виджета для превью. У гибких узких пресетов своей высоты нет —
+/// окно держит ту, что натянули руками, — и превью берёт высоту полного
+/// размера того же вида и компоновки.
+fn preview_size(widget: &widgets::Widget, design: settings::Design, own: &settings::WidgetSettings) -> (f64, f64) {
+    let (width, height) = widget.design_size(design, own.view, own.size, own.layout);
+    let height = height
+        .or_else(|| widget.design_size(design, own.view, 0, own.layout).1)
+        .or(widget.full().height)
+        .unwrap_or(widgets::MIN_HEIGHT);
+    (width, height)
+}
+
 fn view(app: &AppHandle) -> SettingsView {
     let settings = app.state::<SettingsState>().get();
 
@@ -236,11 +229,9 @@ fn view(app: &AppHandle) -> SettingsView {
             WidgetRow {
                 id: widget.id,
                 title: widget.title(),
-                interactive: widget.interactive,
                 service: widget.chrome,
                 enabled: own.enabled,
                 always_on_top: own.always_on_top,
-                click_through: own.click_through,
                 locked: own.locked,
                 view: own.view,
                 views: if widget.has_reference_views() && settings.design == settings::Design::App { Vec::new() } else { names(widget.views) },
@@ -263,6 +254,7 @@ fn view(app: &AppHandle) -> SettingsView {
                 flexible: widget.flexible,
                 card_opacity: own.card_opacity,
                 scale: own.scale,
+                preview: preview_size(widget, settings.design, &own),
             }
         })
         .collect();
@@ -283,7 +275,6 @@ fn view(app: &AppHandle) -> SettingsView {
         sound_mixer_collapsed: settings.sound_mixer_collapsed,
         design: settings.design,
         language: settings.language.clone(),
-        app_icon: settings.app_icon.clone(),
         languages: crate::i18n::LANGUAGES
             .iter()
             .map(|language| ChoiceRow {
@@ -487,7 +478,9 @@ fn center_and_clamp(
 
 fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
     let url = format!("index.html?widget={LABEL}");
-    let (width, height) = initial_size(app.state::<SettingsState>().get().design);
+    // Только старт без сохранённой геометрии: restore_state ниже возвращает
+    // размеры пользователя; размер один на оба дизайна
+    let (width, height) = (WIDTH, HEIGHT);
 
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(url.into()))
         .title(tr!("window.settings"))
@@ -565,27 +558,9 @@ pub fn settings_view(app: AppHandle) -> SettingsView {
     view(&app)
 }
 
-/// Меняет значок трея и сохраняет его выбор.
-#[tauri::command]
-pub fn set_app_icon(app: AppHandle, id: String) -> Result<(), String> {
-    if !settings::APP_ICON_IDS.contains(&id.as_str()) {
-        return Err(format!("неизвестный значок трея: {id}"));
-    }
-
-    let state = app.state::<SettingsState>();
-    if state.get().app_icon == id {
-        return Ok(());
-    }
-
-    crate::tray::set_icon(&app, &id)?;
-    settings::update(&app, &state, |settings| settings.app_icon = id);
-    emit(&app);
-    Ok(())
-}
-
-/// Одна галочка в строке виджета: `top`, `through` или `lock`.
+/// Один флаг виджета: `top` или `lock` — кнопки в дереве окна настроек.
 ///
-/// Столбец «Вкл.» идёт не сюда, а в `modules::set_module`: он собирает и
+/// Включение модуля идёт не сюда, а в `modules::set_module`: он собирает и
 /// разбирает окно, а синхронная команда выполняется в главном потоке, и
 /// сборка оттуда вешала приём IPC во всём приложении.
 #[tauri::command]
@@ -596,7 +571,7 @@ pub fn set_widget_option(app: AppHandle, id: String, option: String, value: bool
 
     let state = app.state::<SettingsState>();
     let Some(own) = settings::update_widget(&app, &state, widget, |_, own| {
-        settings::apply_option(own, &option, value, widget.interactive)
+        settings::apply_option(own, &option, value)
     }) else {
         return;
     };
@@ -997,53 +972,35 @@ pub fn close_settings(app: AppHandle) {
     });
 }
 
-/// Та же галочка, но разом для всех виджетов: строка «Все» в шапке списка.
-///
-/// Отдельной командой, а не пятнадцатью вызовами `set_widget_option` подряд с
-/// той стороны IPC: каждый из них пишет файл настроек и рассылает событие, то
-/// есть на одно нажатие пришлось бы пятнадцать записей на диск и пятнадцать
-/// перерисовок списка.
-///
-/// Что правка задела — собираем по ходу: «сквозь мышь» у нажимаемого виджета
-/// не ставится вовсе, и ходить к его окну незачем. «Вкл.» у всех разом —
-/// `modules::set_all_modules`.
-#[tauri::command]
-pub fn set_all_widget_option(app: AppHandle, option: String, value: bool) {
-    let state = app.state::<SettingsState>();
-
-    let mut touched: Vec<(&'static widgets::Widget, settings::WidgetSettings)> = Vec::new();
-
-    settings::update(&app, &state, |settings| {
-        // Служебные окна — только своей галочкой (12 октября, слово пользователя)
-        for widget in widgets::shown().filter(|widget| !widget.chrome) {
-            let own = settings.edit_widget(widget, |own| {
-                settings::apply_option(own, &option, value, widget.interactive)
-            });
-            if let Some(own) = own {
-                touched.push((widget, own));
-            }
-        }
-    });
-
-    // Незнакомое имя столбца не задело никого: рассылать нечего
-    if touched.is_empty() {
-        return;
-    }
-
-    emit(&app);
-
-    windows::on_main(&app, move |app| {
-        for (widget, own) in touched {
-            windows::apply_by_id(&app, widget.id, own);
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const FRONTEND_REGISTRY: &str = include_str!("../../src/widgets/registry.ts");
+
+    /// Размеры окон по умолчанию для листа снимков в README
+    /// (`scripts/widget-sheet/`): тот же `preview_size`, что у живого превью,
+    /// в обоих дизайнах. Не проверка, а выгрузка — запускается руками:
+    /// `cargo test --lib widget_sheet_sizes -- --ignored`.
+    #[test]
+    #[ignore]
+    fn widget_sheet_sizes() {
+        let mut out = serde_json::Map::new();
+        for (name, design) in [("reference", settings::Design::Reference), ("app", settings::Design::App)] {
+            let settings = settings::Settings { design, ..settings::Settings::default() };
+            let mut sizes = serde_json::Map::new();
+            for widget in widgets::shown().filter(|widget| !widget.chrome) {
+                let (width, height) = preview_size(widget, design, &settings.widget(widget));
+                sizes.insert(widget.id.to_owned(), serde_json::json!([width, height]));
+            }
+            out.insert(name.to_owned(), serde_json::Value::Object(sizes));
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/widget-sheet/sizes.json");
+        std::fs::create_dir_all(path.parent().expect("папка")).expect("папка листа");
+        let text = serde_json::to_string_pretty(&serde_json::Value::Object(out)).expect("json");
+        std::fs::write(&path, text + "
+").expect("запись размеров");
+    }
 
     /// Окна нет в реестре виджетов, но компонент ему всё равно нужен:
     /// без записи на фронте всплывёт «виджет не найден».

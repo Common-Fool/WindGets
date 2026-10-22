@@ -200,12 +200,13 @@
 
 .settings--reference [data-look-field="design-error"] { padding: 10px; border: 1px solid var(--border-card); border-left: 2px solid var(--status-danger); border-radius: 5px; background: var(--surface-inset); color: var(--status-danger); }
 
-.settings--reference :is(.grid__head, .grid__row) { grid-template-columns: minmax(0, 1fr) repeat(4, 60px) 22px; gap: 4px; }
-.settings--reference .grid__label { font-size: 10px; letter-spacing: normal; }
-.settings--reference .grid__row { min-height: 30px; padding: 5px 0; font-size: 12px; }
-.settings--reference .grid__row--all { background: var(--surface-control); font-weight: 600; }
-.settings--reference .grid__none { color: transparent; }
-.settings--reference .grid__gear { width: 22px; height: 22px; }
+/* Галерея виджетов: те же правила, что у Claude, на плотных размерах GPT */
+.settings--reference .widget-card { background: var(--surface-inset); }
+.settings--reference .widget-card:hover { background: var(--surface-control); }
+.settings--reference .widget-card[data-selected] { background: var(--surface-control); }
+.settings--reference .widget-card__action { width: 24px; height: 24px; font-size: 12px; }
+.settings--reference .gallery__preview { border-radius: 8px; }
+.settings--reference .settings__tool { width: 18px; height: 18px; font-size: 12px; }
 .settings--reference .select__control option { background: var(--surface-control); }
 
 @media (max-width: 700px) {

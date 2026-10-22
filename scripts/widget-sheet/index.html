@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Windgets — widget sheet</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+      }
+
+      /* Подложка листа — тёмный «рабочий стол» под стеклом карточек */
+      .sheet {
+        position: relative;
+        display: inline-block;
+        padding: 24px;
+        border-radius: 16px;
+        background: linear-gradient(160deg, #161b20, #0c0f12);
+      }
+
+      .slot {
+        position: absolute;
+        overflow: hidden;
+        border-radius: 8px;
+      }
+
+      .slot iframe {
+        display: block;
+        border: none;
+        background: transparent;
+        color-scheme: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet" id="sheet"></div>
+    <script type="module" src="./sheet.ts"></script>
+  </body>
+</html>

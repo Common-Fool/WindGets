@@ -368,6 +368,16 @@ mod tests {
         }
     }
 
+    /// Карточка в разделе «Виджеты» подписана описанием: забытое вылезло бы
+    /// ключом «widgetAbout.<id>» прямо под именем.
+    #[test]
+    fn every_widget_has_a_description() {
+        for widget in crate::widgets::WIDGETS {
+            let key = format!("widgetAbout.{}", widget.id);
+            assert!(TABLES[0].contains_key(&key), "нет описания «{key}»");
+        }
+    }
+
     /// Имена размеров, видов и обложек в реестре — ключи каталога, как и имена
     /// тем и стёкол. Забытый ключ вылез бы в меню виджета как «size.full».
     #[test]

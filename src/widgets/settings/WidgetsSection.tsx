@@ -1,78 +1,70 @@
-import { useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "../../components/Button";
-import { Check } from "../../components/Check";
+import { CheckIcon, CloseIcon } from "../../components/Icons";
 import { fileSize } from "../../lib/format";
-import {
-  openWidgetSettings,
-  setAllModules,
-  setAllWidgetOption,
-  setModule,
-  setWidgetOption,
-  useSettings,
-  type SettingsView,
-} from "../../lib/settings";
+import { setModule, useSettings, type SettingsView, type WidgetRow } from "../../lib/settings";
 import { componentsFor, failureText, listOf, removeTools, useTools, type ModuleId } from "../../lib/tools";
-import { useText } from "../../lib/i18n";
+import { useText, type Key } from "../../lib/i18n";
+import { useLook } from "../../lib/look";
 import { getState, subscribe } from "../../lib/telemetry";
 import { gpuPresent } from "../../lib/sensors";
+import { PREVIEWED } from "../../preview/list";
+import { HEIGHT, READY, TO_FRAME, type PreviewState, type ToFrame, type ToHost } from "../../preview/protocol";
+import { WIDGET_ICONS } from "../icons";
+import { Navigate, Picked } from "./nav";
 
 /** Модули со своими скачанными программами. */
 const TOOL_MODULES: readonly ModuleId[] = ["converter", "downloader"];
 
+/** Ключ описания виджета в каталоге. Есть у каждого — держит `every_widget_has_a_description`. */
+const about = (id: string) => `widgetAbout.${id}` as Key;
+
 /**
- * Список виджетов: строка на виджет, четыре галочки.
+ * Раздел «Виджеты»: галерея карточек по образцу Themia (22 октября, слово
+ * пользователя). Слева карточки — значок, имя, описание; справа живое превью
+ * выбранной.
  *
- * Первая галочка, «Вкл.», — это модуль: выключенный не грузится вовсе, ни
- * окна, ни фоновой работы в Rust (`modules.rs`). Выключение и включение
- * мгновенные: окно собирается и разбирается на ходу.
+ * Включённые стоят сверху, остальные ниже, служебные окна — своей группой в
+ * самом конце. Кнопка на карточке включает модуль (галочка) или выключает его
+ * (крестик), и карточка переезжает в свою группу. Выключенный модуль не
+ * грузится вовсе — ни окна, ни фоновой работы в Rust (`modules.rs`).
  *
- * Первая строка «Все» переключает настройку сразу у всех виджетов списка.
- * У выключенного модуля остальные три недоступны — применять их не к чему,
- * а галочки создавали бы ощущение работающей настройки. То же и при поднятом
- * рубильнике «спрятать все»: окна спрятаны. Сам модуль под рубильником
- * включить можно: его окно соберётся спрятанным и выйдет вместе со всеми.
- *
- * У нажимаемых виджетов третья ячейка пуста, а не выключена: прозрачность для
- * мыши отключает им приём нажатий целиком, и такой настройки у них нет вовсе.
- * Четвёртая, «замок», есть у всех: она отнимает не мышь, а только право
- * двигать и тянуть окно.
- *
- * ВАЖНО: **общий рубильник «заблокировать положение» гасит весь столбец
- * замка, но галочек в нём не меняет.** Свой флаг общему не подчинён — он
- * просто перекрыт, пока рубильник поднят, и вернётся, как только его опустят.
+ * Двойной щелчок по карточке (и Enter) открывает страницу виджета в дереве
+ * колонки; то же делает «Настроить» под превью. «Поверх» и «замок» живут
+ * кнопками в самом дереве, у включённых виджетов.
  */
 export function WidgetsSection() {
   const settings = useSettings();
   const t = useText();
+  const navigate = useContext(Navigate);
+  const [picked, pick] = useContext(Picked);
 
   /*
    * Дискретной видеокарты нет — включить её виджет нельзя, показывать ему
    * нечего (этап 57). Живой снимок говорит это сразу; пока датчики спят, его
-   * нет, и тогда слово за Rust: он помнит последний снимок (`noGpu`), по нему
-   * же «Включить все» пропускает видеокарту (`modules::set_all`). Включённый
-   * модуль выключается как всегда.
+   * нет, и тогда слово за Rust: он помнит последний снимок (`noGpu`).
+   * Включённый модуль выключается как всегда.
    *
    * Подписка на один признак, а не на весь снимок: снимок приходит раз в
-   * секунду, и таблица перерисовывалась бы с ним впустую.
+   * секунду, и список перерисовывался бы с ним впустую.
    */
   const present = useSyncExternalStore(subscribe, () => gpuPresent(getState()));
   const noGpu = present === false || (present === undefined && settings.noGpu);
-  const blocked = (widget: SettingsView["widgets"][number]) => noGpu && widget.id === "gpu" && !widget.enabled;
+  const blocked = (widget: WidgetRow) => noGpu && widget.id === "gpu" && !widget.enabled;
 
   /*
-   * Выключенные только что модули с программами: под таблицей им предлагают
+   * Выключенные только что модули с программами: под списком им предлагают
    * удалить то, что больше никому не нужно. Живёт до закрытия окна, на диск
    * не попадает — решение разовое.
    */
   const [offered, setOffered] = useState<ModuleId[]>([]);
-  // Отказ включения: окно не собралось, и Rust вернул галочку назад. Очередь
-  // переходов держит Rust (номерами, в порядке нажатий — `modules::ticket`),
-  // поэтому галочки на время перехода не гасятся — иначе мигали бы все разом
-  // на каждом нажатии
+  // Отказ включения: окно не собралось, и Rust вернул флаг назад. Очередь
+  // переходов держит Rust (номерами, в порядке нажатий — `modules::ticket`)
   const [error, setError] = useState<string | null>(null);
 
-  const toggleModule = async (id: string, on: boolean) => {
+  const toggle = async (id: string, on: boolean) => {
     setError(null);
+    pick(id);
     try {
       await setModule(id, on);
       const module = TOOL_MODULES.find((entry) => entry === id);
@@ -83,198 +75,221 @@ export function WidgetsSection() {
     }
   };
 
-  const toggleAllModules = async (on: boolean) => {
-    setError(null);
-    try {
-      await setAllModules(on);
-      setOffered(on ? [] : [...TOOL_MODULES]);
-    } catch (reason) {
-      setError(typeof reason === "string" ? reason : t("common.failed"));
-    }
-  };
-
-  /*
-   * Служебные окна — отладка и витрина — стоят отдельным блоком под чертой, и
-   * галочки «Все» их не считают и не трогают: их включают только своей
-   * галочкой (12 октября, слово пользователя). Пропускает их и Rust.
-   */
   const widgets = settings.widgets.filter((widget) => !widget.service);
-  const service = settings.widgets.filter((widget) => widget.service);
-  const total = widgets.length;
-
-  // «Все» считается по тем, кого вообще можно включить: погашенная видеокарта
-  // оставила бы галочку смешанной навсегда
-  const switchable = widgets.filter((widget) => !blocked(widget));
-  const enabled = switchable.filter((widget) => widget.enabled).length;
-  const allEnabled = switchable.length > 0 && enabled === switchable.length;
-  const mixedEnabled = enabled > 0 && enabled < switchable.length;
-
-  const onTop = widgets.filter((widget) => widget.alwaysOnTop).length;
-  const allTop = total > 0 && onTop === total;
-  const mixedTop = onTop > 0 && onTop < total;
-
-  /*
-   * «Сквозь» считается только по тем, у кого эта настройка вообще бывает:
-   * нажимаемому виджету прозрачность для мыши отключила бы приём нажатий
-   * целиком, и в его строке стоит прочерк. Считай мы их наравне со всеми,
-   * галочка «Все» не сошлась бы никогда — полной ей стать было бы нечем.
-   */
-  const seeThrough = widgets.filter((widget) => !widget.interactive);
-  const through = seeThrough.filter((widget) => widget.clickThrough).length;
-  const allThrough = seeThrough.length > 0 && through === seeThrough.length;
-  const mixedThrough = through > 0 && through < seeThrough.length;
-  const throughDisabled = settings.hiddenAll || seeThrough.length === 0;
-
-  const held = widgets.filter((widget) => widget.locked).length;
-  const allHeld = total > 0 && held === total;
-  const mixedHeld = held > 0 && held < total;
-  const lockDisabled = settings.hiddenAll || settings.locked || total === 0;
-
-  const row = (widget: SettingsView["widgets"][number]) => {
-          const idle = !widget.enabled || settings.hiddenAll;
-
-          return (
-            <div className="grid__row" key={widget.id}>
-              <span className="grid__name">{widget.title}</span>
-
-              <Check
-                checked={widget.enabled}
-                label={blocked(widget) ? t("settings.widgets.noGpu") : t("settings.widgets.showOne", { title: widget.title })}
-                disabled={blocked(widget)}
-                onChange={(next) => toggleModule(widget.id, next)}
-              />
-
-              <Check
-                checked={widget.alwaysOnTop}
-                label={t("settings.widgets.topOne", { title: widget.title })}
-                disabled={idle}
-                onChange={(next) => setWidgetOption(widget.id, "top", next)}
-              />
-
-              {widget.interactive ? (
-                <span className="grid__none" title={t("settings.widgets.clickable")}>
-                  —
-                </span>
-              ) : (
-                <Check
-                  checked={widget.clickThrough}
-                  label={t("settings.widgets.throughOne", { title: widget.title })}
-                  disabled={idle}
-                  onChange={(next) => setWidgetOption(widget.id, "through", next)}
-                />
-              )}
-
-              <Check
-                checked={widget.locked}
-                label={t("settings.widgets.lockOne", { title: widget.title })}
-                disabled={idle || settings.locked}
-                onChange={(next) => setWidgetOption(widget.id, "lock", next)}
-              />
-
-              {/*
-                Шестерёнка стоит и у выключенного модуля: окна у него нет, но
-                состояние в Rust заведено, и его вид, размер, город и
-                программы достижимы и так.
-              */}
-              <button
-                type="button"
-                className="grid__gear"
-                aria-label={t("settings.widgets.settingsOf", { title: widget.title })}
-                title={t("settings.widgets.settingsOf", { title: widget.title })}
-                onClick={() => openWidgetSettings(widget.id)}
-              >
-                {/*
-                  Зубцы стоят на самом теле шестерни, а не торчат лучами из
-                  кружка: первая редакция рисовала обводкой круг с восемью
-                  чёрточками вокруг и читалась как солнышко. Отверстие внутри
-                  вырезано вторым контуром по правилу evenodd.
-                */}
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path
-                    fillRule="evenodd"
-                    d="M 6.72 2.65 L 7.14 0.75 L 8.86 0.75 L 9.28 2.65 L 10.87 3.31 L 12.52 2.27 L 13.73 3.48 L 12.69 5.13 L 13.35 6.72 L 15.25 7.14 L 15.25 8.86 L 13.35 9.28 L 12.69 10.87 L 13.73 12.52 L 12.52 13.73 L 10.87 12.69 L 9.28 13.35 L 8.86 15.25 L 7.14 15.25 L 6.72 13.35 L 5.13 12.69 L 3.48 13.73 L 2.27 12.52 L 3.31 10.87 L 2.65 9.28 L 0.75 8.86 L 0.75 7.14 L 2.65 6.72 L 3.31 5.13 L 2.27 3.48 L 3.48 2.27 L 5.13 3.31 Z M 10.5 8 A 2.5 2.5 0 1 0 5.5 8 A 2.5 2.5 0 1 0 10.5 8 Z"
-                  />
-                </svg>
-              </button>
-            </div>
-          );
-  };
+  const groups: { title: Key; rows: WidgetRow[] }[] = [
+    { title: "settings.widgets.enabled", rows: widgets.filter((widget) => widget.enabled) },
+    { title: "settings.widgets.available", rows: widgets.filter((widget) => !widget.enabled) },
+    { title: "settings.widgets.service", rows: settings.widgets.filter((widget) => widget.service) },
+  ];
+  const ordered = groups.flatMap((group) => group.rows);
+  const current = ordered.find((widget) => widget.id === picked) ?? ordered[0];
 
   return (
-    <div className="rows">
-      {settings.hiddenAll && (
-        <p className="note">{t("settings.widgets.allHidden")}</p>
-      )}
-
-      <div className="grid">
-        <div className="grid__head">
-          <span />
-          <span className="grid__label caps">{t("settings.widgets.show")}</span>
-          <span className="grid__label caps">{t("settings.widgets.top")}</span>
-          <span className="grid__label caps">{t("settings.widgets.through")}</span>
-          <span className="grid__label caps">{t("settings.widgets.lock")}</span>
-          <span />
-        </div>
-
-        <div className="grid__row grid__row--all">
-          <span className="grid__name">{t("settings.widgets.all")}</span>
-
-          <Check
-            checked={allEnabled}
-            mixed={mixedEnabled}
-            label={t("settings.widgets.showAll")}
-            disabled={total === 0}
-            onChange={toggleAllModules}
-          />
-
-          <Check
-            checked={allTop}
-            mixed={mixedTop}
-            label={t("settings.widgets.topAll")}
-            disabled={settings.hiddenAll || total === 0}
-            onChange={(next) => setAllWidgetOption("top", next)}
-          />
-
-          <Check
-            checked={allThrough}
-            mixed={mixedThrough}
-            label={t("settings.widgets.throughAll")}
-            disabled={throughDisabled}
-            onChange={(next) => setAllWidgetOption("through", next)}
-          />
-
-          <Check
-            checked={allHeld}
-            mixed={mixedHeld}
-            label={t("settings.widgets.lockAll")}
-            disabled={lockDisabled}
-            onChange={(next) => setAllWidgetOption("lock", next)}
-          />
-
-          {/* Настройки бывают только у своего виджета: настраивать «всех»
-              разом тут нечего, и шестерёнки в этой строке нет */}
-          <span />
-        </div>
-
-        {widgets.map(row)}
-
-        {service.length > 0 && (
-          <h3 className="settings__subheading caps">{t("settings.widgets.service")}</h3>
+    <div className="gallery">
+      <div className="gallery__list">
+        {settings.hiddenAll && <p className="note">{t("settings.widgets.allHidden")}</p>}
+        {error && <p className="note note--error" role="alert">{error}</p>}
+        {offered.length > 0 && (
+          <ToolsOffer modules={offered} settings={settings} onClose={() => setOffered([])} />
         )}
-        {service.map(row)}
+
+        {groups.map(({ title, rows }) =>
+          rows.length === 0 ? null : (
+            <section key={title} className="gallery__group" aria-label={t(title)}>
+              <h3 className="settings__subheading caps">{t(title)}</h3>
+              {rows.map((widget) => (
+                <Card
+                  key={widget.id}
+                  widget={widget}
+                  selected={widget.id === current?.id}
+                  blocked={blocked(widget)}
+                  onPick={() => pick(widget.id)}
+                  onOpen={() => navigate(widget.id)}
+                  onToggle={(on) => void toggle(widget.id, on)}
+                />
+              ))}
+            </section>
+          ),
+        )}
       </div>
 
-      {error && <p className="note note--error" role="alert">{error}</p>}
-
-      {offered.length > 0 && (
-        <ToolsOffer modules={offered} settings={settings} onClose={() => setOffered([])} />
+      {current !== undefined && (
+        <aside className="gallery__preview" aria-label={current.title}>
+          {PREVIEWED.includes(current.id) && <LivePreview key={current.id} widget={current} settings={settings} />}
+          <div className="gallery__caption">
+            <span className="gallery__name">{current.title}</span>
+            <p className="gallery__about">{t(about(current.id))}</p>
+            <Button variant="outline" onClick={() => navigate(current.id)}>
+              {t("settings.widgets.configure")}
+            </Button>
+          </div>
+        </aside>
       )}
+    </div>
+  );
+}
 
-      <p className="note">{t("settings.widgets.columnsNote")}</p>
+/**
+ * Карточка виджета. Две кнопки рядом, а не одна в другой: вложенные кнопки
+ * недопустимы, и клавиатура не дошла бы до внутренней.
+ */
+function Card({
+  widget,
+  selected,
+  blocked,
+  onPick,
+  onOpen,
+  onToggle,
+}: {
+  widget: WidgetRow;
+  selected: boolean;
+  blocked: boolean;
+  onPick: () => void;
+  onOpen: () => void;
+  onToggle: (on: boolean) => void;
+}) {
+  const t = useText();
+  const Icon = WIDGET_ICONS[widget.id];
+  const card = useRef<HTMLDivElement>(null);
 
-      {settings.locked && (
-        <p className="note">{t("settings.widgets.locksOverridden")}</p>
-      )}
+  // Карточка переехала в другую группу — выбранная остаётся на виду
+  useLayoutEffect(() => {
+    if (selected) card.current?.scrollIntoView({ block: "nearest" });
+  }, [selected, widget.enabled]);
+
+  const action = widget.enabled
+    ? t("settings.widgets.disableOne", { title: widget.title })
+    : blocked
+      ? t("settings.widgets.noGpu")
+      : t("settings.widgets.enableOne", { title: widget.title });
+
+  return (
+    <div ref={card} className="widget-card" data-selected={selected || undefined} data-enabled={widget.enabled || undefined}>
+      <button
+        type="button"
+        className="widget-card__body"
+        aria-pressed={selected}
+        onClick={onPick}
+        onDoubleClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          onOpen();
+        }}
+      >
+        <span className="widget-card__icon">{Icon !== undefined && <Icon />}</span>
+        <span className="widget-card__text">
+          <span className="widget-card__name" title={widget.title}>{widget.title}</span>
+          <span className="widget-card__about">{t(about(widget.id))}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className="widget-card__action"
+        aria-label={action}
+        title={action}
+        disabled={blocked}
+        onClick={() => onToggle(!widget.enabled)}
+      >
+        {widget.enabled ? <CloseIcon /> : <CheckIcon />}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Живое превью: настоящая карточка виджета в рамке, на демоданных.
+ *
+ * Рамка — та же страница виджета с `?preview`; IPC Tauri там подменён
+ * (`src/preview/install.ts`), и настоящего во вложенной рамке нет вовсе.
+ * Отсюда в рамку уходят вид, язык и снимок настроек — всё, что виджет
+ * спросил бы у Rust про себя самого, — обратно приходит высота у карточек,
+ * которые встают по содержимому.
+ *
+ * Рамка размером с окно виджета при 100 % и уменьшается под ширину панели
+ * целиком, как картинка; мышь и фокус в неё не попадают.
+ */
+function LivePreview({ widget, settings }: { widget: WidgetRow; settings: SettingsView }) {
+  const t = useText();
+  const look = useLook();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState<number | null>(null);
+  const [room, setRoom] = useState(0);
+  const [ready, setReady] = useState(false);
+
+  const state: PreviewState = {
+    look: {
+      design: look.design,
+      effectiveDesign: look.effectiveDesign,
+      cardOpacity: look.cardOpacity,
+      scale: look.scale,
+      palette: look.palette,
+      glass: look.glass,
+      accentColor: look.accentColor,
+      customColors: look.customColors,
+      vivid: look.vivid,
+    },
+    language: settings.language ?? settings.systemLanguage,
+    settings,
+  };
+  const latest = useRef(state);
+  latest.current = state;
+  // Рамка ещё не сказала, что готова: слать ей пока некому
+  const listening = useRef(false);
+
+  // Повторное письмо с тем же видом безвредно: `look.ts` в рамке одинаковый
+  // вид отбрасывает сам, а язык рамка сравнивает по значению
+  const post = () => {
+    const target = frame.current?.contentWindow;
+    if (target == null || !listening.current) return;
+    const message: ToFrame = { type: TO_FRAME, state: latest.current };
+    target.postMessage(message, window.location.origin);
+  };
+  const lookKey = JSON.stringify(state.look);
+
+  useEffect(() => {
+    const hear = (event: MessageEvent<ToHost>) => {
+      if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
+      if (event.data?.type === READY) {
+        listening.current = true;
+        post();
+      }
+      if (event.data?.type === HEIGHT && Number.isFinite(event.data.height)) setMeasured(event.data.height);
+    };
+    window.addEventListener("message", hear);
+    return () => window.removeEventListener("message", hear);
+  }, []);
+
+  useEffect(() => {
+    post();
+  }, [lookKey, state.language, settings]);
+
+  // Ширина панели: превью уменьшается под неё, но не растёт больше 100 %
+  useEffect(() => {
+    const element = box.current;
+    if (element === null) return;
+    const observer = new ResizeObserver(() => setRoom(element.clientWidth));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const [width, height] = [widget.preview[0], measured ?? widget.preview[1]];
+  const fit = room > 0 ? Math.min(1, room / width) : 1;
+
+  return (
+    <div ref={box} className="gallery__stage">
+      <div className="gallery__frame" style={{ width: width * fit, height: height * fit }} data-ready={ready || undefined}>
+        <iframe
+          ref={frame}
+          title={t("settings.widgets.previewOf", { title: widget.title })}
+          src={`?widget=${encodeURIComponent(widget.id)}&preview`}
+          tabIndex={-1}
+          aria-hidden="true"
+          style={{ width, height, transform: `scale(${fit})` }}
+          onLoad={() => setReady(true)}
+        />
+      </div>
     </div>
   );
 }
@@ -284,10 +299,9 @@ export function WidgetsSection() {
  * не нужны ни одному включённому. ffmpeg общий у конвертера и загрузчика:
  * выключили один — ffmpeg остаётся другому, и предлагать его нечего.
  *
- * Отдельным компонентом, а не строкой в таблице: стор программ спрашивает
- * Rust, а тот по первому вопросу ищет ffmpeg в системе. Открытие списка
- * виджетов такого поиска не заслуживает — только выключение модуля с
- * программами.
+ * Отдельным компонентом, а не строкой списка: стор программ спрашивает Rust, а
+ * тот по первому вопросу ищет ffmpeg в системе. Открытие списка виджетов
+ * такого поиска не заслуживает — только выключение модуля с программами.
  */
 function ToolsOffer({
   modules,

@@ -16,8 +16,8 @@ import { lookSettled } from "./look";
  * хранилище (`look.ts`), общее на все окна, а не на одно это.
  */
 
-/** Столбцы в списке виджетов, кроме «Вкл.»: у того своя команда. */
-export type WidgetOption = "top" | "through" | "lock";
+/** Флаги окна виджета — кнопки в дереве настроек. Модуль включается своей командой. */
+export type WidgetOption = "top" | "lock";
 
 /** Рубильники, продублированные в трее и в разделе «Окна». */
 export type Flag = "hidden_all" | "locked" | "snapping" | "autostart";
@@ -27,13 +27,10 @@ import type { Design } from "./look";
 export type WidgetRow = {
   id: string;
   title: string;
-  /** Виджет нажимают: прозрачности для мыши у него не бывает. */
-  interactive: boolean;
-  /** Служебное окно: галочки «Все» его не трогают. */
+  /** Служебное окно: в разделе «Виджеты» стоит отдельной группой. */
   service: boolean;
   enabled: boolean;
   alwaysOnTop: boolean;
-  clickThrough: boolean;
   /** Окно заперто поштучно. Общий рубильник этого флага не меняет. */
   locked: boolean;
   /** Номер вида: по нему карточка решает, чем себя рисовать. */
@@ -58,6 +55,8 @@ export type WidgetRow = {
   cardOpacity: number | null;
   /** Свой масштаб. `null` — как у всех. */
   scale: number | null;
+  /** Размер окна при 100 % `[ширина, высота]` — под него собирается превью. */
+  preview: [number, number];
 };
 
 /** Город виджета погоды: имя для показа и координаты для запроса. */
@@ -101,8 +100,6 @@ export type SettingsView = {
   design: Design;
   /** Выбранный язык. `null` — «как в Windows». */
   language: Language | null;
-  /** Выбранная иконка системного трея. */
-  appIcon: string;
   /** Все языки самоназваниями: `id` — код, `title` — «Русский», «中文». */
   languages: ChoiceRow[];
   /** Язык Windows — что выберется при «как в Windows». */
@@ -143,7 +140,7 @@ export type SensorSlot = "cpuFan" | "chassisFan" | "boardTemp" | "cpuVoltage";
 export const PICK_OFF = "off";
 
 /** До первого ответа Rust: пустой список, рубильники опущены. */
-const EMPTY: SettingsView = {
+export const EMPTY_SETTINGS: SettingsView = {
   widgets: [],
   cardOpacity: 0.94,
   scale: 1,
@@ -159,7 +156,6 @@ const EMPTY: SettingsView = {
   soundMixerCollapsed: false,
   design: "reference",
   language: null,
-  appIcon: "widget-stack",
   languages: [],
   systemLanguage: "ru",
   hiddenDisks: [],
@@ -171,7 +167,7 @@ const EMPTY: SettingsView = {
   unsaved: false,
 };
 
-let current: SettingsView = EMPTY;
+let current: SettingsView = EMPTY_SETTINGS;
 const listeners = new Set<() => void>();
 let started = false;
 
@@ -242,10 +238,6 @@ export function setWidgetOption(id: string, option: WidgetOption, value: boolean
   void invoke("set_widget_option", { id, option, value });
 }
 
-export function setAllWidgetOption(option: WidgetOption, value: boolean): void {
-  void invoke("set_all_widget_option", { option, value });
-}
-
 /**
  * Включает или выключает модуль: выключенный не грузится вовсе — ни окна, ни
  * фоновых работ. Своей командой, а не столбцом `set_widget_option`: она
@@ -253,10 +245,6 @@ export function setAllWidgetOption(option: WidgetOption, value: boolean): void {
  */
 export function setModule(id: string, on: boolean): Promise<void> {
   return invoke<void>("set_module", { id, on });
-}
-
-export function setAllModules(on: boolean): Promise<void> {
-  return invoke<void>("set_all_modules", { on });
 }
 
 /** Вид виджета: чем карточка себя рисует. Номер — место в `views`. */
@@ -290,11 +278,6 @@ export function setWidgetCover(id: string, index: number): void {
 
 export function setFlag(name: Flag, value: boolean): void {
   void invoke("set_flag", { name, value });
-}
-
-/** Выбрать и запомнить значок в системном трее. */
-export function setAppIcon(id: string): Promise<void> {
-  return invoke("set_app_icon", { id });
 }
 
 export function setSource(seconds: number): void {

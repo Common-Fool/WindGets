@@ -14,3 +14,12 @@ export const Navigate = createContext<(target: string) => void>(() => {});
 export function useNavigate(): (target: string) => void {
   return useContext(Navigate);
 }
+
+/**
+ * Выбранная карточка раздела «Виджеты» — её показывает превью справа.
+ *
+ * Живёт в самом окне, рядом с разделом и свёрнутыми ветками, и переживает
+ * закрытие окна (страница при этом размонтируется). На диск не пишется.
+ * Пустая строка — не выбрано ничего, берётся первая карточка.
+ */
+export const Picked = createContext<[string, (id: string) => void]>(["", () => {}]);

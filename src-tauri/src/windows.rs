@@ -1219,7 +1219,6 @@ fn resizes(widget: &Widget, settings: &settings::Settings, own: WidgetSettings) 
 
 pub fn apply(window: &WebviewWindow, settings: WidgetSettings, resizable: bool) {
     let _ = window.set_always_on_top(settings.always_on_top);
-    let _ = window.set_ignore_cursor_events(settings.click_through);
     let _ = window.set_resizable(resizable);
 }
 

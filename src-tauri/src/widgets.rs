@@ -160,12 +160,6 @@ pub struct Widget {
     pub chrome: bool,
     /// Открывается ли при первом запуске, пока настроек ещё нет.
     pub enabled: bool,
-    /// Виджет нажимают, а не только смотрят.
-    ///
-    /// Пульту прозрачность для мыши противопоказана: окно перестанет ловить
-    /// нажатия, то есть виджет перестанет работать целиком. Такой настройки
-    /// у него в трее просто нет.
-    pub interactive: bool,
     /// Свой нижний предел размера при кегле 100 %. `None` — общий пол.
     ///
     /// Заводится тем, у кого самая тесная раскладка всё равно требует места:
@@ -442,7 +436,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        interactive: false,
         floor: None,
     },
     Widget {
@@ -458,7 +451,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        interactive: false,
         floor: None,
     },
     Widget {
@@ -475,7 +467,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // Виджет нажимают: переключатель ЦПУ/ОЗУ
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -501,7 +492,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        interactive: false,
         // GPT кольцо уплотнено до 204; предел не должен запрещать его
         // собственный размер. Пресеты исходного Claude остаются шире.
         //
@@ -533,7 +523,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        interactive: false,
         // Предел опустился вслед за разграфкой: 245 мерились, когда у ячеек
         // были черты и поля под них — вместе около восьмидесяти точек на ряд.
         // Без них тем же трём целям с именами хватает заметно меньше.
@@ -572,7 +561,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // Левая кнопка раскрывает почасовой прогноз, правая — меню виджета:
         // с прозрачностью для мыши окно перестало бы ловить обе
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -598,7 +586,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // Замер запускается кнопкой: прозрачность для мыши сделала бы виджет
         // вечным «замера не было»
-        interactive: true,
         // Предел по высоте опустился со ста шестидесяти: те мерились под
         // карточку с графиком, а теперь у неё есть вид, где графика нет вовсе
         floor: Some((215.0, 120.0)),
@@ -627,7 +614,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // Виджет нажимают: и молчание, и полоса, и выбор устройства
-        interactive: true,
         // Вертикальная основа уже общего предела; остальные виджеты его сохраняют.
         floor: Some((118.0, MIN_HEIGHT)),
     },
@@ -646,7 +632,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // Виджет нажимают: строка возвращает текст в буфер, крестик убирает её
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -669,7 +654,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // В поле пишут — прозрачность для мыши отобрала бы у него нажатия
-        interactive: true,
         // Свой предел по высоте: ни точки страниц, ни значки не расступаются
         // никогда, и ниже 112 точек они съедают поле до одной строки. Замер:
         // на 112 две строки остаются при любом кегле, на 108 при 90 % уже одна.
@@ -696,7 +680,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // Дела отмечают, добавляют и удаляют — прозрачность для мыши отобрала
         // бы у карточки нажатия целиком
-        interactive: true,
         // Свой предел по высоте, как у заметок, и число то же самое: точки,
         // поле со значками и одна строка дела. Замер: на 112 строка видна при
         // любом кегле, на 108 при 90 % не остаётся ничего
@@ -728,7 +711,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // В углу карточки кнопка обновления — прозрачность для мыши отобрала бы
         // у неё нажатия
-        interactive: true,
         // Своего предела нет: ниже общего пола 140×80 карточка всё
         // ещё показывает одно письмо без превью: ему хватает 33 точек
         floor: None,
@@ -749,7 +731,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: false,
-        interactive: true,
         // Предел по высоте опустился до общего пола вслед за уплотнением:
         // второй раскладке хватает 74 точек, и прежние 95 запрещали бы её же
         floor: Some((225.0, 80.0)),
@@ -791,7 +772,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // По строке нажимают, чтобы скопировать код: прозрачность для мыши
         // отобрала бы у карточки единственное её действие
-        interactive: true,
         // Своего предела нет, и это замер, а не пропуск: на 180 точках строка
         // всё ещё не переполняется — издатель просто уступает эллипсису, как и
         // задумано. Ломаться ниже общего пола 140×80 тут нечему
@@ -903,7 +883,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: false,
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -945,7 +924,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // Пульт: прозрачность для мыши отобрала бы у него все кнопки разом
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -978,7 +956,6 @@ pub const WIDGETS: &[Widget] = &[
         enabled: false,
         // Кнопки выбора, чипы, поля обрезки — прозрачность для мыши отобрала бы
         // у карточки всё
-        interactive: true,
         // Почти квадрат (12 октября, слово пользователя): пустому конвертеру
         // хватает двухсот точек. Ниже 340 строки чипов переносятся, и выбор
         // прокручивается сам — это цена узкого окна, а не поломка. По высоте
@@ -1020,7 +997,6 @@ pub const WIDGETS: &[Widget] = &[
         chrome: false,
         enabled: false,
         // Поле ссылки и кнопки — без мыши карточка бесполезна
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -1035,7 +1011,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: true,
         chrome: true,
         enabled: false,
-        interactive: true,
         floor: None,
     },
     Widget {
@@ -1049,7 +1024,6 @@ pub const WIDGETS: &[Widget] = &[
         flexible: true,
         chrome: true,
         enabled: false,
-        interactive: true,
         floor: None,
     },
 ];
@@ -1080,6 +1054,9 @@ mod tests {
     /// Значки виджетов для дерева в колонке окна настроек.
     const FRONTEND_ICONS: &str = include_str!("../../src/widgets/icons.tsx");
 
+    /// Виджеты с живым превью в разделе «Виджеты».
+    const FRONTEND_PREVIEWS: &str = include_str!("../../src/preview/list.ts");
+
     #[test]
     fn every_widget_exists_on_the_front() {
         for widget in WIDGETS {
@@ -1104,6 +1081,23 @@ mod tests {
             assert!(
                 entries.iter().any(|line| line.starts_with(&key)),
                 "у виджета «{}» нет значка в src/widgets/icons.tsx",
+                widget.id
+            );
+        }
+    }
+
+    /// Каждый виджет, кроме служебных окон, показан в разделе «Виджеты» живым
+    /// превью на демоданных (`src/preview/`). Забытый остался бы с пустым
+    /// местом справа от карточки, и заметно это только глазами.
+    #[test]
+    fn every_widget_has_a_preview() {
+        // Строки списка — вида «  "gpu",»
+        let entries: Vec<&str> = FRONTEND_PREVIEWS.lines().map(str::trim).collect();
+        for widget in WIDGETS.iter().filter(|widget| !widget.chrome) {
+            let key = format!("\"{}\",", widget.id);
+            assert!(
+                entries.contains(&key.as_str()),
+                "у виджета «{}» нет превью в src/preview/list.ts",
                 widget.id
             );
         }
@@ -1640,31 +1634,6 @@ mod tests {
             let widget = find(id).expect("виджет в реестре");
             assert!(widget.floor.is_some(), "«{id}» остался на общем полу");
         }
-    }
-
-    /// Пульт и отладочные окна нажимают: прозрачность для мыши сделала бы
-    /// их бесполезными, и в трее такого пункта у них быть не должно.
-    #[test]
-    fn clickable_widgets_never_offer_click_through() {
-        for id in [
-            "spotify",
-            "speedtest",
-            "password",
-            "sound",
-            "clipboard",
-            "processes",
-            "weather",
-            "debug",
-            "kitchensink",
-            "converter",
-            "downloader",
-        ] {
-            let widget = find(id).expect("виджет в реестре");
-            assert!(widget.interactive, "«{id}» помечен как несмотрибельный");
-        }
-
-        let gpu = find("gpu").expect("видеокарта в реестре");
-        assert!(!gpu.interactive, "на показатели железа только смотрят");
     }
 
     #[test]

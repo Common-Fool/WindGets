@@ -305,6 +305,63 @@
   cursor: text;
 }
 
+/*
+ * Кнопки листа: поверх всех окон, замок, выключить. Включённые «поверх» и
+ * «замок» видны всегда, приглушённым акцентом интерфейса, — по ним состояние
+ * читается без наведения. Все три — при наведении на строку и фокусе в ней;
+ * имя на это время уступает место эллипсисом.
+ */
+.settings__tools {
+  display: flex;
+  flex: none;
+  gap: 1px;
+}
+
+.settings__tool {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+
+.settings__tool[data-on] {
+  display: inline-flex;
+  color: var(--ui-accent);
+}
+
+.settings__row--leaf:hover .settings__tool,
+.settings__row--leaf:focus-within .settings__tool {
+  display: inline-flex;
+}
+
+.settings__tool:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.settings__tool:not([data-on]):hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.settings__tool.settings__tool--close:hover {
+  color: var(--status-danger);
+}
+
+.settings__tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Стрелка ветки: вниз — развёрнута, вправо — свёрнута */
 .settings__fold {
   display: inline-flex;
@@ -604,117 +661,230 @@
   }
 }
 
-/* ==================== Список виджетов ==================== */
+/* ==================== Раздел «Виджеты»: карточки и превью ==================== */
 
-.grid {
-  display: flex;
-  flex-direction: column;
+/*
+ * Галерея по образцу Themia (22 октября, слово пользователя): слева карточки
+ * в два столбца, справа живое превью выбранной. Раздел сам себе контейнер:
+ * в окне уже ~520 точек превью уходит, остаются одни карточки — описание у
+ * них своё. Столбцов карточек столько, сколько влезает по 220 точек.
+ */
+.gallery {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-5);
 }
 
-.grid__head,
-.grid__row {
+@container (width < 520px) {
+  .gallery__list {
+    grid-column: 1 / -1;
+  }
+
+  .gallery__preview {
+    display: none;
+  }
+}
+
+.gallery__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.gallery__group {
   display: grid;
-  /* Четыре столбца галочек постоянной ширины, имя занимает остаток. Подписи
-     в шапке сокращены до одного слова: с полными столбцы съедали имя виджета,
-     а перенесённая на две строки подпись уводила галочки от своих столбцов.
-     Что значит столбец, договаривает строка под таблицей и подсказка у
-     самой галочки */
-  /* Ширина столбца снята замером, а не подобрана. Держит её самая длинная
-     подпись на всех пяти языках: английское «THROUGH» — 58 точек, испанские
-     «MOSTRAR» и «BLOQUEO» — 57 и 56, украинское «НАСКРІЗЬ» — 57. Масштаб на
-     окно настроек не действует (`look.ts`), так что мерка при 100 % —
-     единственная. Прежние 84 были меркой при трёх столбцах; четвёртый
-     столбец такой ширины съел бы у имени виджета целую строку списка */
-  /* Последний столбец — шестерёнка настроек виджета, шириной ровно под неё */
-  grid-template-columns: 1fr repeat(4, 66px) var(--text-xl);
-  align-items: center;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--space-2);
 }
 
-.grid__head {
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-hairline);
+.gallery__group > .settings__subheading {
+  grid-column: 1 / -1;
 }
 
-.grid__label {
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-  text-align: center;
-  white-space: nowrap;
-}
-
-.grid__row {
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--border-hairline);
-}
-
-.grid__row:last-child {
-  border-bottom: none;
-}
-
-.grid__row--all {
-  border-bottom: 1px solid var(--border-hairline);
-}
-
-.grid__row:hover {
-  background: var(--surface-hover);
-}
-
-.grid__name {
+.widget-card {
+  display: flex;
+  align-items: flex-start;
   min-width: 0;
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  transition:
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease);
+}
+
+.widget-card:hover {
+  background: var(--surface-control-hover);
+}
+
+.widget-card[data-selected] {
+  border-color: var(--ui-accent);
+  background: var(--surface-control-selected);
+}
+
+.widget-card__body {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.widget-card__icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+}
+
+.widget-card[data-enabled] .widget-card__icon {
+  color: var(--text-secondary);
+}
+
+.widget-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.widget-card__name {
   overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Настройки нет вовсе — не выключена, а неприменима */
-.grid__none {
+/* Две строки описания, длиннее — эллипсис: целиком оно под превью */
+.widget-card__about {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--text-muted);
-  text-align: center;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.grid__row > .check,
-.grid__head > .grid__label {
-  justify-self: center;
-}
-
-/*
- * Шестерёнка: открывает настройки этого виджета. Приглушена, пока на строку
- * не навели, — иначе полтора десятка одинаковых значков в столбик забивают
- * список сильнее, чем сами галочки.
- */
-.grid__gear {
+/* Галочка включает, крестик выключает — квадратный значок, как все компактные */
+.widget-card__action {
   display: inline-flex;
+  flex: none;
+  margin-top: var(--space-2);
   align-items: center;
   justify-content: center;
-  width: var(--text-xl);
-  height: var(--text-xl);
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
   padding: 0;
-  border: none;
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
+  font-size: var(--text-md);
   cursor: pointer;
-  opacity: 0.45;
   transition:
-    opacity var(--duration-fast) var(--ease),
+    background var(--duration-fast) var(--ease),
+    border-color var(--duration-fast) var(--ease),
     color var(--duration-fast) var(--ease);
 }
 
-.grid__row:hover .grid__gear {
+.widget-card__action:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+
+.widget-card[data-enabled] .widget-card__action:hover {
+  border-color: var(--status-danger);
+  color: var(--status-danger);
+}
+
+.widget-card__action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * Превью стоит на месте, пока список прокручивается. Карточку виджета рамка
+ * несёт целиком, со своим стеклом, поэтому подложка тут — утопленная
+ * поверхность окна, а не ещё одна карточка.
+ */
+.gallery__preview {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface-inset);
+}
+
+.gallery__stage {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* Скругление окна виджета рисует DWM, у рамки его нет — ставим то же, 8 точек */
+.gallery__frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease);
+}
+
+.gallery__frame[data-ready] {
   opacity: 1;
 }
 
-.grid__gear:hover {
-  color: var(--text-primary);
+/* Превью — картинка: мышь и фокус в рамку не попадают */
+.gallery__frame iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: none;
+  background: transparent;
+  color-scheme: normal;
+  transform-origin: 0 0;
+  pointer-events: none;
 }
 
-/* Шестерня залита, а не обведена: обводкой в шестнадцать точек зубцы
-   слипаются в кашу, а тонкая — в паутину */
-.grid__gear svg {
-  width: 78%;
-  height: 78%;
-  fill: currentColor;
+.gallery__caption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.gallery__name {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.gallery__about {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 /* ==================== Выбор из готовых ==================== */
@@ -755,85 +925,16 @@
   color: var(--text-primary);
 }
 
-.app-icon-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: var(--space-2);
-}
-
-.app-icon-choice {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  min-height: 88px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-1);
-  padding: var(--space-2) 5px;
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-control);
-  background: var(--surface-control);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: var(--text-2xs);
-  cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease),
-    color var(--duration-fast) var(--ease),
-    border-color var(--duration-fast) var(--ease);
-}
-
-.app-icon-choice img {
-  flex: none;
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-}
-
-.app-icon-choice__name {
-  min-height: 2.4em;
-  line-height: 1.2;
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.app-icon-choice:hover:not(:disabled) {
-  border-color: var(--border-control);
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.app-icon-choice[aria-pressed="true"] {
-  border-color: var(--ui-accent);
-  background: var(--surface-control-selected);
-  color: var(--text-primary);
-}
-
-.app-icon-choice:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.app-icon-choice__check {
-  position: absolute;
-  top: 3px;
-  right: 4px;
-  color: var(--ui-accent);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-}
-
 /* Клавиатурный фокус один во всём окне и не заимствует цвет метрики. */
 :where(
   .settings__close,
   .settings__tab,
   .settings__fold,
   .credit__link,
-  .grid__gear,
-  .choice,
-  .app-icon-choice
+  .settings__tool,
+  .widget-card__body,
+  .widget-card__action,
+  .choice
 ):focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;

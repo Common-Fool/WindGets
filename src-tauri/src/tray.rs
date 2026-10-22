@@ -24,7 +24,6 @@ const LOCK: &str = "app:lock";
 const QUIT: &str = "app:quit";
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
-    let selected_icon = app.state::<SettingsState>().get().app_icon;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Windgets")
         .menu(&build(app)?)
@@ -49,40 +48,13 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         });
 
-    // Выбранный значок хранится в настройках. Если встроенный файл испорчен,
-    // оставляем штатный значок бандла и всё равно поднимаем трей.
-    match icon_image(&selected_icon) {
-        Ok(icon) => builder = builder.icon(icon),
-        Err(error) => {
-            eprintln!("значок трея {selected_icon} не загрузился: {error}");
-            if let Some(icon) = app.default_window_icon() {
-                builder = builder.icon(icon.clone());
-            }
-        }
-    }
+    // Значок один — белые плитки, тот же, что у окон в панели задач
+    builder = builder.icon(tauri::image::Image::new(
+        include_bytes!("../../src/assets/app-icons/mono-mosaic.rgba"), 32, 32,
+    ));
 
     builder.build(app)?;
     Ok(())
-}
-
-/// Применяет один из встроенных значков к работающему значку трея.
-pub fn set_icon(app: &AppHandle, id: &str) -> Result<(), String> {
-    let icon = icon_image(id)?;
-    let tray = app
-        .tray_by_id(TRAY_ID)
-        .ok_or_else(|| "значок трея ещё не создан".to_owned())?;
-    tray.set_icon(Some(icon))
-        .map_err(|error| format!("не применить значок трея: {error}"))
-}
-
-fn icon_image(id: &str) -> Result<tauri::image::Image<'static>, String> {
-    let rgba = match id {
-        "widget-mosaic" => &include_bytes!("../../src/assets/app-icons/widget-mosaic.rgba")[..],
-        "mono-mosaic" => &include_bytes!("../../src/assets/app-icons/mono-mosaic.rgba")[..],
-        _ => return Err(format!("неизвестный значок трея: {id}")),
-    };
-
-    Ok(tauri::image::Image::new(rgba, 32, 32))
 }
 
 /// Пересобирает меню целиком.

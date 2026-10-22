@@ -64,7 +64,7 @@ pub fn run() {
     // generate_context кеширует ICO отдельно от ресурса exe: тот уже был
     // новым, а окна продолжали получать прежний синий график.
     context.set_default_window_icon(Some(tauri::image::Image::new(
-        include_bytes!("../../src/assets/app-icons/widget-mosaic.rgba"), 32, 32,
+        include_bytes!("../../src/assets/app-icons/mono-mosaic.rgba"), 32, 32,
     )));
 
     // До плагина мест окон: он прочтёт файл при сборке приложения, и
@@ -142,9 +142,7 @@ pub fn run() {
             i18n::set_language,
             settings_window::open_widget_settings,
             settings_window::settings_view,
-            settings_window::set_app_icon,
             settings_window::set_widget_option,
-            settings_window::set_all_widget_option,
             settings_window::set_widget_cover,
             settings_window::set_widget_view,
             settings_window::set_widget_layout,
@@ -164,7 +162,6 @@ pub fn run() {
             support_reminder::set_support_reminder_rare,
             settings_window::close_settings,
             modules::set_module,
-            modules::set_all_modules,
             snap::begin_drag,
             snap::end_drag,
             windows::grow_window,
