@@ -10,6 +10,7 @@
 pub struct Columns {
     app: usize,
     pid: usize,
+    chain: Option<usize>,
     frame: usize,
     displayed: Option<usize>,
     gpu_busy: Option<usize>,
@@ -23,6 +24,10 @@ pub struct Frame {
     /// Имя exe как его даёт PresentMon: `Cyberpunk2077.exe`.
     pub app: String,
     pub pid: u32,
+    /// Цепочка вывода (swap chain). У процесса их бывает несколько — сцена и
+    /// вспомогательное окно, — и время кадра PresentMon считает по каждой
+    /// отдельно.
+    pub chain: String,
     /// Время кадра — от прошлого кадра до этого, мс.
     pub ms: f32,
     /// Дошёл ли кадр до экрана. Пропущенный — `false`.
@@ -49,6 +54,7 @@ impl Columns {
         Some(Columns {
             app: find(&names, &["Application"])?,
             pid: find(&names, &["ProcessID"])?,
+            chain: find(&names, &["SwapChainAddress"]),
             frame: find(&names, &["FrameTime", "MsBetweenPresents", "msBetweenPresents"])?,
             displayed: find(&names, &["DisplayedTime", "MsBetweenDisplayChange"]),
             gpu_busy: find(&names, &["GPUBusy", "MsGPUBusy", "msGPUActive"]),
@@ -77,6 +83,7 @@ impl Columns {
         Some(Frame {
             app: cells.get(self.app)?.trim().to_owned(),
             pid: cells.get(self.pid)?.trim().parse().ok()?,
+            chain: self.chain.and_then(|index| cells.get(index)).map(|text| text.trim().to_owned()).unwrap_or_default(),
             ms,
             displayed,
             gpu_busy: number(self.gpu_busy),

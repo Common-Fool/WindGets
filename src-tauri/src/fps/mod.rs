@@ -269,6 +269,11 @@ struct Run {
 #[derive(Default)]
 struct Count {
     target: Option<u32>,
+    /// Основная цепочка вывода цели — та, что дала больше кадров.
+    chain: Option<String>,
+    /// Кадры текущего такта. Цель выбирается в конце такта, и без этой
+    /// копилки первая пачка новой игры терялась бы целиком (замечание Argon).
+    pending: Vec<Frame>,
     name: Option<String>,
     mode: Option<String>,
     seen: HashMap<u32, Seen>,
@@ -277,13 +282,35 @@ struct Count {
 
 impl Count {
     fn take(&mut self, frame: Frame, now: Instant) {
-        if Some(frame.pid) == self.target {
-            self.tracker.push(&frame);
+        self.seen.insert(frame.pid, Seen { name: frame.app.clone(), last: now });
+        self.pending.push(frame);
+    }
+
+    /// Кадры такта отдаются счёту цели — только основной цепочки.
+    ///
+    /// ВАЖНО: **цепочки не смешиваются.** Время кадра PresentMon считает по
+    /// каждой отдельно, и сцена на 100 FPS со вспомогательным окном на 50
+    /// давали бы в сумме 75 (замечание Sol). Основная — у которой больше
+    /// кадров за такт; прежняя держится, пока она вообще рисует.
+    fn feed(&mut self) {
+        let pending = std::mem::take(&mut self.pending);
+        let Some(target) = self.target else { return };
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for frame in pending.iter().filter(|frame| frame.pid == target) {
+            *counts.entry(frame.chain.as_str()).or_default() += 1;
+        }
+        let keeps = self.chain.as_deref().is_some_and(|chain| counts.contains_key(chain));
+        if !keeps {
+            if let Some((chain, _)) = counts.iter().max_by_key(|(chain, count)| (**count, std::cmp::Reverse(**chain))) {
+                self.chain = Some((*chain).to_owned());
+            }
+        }
+        for frame in pending.iter().filter(|frame| frame.pid == target && Some(&frame.chain) == self.chain.as_ref()) {
+            self.tracker.push(frame);
             if frame.mode.is_some() {
                 self.mode = frame.mode.clone();
             }
         }
-        self.seen.insert(frame.pid, Seen { name: frame.app, last: now });
     }
 
     fn tick(&mut self, now: Instant) -> View {
@@ -296,6 +323,7 @@ impl Count {
         if next != self.target {
             self.target = next;
             self.tracker = Tracker::default();
+            self.chain = None;
             self.mode = None;
             self.name = next.and_then(|pid| self.seen.get(&pid)).map(|seen| shorten(&seen.name));
         }
@@ -310,6 +338,7 @@ impl Count {
         self.seen
             .retain(|pid, seen| Some(*pid) == self.target || now.duration_since(seen.last) <= FRESH * 5);
 
+        self.feed();
         if self.target.is_none() {
             return View { status: Status::Waiting, ..View::default() };
         }
@@ -339,6 +368,9 @@ fn work(app: AppHandle) {
             // Спрятанное окно меряет заново: старая история за часы до показа
             // выдавала бы себя за нынешнюю
             count = Count::default();
+            // Спрятали и показали — пробуем сразу, а не дожидаемся старого срока
+            retry_at = None;
+            failed = None;
             publish(&app, View::default());
             std::thread::sleep(Duration::from_millis(500));
             continue;
@@ -348,6 +380,9 @@ fn work(app: AppHandle) {
             if let Some(run) = running.take() {
                 stop(run.spawned);
             }
+            count = Count::default();
+            retry_at = None;
+            failed = None;
             publish(&app, View { status: Status::NoTool, ..View::default() });
             std::thread::sleep(Duration::from_secs(1));
             continue;
@@ -474,6 +509,47 @@ mod tests {
         let now = Instant::now();
         let map = seen(&[(10, "game.exe", 100), (50, "other.exe", 50)], now);
         assert_eq!(choose(Some(10), Some(50), &map, now, 1), Some(50));
+    }
+
+    fn frame(pid: u32, chain: &str, ms: f32) -> Frame {
+        Frame {
+            app: "game.exe".to_owned(),
+            pid,
+            chain: chain.to_owned(),
+            ms,
+            displayed: true,
+            gpu_busy: None,
+            latency: None,
+            mode: None,
+        }
+    }
+
+    /// Первая пачка новой цели идёт в счёт, а не теряется до следующей.
+    #[test]
+    fn the_first_batch_of_a_new_target_counts() {
+        let mut count = Count { target: None, ..Count::default() };
+        let now = Instant::now();
+        for _ in 0..50 {
+            count.take(frame(10, "0x1", 10.0), now);
+        }
+        count.target = Some(10);
+        count.feed();
+        assert!(count.tracker.close_tick().fps.is_some());
+    }
+
+    /// Вспомогательная цепочка не смешивается с основной.
+    #[test]
+    fn a_second_swap_chain_does_not_blend_in() {
+        let mut count = Count { target: Some(10), ..Count::default() };
+        let now = Instant::now();
+        for _ in 0..50 {
+            count.take(frame(10, "0xA", 10.0), now);
+            count.take(frame(10, "0xA", 10.0), now);
+            count.take(frame(10, "0xB", 20.0), now);
+        }
+        count.feed();
+        let fps = count.tracker.close_tick().fps.unwrap();
+        assert!((fps - 100.0).abs() < 0.1, "{fps}");
     }
 
     #[test]

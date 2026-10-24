@@ -154,7 +154,10 @@ impl Tracker {
                 self.history.pop_front();
             }
             // Нет кадров — столбик в ноль: игра встала, и это видно на графике
-            self.history.push_back(fps.unwrap_or(0.0));
+            // Целая секунда без кадров — ноль, даже если число на карточке
+            // ещё держится между пачками
+            let quiet = self.silent >= TICKS_PER_SECOND;
+            self.history.push_back(if quiet { 0.0 } else { fps.unwrap_or(0.0) });
         }
 
         let gpu_busy = {
@@ -189,6 +192,7 @@ mod tests {
         Frame {
             app: "game.exe".to_owned(),
             pid: 1,
+            chain: "0x1".to_owned(),
             ms,
             displayed: true,
             gpu_busy: Some(ms / 2.0),
@@ -277,6 +281,23 @@ mod tests {
             tracker.close_tick();
         }
         assert_eq!(tracker.close_tick().fps, None);
+    }
+
+    /// Секунда без единого кадра — нулевой столбик, хотя число на карточке
+    /// ещё держится (замечание Sol).
+    #[test]
+    fn a_silent_second_is_a_zero_column() {
+        let mut tracker = Tracker::default();
+        for _ in 0..TICKS_PER_SECOND {
+            for _ in 0..25 {
+                tracker.push(&frame(10.0));
+            }
+            tracker.close_tick();
+        }
+        for _ in 0..TICKS_PER_SECOND {
+            tracker.close_tick();
+        }
+        assert_eq!(tracker.history(), vec![100.0, 0.0]);
     }
 
     #[test]

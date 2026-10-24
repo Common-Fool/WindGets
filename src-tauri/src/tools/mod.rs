@@ -756,7 +756,13 @@ pub fn tools_remove(app: AppHandle, components: Vec<Component>) -> Result<(), St
 
     let busy = occupy(&app).ok_or_else(|| "busy".to_owned())?;
 
-    if crate::converter::uses_tools(&app) || crate::downloader::uses_tools(&app) || crate::fps::uses_tools() {
+    // Занят только тот, кому удаляемое нужно: работающий счётчик кадров не
+    // мешает удалить yt-dlp, а загрузка — PresentMon
+    let touches = |module: Module| module.needs().iter().any(|component| own.contains(component));
+    if (touches(Module::Converter) && crate::converter::uses_tools(&app))
+        || (touches(Module::Downloader) && crate::downloader::uses_tools(&app))
+        || (touches(Module::Fps) && crate::fps::uses_tools())
+    {
         app.state::<Tools>().lock().failure = Some(Problem { component: first, code: Failure::InUse });
         // Опустившийся `busy` разошлёт отказ сам
         return Err("inUse".to_owned());
