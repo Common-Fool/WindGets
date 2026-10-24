@@ -1,49 +1,160 @@
 import { useEffect, useRef, useState } from "react";
 import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
-import { control, controlConfirmed, useClipboard, type Entry } from "../../lib/clipboard";
+import {
+  clipboardThumb, control, controlConfirmed, useClipboard,
+  type Action, type ClearTarget, type ControlFailure, type Entry, type ImageEntry,
+} from "../../lib/clipboard";
 import { useLook } from "../../lib/look";
-import { CloseIcon, EraseIcon, FailedIcon } from "../../components/Icons";
+import { CloseIcon, DownloadIcon, EraseIcon, FailedIcon, PinIcon } from "../../components/Icons";
 import { GlassCard } from "../../components/GlassCard";
 import { Button } from "../../components/Button";
 import "./clipboard.css";
 import "./clipboard-design.css";
 
-/**
- * Сколько держим свою пометку, не давая событию её перебить.
- *
- * Тот же приём, что у виджета звука: между нажатием и подтверждением лежит
- * открытие буфера, а оно ждёт чужое приложение. Без опережения строка
- * подсвечивалась бы с заметной задержкой после щелчка.
- */
+/** Claude кратко опережает снимок Rust при возврате текста в буфер. */
 const HOLD_MS = 400;
+const NO_IMAGES: ImageEntry[] = [];
 
+type Thumbnail = { source: string | null };
+
+/** Кэш живёт над вкладками: переключение не запрашивает пиксели повторно. */
+function useThumbnails(images: ImageEntry[]) {
+  const cache = useRef(new Map<number, Thumbnail>());
+  const mounted = useRef(false);
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    const ids = new Set(images.map((image) => image.id));
+    for (const id of cache.current.keys()) {
+      if (!ids.has(id)) cache.current.delete(id);
+    }
+    for (const { id } of images) {
+      if (cache.current.has(id)) continue;
+      const thumbnail: Thumbnail = { source: null };
+      // Резервируем id до IPC: повторный снимок не запускает второй запрос.
+      cache.current.set(id, thumbnail);
+      void clipboardThumb(id).then((source) => {
+        if (!mounted.current || cache.current.get(id) !== thumbnail) return;
+        thumbnail.source = source;
+        refresh((value) => value + 1);
+      });
+    }
+  }, [images]);
+  return cache.current;
+}
+
+function failureLabel(t: ReturnType<typeof useText>, failure: ControlFailure, pins: number) {
+  if (failure === "pinsFull") return t("clipboard.pinsFull", { count: pins });
+  if (failure === "saveFailed") return t("clipboard.saveFailed");
+  if (failure === "clearFailed") return t("clipboard.clearFailed");
+  return t("clipboard.copyFailed");
+}
+
+function Tabs({ tab, entries, images, onChange }: {
+  tab: ClearTarget;
+  entries: number;
+  images: number;
+  onChange: (tab: ClearTarget) => void;
+}) {
+  const t = useText();
+  return (
+    <div className="clip-tabs" data-no-drag>
+      <button type="button" aria-pressed={tab === "text"} onClick={() => onChange("text")}>
+        {t("clipboard.tabText")} <span className="tabular">{entries}</span>
+      </button>
+      <button type="button" aria-pressed={tab === "images"} onClick={() => onChange("images")}>
+        {t("clipboard.tabImages")} <span className="tabular">{images}</span>
+      </button>
+    </div>
+  );
+}
+
+function ImageGrid({ images, thumbnails, onAction }: {
+  images: ImageEntry[];
+  thumbnails: Map<number, Thumbnail>;
+  onAction: (action: Action) => void;
+}) {
+  const t = useText();
+  return (
+    <ul className="clip-images" aria-label={t("clipboard.tabImages")}>
+      {images.map((image) => {
+        const source = thumbnails.get(image.id)?.source;
+        const dimensions = image.width + "×" + image.height;
+        return (
+          <li key={image.id} className="clip-images__tile" data-current={image.current}>
+            <button
+              type="button"
+              className="clip-images__copy"
+              title={dimensions}
+              aria-label={t("clipboard.tabImages") + " " + dimensions}
+              aria-current={image.current ? "true" : undefined}
+              onClick={() => onAction({ kind: "copyImage", id: image.id })}
+            >
+              {source && <img src={source} alt="" draggable={false} />}
+            </button>
+            <div className="clip-images__tools">
+              <button type="button" className="clip-images__save"
+                title={t("clipboard.saveImage")} aria-label={t("clipboard.saveImage")}
+                onClick={() => onAction({ kind: "saveImage", id: image.id })}>
+                <DownloadIcon />
+              </button>
+              <button type="button" className="clip-images__drop"
+                title={t("common.remove")} aria-label={t("common.remove")}
+                onClick={() => onAction({ kind: "removeImage", id: image.id })}>
+                <CloseIcon />
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 type RowProps = {
   entry: Entry;
   current: boolean;
   onCopy: () => void;
   onDrop: () => void;
+  onPin: () => void;
 };
 
-function Row({ entry, current, onCopy, onDrop }: RowProps) {
+function PinButton({ entry, className, onClick }: {
+  entry: Entry;
+  className: string;
+  onClick: () => void;
+}) {
+  const t = useText();
+  const label = t(entry.pinned ? "clipboard.unpin" : "clipboard.pin");
+  return (
+    <button type="button" className={className} data-pinned={entry.pinned}
+      title={label} aria-label={label} aria-pressed={entry.pinned} onClick={onClick}>
+      <PinIcon />
+    </button>
+  );
+}
+
+function Row({ entry, current, onCopy, onDrop, onPin }: RowProps) {
   const t = useText();
   return (
     <li className="clip__item" data-current={current}>
-      {/*
-        Две кнопки рядом, а не крестик внутри строки: кнопка в кнопке
-        недопустима, да и нажатие по крестику всплывало бы в копирование.
-      */}
+      {/* Действия соседние: вложенные кнопки всплывали бы в копирование. */}
       <button
         type="button"
         className="clip__text"
-        title={`${entry.preview}\n${t.count("clipboard.chars", entry.chars)}`}
+        title={entry.preview + "\n" + t.count("clipboard.chars", entry.chars)}
         onClick={onCopy}
       >
         {entry.preview}
       </button>
-      <button type="button" className="clip__drop" title={t("common.remove")} onClick={onDrop}>
-        ✕
+      <PinButton entry={entry} className="clip__pin" onClick={onPin} />
+      <button type="button" className="clip__drop" title={t("common.remove")}
+        aria-label={t("common.remove")} onClick={onDrop}>
+        <CloseIcon />
       </button>
     </li>
   );
@@ -52,39 +163,65 @@ function Row({ entry, current, onCopy, onDrop }: RowProps) {
 function AppClipboard() {
   useWindowDrag();
   const t = useText();
-  const { entries, capacity } = useClipboard();
+  const { entries, capacity, images = NO_IMAGES, imageCapacity = 0 } = useClipboard();
+  const [tab, setTab] = useState<ClearTarget>("text");
+  const thumbnails = useThumbnails(images);
   const [picked, setPicked] = useState<number | undefined>(undefined);
-  // Очистку жмут ради того, чтобы секрет ушёл из буфера: отказ обязан быть
-  // виден. Прежде он уходил только в консоль, а список пустел — как успех
-  const [clearFailed, setClearFailed] = useState(false);
-
+  const [failure, setFailure] = useState<ControlFailure | undefined>(undefined);
+  const [clearing, setClearing] = useState(false);
+  const request = useRef(0);
   const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(timer.current);
+    request.current += 1;
+  }, []);
+
+  function reset() {
+    request.current += 1;
+    setFailure(undefined);
+    setClearing(false);
+  }
 
   function copy(id: number) {
+    reset();
     setPicked(id);
     window.clearTimeout(timer.current);
-    // Дальше пометку ведёт уже пришедшее состояние
     timer.current = window.setTimeout(() => setPicked(undefined), HOLD_MS);
-
     control({ kind: "copy", id });
   }
 
-  async function clear() {
-    setClearFailed(false);
-    const result = await controlConfirmed({ kind: "clear" });
-    setClearFailed(!result.ok);
+  async function act(action: Action) {
+    const ticket = ++request.current;
+    setFailure(undefined);
+    setClearing(action.kind === "clear");
+    const result = await controlConfirmed(action);
+    if (ticket !== request.current) return;
+    setClearing(false);
+    if (!result.ok) setFailure(action.kind === "clear" ? "clearFailed" :
+      action.kind === "saveImage" ? "saveFailed" : result.reason);
+  }
+
+  function selectTab(next: ClearTarget) {
+    if (next === tab) return;
+    reset();
+    setTab(next);
   }
 
   const current = picked ?? entries.find((entry) => entry.current)?.id;
+  const count = tab === "text" ? entries.length : images.length;
+  const limit = tab === "text" ? capacity : imageCapacity;
+  const historyCount = tab === "text" ? entries.filter((entry) => !entry.pinned).length : count;
+  const failureText = failure && failureLabel(t, failure, entries.filter((entry) => entry.pinned).length);
 
   return (
     <div className="widget">
       <GlassCard accent="neutral">
         <div className="clip">
-          {entries.length === 0 ? (
-            /* Не «буфер пуст»: содержимое там, возможно, и есть — просто
-               скопировано до запуска, и в список оно намеренно не попало */
+          {tab === "images" ? (
+            images.length === 0 ? <p className="clip__empty">{t("clipboard.imagesEmpty")}</p> :
+              <ImageGrid images={images} thumbnails={thumbnails} onAction={(action) => { void act(action); }} />
+          ) : entries.length === 0 ? (
+            /* История пуста, но в системном буфере может быть прежний текст. */
             <p className="clip__empty">{t("clipboard.empty")}</p>
           ) : (
             <ul className="clip__list">
@@ -94,22 +231,24 @@ function AppClipboard() {
                   entry={entry}
                   current={entry.id === current}
                   onCopy={() => copy(entry.id)}
-                  onDrop={() => control({ kind: "remove", id: entry.id })}
+                  onDrop={() => { reset(); control({ kind: "remove", id: entry.id }); }}
+                  onPin={() => { void act({ kind: "pin", id: entry.id, pinned: !entry.pinned }); }}
                 />
               ))}
             </ul>
           )}
-
           <div className="clip__foot">
-            <span className="clip__count tabular" data-error={clearFailed || undefined} role={clearFailed ? "alert" : undefined}>
-              {clearFailed ? t("clipboard.clearFailed") : t("clipboard.count", { count: entries.length, capacity })}
+            <Tabs tab={tab} entries={entries.length} images={images.length} onChange={selectTab} />
+            <span className="clip__count tabular" data-error={failure || undefined}
+              role={failure ? "alert" : undefined} title={failureText || undefined}>
+              {failureText || t("clipboard.count", { count: historyCount, capacity: limit })}
             </span>
             <Button
               variant="outline"
               icon={<EraseIcon />}
-              label={t("clipboard.clearHint")}
-              disabled={entries.length === 0 && !clearFailed}
-              onClick={() => void clear()}
+              label={t(tab === "text" ? "clipboard.clearHint" : "clipboard.clearImagesHint")}
+              disabled={clearing || (count === 0 && failure !== "clearFailed")}
+              onClick={() => { void act({ kind: "clear", what: tab }); }}
             />
           </div>
         </div>
@@ -118,26 +257,19 @@ function AppClipboard() {
   );
 }
 
-/** Утверждённый A: читаемые строки; исходные Row и AppClipboard выше сохранены. */
-function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop }: RowProps & {
+/** GPT сохраняет многострочный предпросмотр и метаданные строки. */
+function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop, onPin }: RowProps & {
   pending: boolean;
   failed: boolean;
 }) {
   const t = useText();
-  // Длинный отступ в первых 200 знаках не должен делать строку пустой.
   const preview = entry.formattedPreview?.trim() ? entry.formattedPreview : entry.preview;
   const title = [preview, t.count("clipboard.chars", entry.chars),
     ...(entry.lines > 1 ? [t.count("clipboard.linesShort", entry.lines)] : [])].join("\n");
   return (
     <li className="clip-ref__item" data-current={current} data-failed={failed}>
-      <button
-        type="button"
-        className="clip-ref__text"
-        title={title}
-        aria-busy={pending}
-        aria-current={current ? "true" : undefined}
-        onClick={onCopy}
-      >
+      <button type="button" className="clip-ref__text" title={title} aria-busy={pending}
+        aria-current={current ? "true" : undefined} onClick={onCopy}>
         <span className="clip-ref__preview">{preview}</span>
       </button>
       <span className="clip-ref__meta tabular">
@@ -146,13 +278,9 @@ function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop }: RowPr
         </span>
         {entry.lines > 1 && <span>{t.count("clipboard.linesShort", entry.lines)}</span>}
       </span>
-      <button
-        type="button"
-        className="clip-ref__drop"
-        title={t("common.remove")}
-        aria-label={t("common.remove")}
-        onClick={onDrop}
-      >
+      <PinButton entry={entry} className="clip-ref__pin" onClick={onPin} />
+      <button type="button" className="clip-ref__drop" title={t("common.remove")}
+        aria-label={t("common.remove")} onClick={onDrop}>
         <CloseIcon />
       </button>
     </li>
@@ -162,57 +290,68 @@ function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop }: RowPr
 function ReferenceClipboard() {
   useWindowDrag();
   const t = useText();
-  const { entries, capacity } = useClipboard();
+  const { entries, capacity, images = NO_IMAGES, imageCapacity = 0 } = useClipboard();
+  const [tab, setTab] = useState<ClearTarget>("text");
+  const thumbnails = useThumbnails(images);
   const [pending, setPending] = useState<number | undefined>(undefined);
   const [failed, setFailed] = useState<number | undefined>(undefined);
-  const [clearFailed, setClearFailed] = useState(false);
+  const [failure, setFailure] = useState<ControlFailure | undefined>(undefined);
   const [clearing, setClearing] = useState(false);
   const request = useRef(0);
   useEffect(() => () => { request.current += 1; }, []);
 
-  async function copy(id: number) {
-    const ticket = ++request.current;
-    setPending(id);
-    setFailed(undefined);
-    setClearFailed(false);
-    setClearing(false);
-    const result = await controlConfirmed({ kind: "copy", id });
-    // Ответ старого нажатия или разобранного дизайна уже не меняет карточку.
-    if (ticket !== request.current) return;
-    setPending(undefined);
-    if (!result.ok) setFailed(id);
-    // Текущую запись ведёт только снимок Rust после успешной записи в буфер.
-  }
-
-  function remove(id: number) {
+  function reset() {
     request.current += 1;
     setPending(undefined);
     setFailed(undefined);
+    setFailure(undefined);
     setClearing(false);
+  }
+
+  async function act(action: Action) {
+    const ticket = ++request.current;
+    setPending(action.kind === "copy" || action.kind === "pin" ? action.id : undefined);
+    setFailed(undefined);
+    setFailure(undefined);
+    setClearing(action.kind === "clear");
+    const result = await controlConfirmed(action);
+    // Ни старый ответ, ни ответ разобранного дизайна не меняют карточку.
+    if (ticket !== request.current) return;
+    setPending(undefined);
+    setClearing(false);
+    if (!result.ok) {
+      setFailure(action.kind === "clear" ? "clearFailed" :
+        action.kind === "saveImage" ? "saveFailed" : result.reason);
+      if (action.kind === "copy" || action.kind === "pin") setFailed(action.id);
+    }
+    // Текущие строки и картинки ведёт только снимок Rust.
+  }
+
+  function remove(id: number) {
+    reset();
     control({ kind: "remove", id });
   }
 
-  async function clear() {
-    const ticket = ++request.current;
-    setPending(undefined);
-    setFailed(undefined);
-    setClearFailed(false);
-    setClearing(true);
-    const result = await controlConfirmed({ kind: "clear" });
-    if (ticket !== request.current) return;
-    setClearing(false);
-    setClearFailed(!result.ok);
-    // Rust забывает историю даже при отказе ОС. Повтор доступен и без строк.
+  function selectTab(next: ClearTarget) {
+    if (next === tab) return;
+    reset();
+    setTab(next);
   }
 
-  const failureText = clearFailed ? t("clipboard.clearFailed") : t("clipboard.copyFailed");
+  const count = tab === "text" ? entries.length : images.length;
+  const limit = tab === "text" ? capacity : imageCapacity;
+  const historyCount = tab === "text" ? entries.filter((entry) => !entry.pinned).length : count;
+  const failureText = failure && failureLabel(t, failure, entries.filter((entry) => entry.pinned).length);
 
   return (
     <div className="widget clip-widget--reference">
       <GlassCard accent="neutral" flush>
         <div className="clip-ref">
           <div className="clip-ref__viewport">
-            {entries.length === 0 ? (
+            {tab === "images" ? (
+              images.length === 0 ? <p className="clip-ref__empty">{t("clipboard.imagesEmpty")}</p> :
+                <ImageGrid images={images} thumbnails={thumbnails} onAction={(action) => { void act(action); }} />
+            ) : entries.length === 0 ? (
               <p className="clip-ref__empty">{t("clipboard.empty")}</p>
             ) : (
               <ul
@@ -220,7 +359,7 @@ function ReferenceClipboard() {
                 tabIndex={0}
                 aria-label={t("widget.clipboard")}
                 onMouseDown={(event) => {
-                  // Бегунок держит мышь, пустота и подписи по-прежнему двигают окно.
+                  // Бегунок держит мышь, пустота и подписи двигают окно.
                   const list = event.currentTarget;
                   const scrollbar = list.offsetWidth - list.clientWidth;
                   if (scrollbar > 0 && event.clientX >= list.getBoundingClientRect().right - scrollbar) {
@@ -235,33 +374,32 @@ function ReferenceClipboard() {
                     current={entry.current}
                     pending={entry.id === pending}
                     failed={entry.id === failed}
-                    onCopy={() => { void copy(entry.id); }}
+                    onCopy={() => { void act({ kind: "copy", id: entry.id }); }}
                     onDrop={() => remove(entry.id)}
+                    onPin={() => { void act({ kind: "pin", id: entry.id, pinned: !entry.pinned }); }}
                   />
                 ))}
               </ul>
             )}
           </div>
           <div className="clip-ref__foot">
-            {(failed !== undefined || clearFailed) && (
+            {failureText && (
               <div className="clip-ref__error" role="status" title={failureText}>
                 <FailedIcon />
                 <span>{failureText}</span>
               </div>
             )}
             <div className="clip-ref__actions">
+              <Tabs tab={tab} entries={entries.length} images={images.length} onChange={selectTab} />
               <span className="clip-ref__count tabular">
-                {t("clipboard.count", { count: entries.length, capacity })}
+                {t("clipboard.count", { count: historyCount, capacity: limit })}
               </span>
-              <button
-                type="button"
-                className="clip-ref__clear"
-                title={t("clipboard.clearHint")}
-                aria-label={t("clipboard.clearHint")}
-                disabled={clearing || (entries.length === 0 && !clearFailed)}
+              <button type="button" className="clip-ref__clear"
+                title={t(tab === "text" ? "clipboard.clearHint" : "clipboard.clearImagesHint")}
+                aria-label={t(tab === "text" ? "clipboard.clearHint" : "clipboard.clearImagesHint")}
+                disabled={clearing || (count === 0 && failure !== "clearFailed")}
                 aria-busy={clearing}
-                onClick={() => { void clear(); }}
-              >
+                onClick={() => { void act({ kind: "clear", what: tab }); }}>
                 <EraseIcon />
               </button>
             </div>

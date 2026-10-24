@@ -24,6 +24,7 @@ WIDGETS = [
     ("disks", "Drives"),
     ("network", "Network"),
     ("processes", "Processes"),
+    ("battery", "Battery"),
     ("speedtest", "Speedtest"),
     ("weather", "Weather"),
     ("sound", "Sound"),

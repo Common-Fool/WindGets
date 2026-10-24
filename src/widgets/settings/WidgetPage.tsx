@@ -19,6 +19,7 @@ import {
 import { Check } from "../../components/Check";
 import { useText } from "../../lib/i18n";
 import { Slider } from "../../components/Slider";
+import { BatterySection } from "./BatterySection";
 import { ConverterSection } from "./ConverterSection";
 import { DownloaderSection } from "./DownloaderSection";
 import { DriverField } from "./DriverField";
@@ -57,6 +58,7 @@ import { SpeedtestSource } from "./DataSource";
  * процессор и видеокарту, и иначе ему было бы не узнать, чей он.
  */
 const OWN_SECTIONS: Record<string, ComponentType<{ id: string }>> = {
+  battery: BatterySection,
   converter: ConverterSection,
   cpu: CpuSettings,
   disks: DrivesSection,

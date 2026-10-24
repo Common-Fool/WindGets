@@ -35,7 +35,7 @@
 }
 
 .clip-ref__list::-webkit-scrollbar {
-  width: calc(4px * var(--scale));
+  width: var(--scrollbar-thin);
 }
 
 .clip-ref__list::-webkit-scrollbar-track {
@@ -45,7 +45,7 @@
 .clip-ref__list::-webkit-scrollbar-thumb {
   min-height: calc(24px * var(--scale));
   border-radius: 999px;
-  background: var(--scrollbar-thumb);
+  background: transparent;
 }
 
 .clip-ref__list::-webkit-scrollbar-button,
@@ -141,27 +141,6 @@
   white-space: nowrap;
 }
 
-.clip-ref__drop {
-  display: flex;
-  flex: none;
-  align-self: center;
-  align-items: center;
-  justify-content: center;
-  width: calc(18px * var(--scale));
-  height: calc(24px * var(--scale));
-  /* Область нажатия 24 точки не увеличивает однострочную запись с 25 до 32. */
-  margin-block: calc(-4px * var(--scale));
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-control);
-  background: none;
-  color: var(--text-muted);
-  font-size: calc(12px * var(--scale));
-  opacity: 0;
-  cursor: pointer;
-  transition: opacity var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
-}
-
 .clip-ref__item:hover .clip-ref__drop,
 .clip-ref__item:focus-within .clip-ref__drop,
 .clip-ref__item[data-current="true"] .clip-ref__drop,
@@ -253,7 +232,7 @@
   height: var(--control-icon-size);
   box-sizing: border-box;
   padding: 0;
-  border: 1px solid var(--border-card);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: none;
   color: var(--text-secondary);
@@ -274,7 +253,7 @@
 
 .clip-ref__clear:disabled {
   color: var(--text-muted);
-  border-color: var(--border-card);
+  border-color: var(--border-control);
   opacity: 0.55;
   cursor: default;
 }
@@ -298,11 +277,70 @@
   }
 
   .clip-ref__actions {
-    min-height: calc(20px * var(--scale));
+    min-height: var(--control-icon-size);
   }
 
   .clip-ref__clear {
-    width: calc(20px * var(--scale));
-    height: calc(20px * var(--scale));
+    width: var(--control-icon-size);
+    height: var(--control-icon-size);
   }
 }
+
+.clip-widget--reference:hover .clip-ref__list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+/* Скрепка занимает ту же квадратную область, что крестик. */
+.clip-ref__pin,
+.clip-ref__drop {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.clip-ref__item:hover .clip-ref__pin,
+.clip-ref__item:focus-within .clip-ref__pin,
+.clip-ref__pin[data-pinned="true"] {
+  opacity: 1;
+}
+
+.clip-ref__pin:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.clip-ref__actions {
+  flex-wrap: wrap;
+}
+
+.clip-ref__count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* В узком окне метаданные уступают место тексту и двум действиям. */
+@container card (width < 18em) {
+  .clip-ref__meta {
+    display: none;
+  }
+
+  .clip-ref__item {
+    gap: var(--space-1);
+    padding-inline: 0;
+  }
+}
+

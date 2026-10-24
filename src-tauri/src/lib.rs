@@ -2,6 +2,8 @@
 #[macro_use]
 mod i18n;
 mod autostart;
+mod backup;
+mod battery;
 mod child;
 mod clipboard;
 mod converter;
@@ -72,6 +74,9 @@ pub fn run() {
     // огрызок или каскад спящего монитора к тому времени надо уже заменить
     // хорошей копией (`places.rs`)
     if let Some(dir) = places::dir(&context.config().identifier) {
+        // Восстановление из копии ставит файлы на место до всех читателей,
+        // плагина мест тоже (`backup.rs`)
+        backup::apply_pending(&dir);
         places::heal(&dir);
     }
 
@@ -104,6 +109,8 @@ pub fn run() {
         .manage(ping::PingState::default())
         .manage(sound::Sound::default())
         .manage(clipboard::Clipboard::default())
+        .manage(battery::Battery::default())
+        .manage(backup::Backup::default())
         .manage(processes::Processes::default())
         .manage(fps::Fps::default())
         .manage(weather::Weather::default())
@@ -119,6 +126,12 @@ pub fn run() {
             clipboard::clipboard_state,
             clipboard::clipboard_control,
             clipboard::clipboard_copy_secret,
+            clipboard::clipboard_thumb,
+            battery::battery_state,
+            settings_window::set_battery_hidden,
+            backup::backup_export,
+            backup::backup_inspect,
+            backup::backup_restore,
             journal::report_crash,
             processes::processes_state,
             fps::fps_state,
@@ -333,7 +346,10 @@ pub fn run() {
                     api.prevent_exit();
                 }
             }
-            tauri::RunEvent::Exit => converter::shutdown(app),
+            tauri::RunEvent::Exit => {
+                converter::shutdown(app);
+                fps::shutdown();
+            }
             _ => {}
         }
     });

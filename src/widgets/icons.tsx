@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import {
+  BatteryIcon,
   BugIcon,
   ChecklistIcon,
   ClipboardIcon,
@@ -34,6 +35,7 @@ export const WIDGET_ICONS: Record<string, ComponentType> = {
   gpu: GpuIcon,
   cpu: CpuIcon,
   disks: DriveIcon,
+  battery: BatteryIcon,
   network: NetworkIcon,
   processes: ListIcon,
   fps: FramesIcon,

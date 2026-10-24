@@ -109,6 +109,8 @@ export type SettingsView = {
    * показанные: новый диск появляется в карточке сам.
    */
   hiddenDisks: string[];
+  /** Устройства, снятые с карточки заряда, — ключами `Device.id`. */
+  hiddenBatteries: string[];
   /**
    * Ряды, снятые с карточек процессора и видеокарты (этап 58): `cpu` и `gpu`
    * → снятые ряды. Нет ключа — показано всё.
@@ -159,6 +161,7 @@ export const EMPTY_SETTINGS: SettingsView = {
   languages: [],
   systemLanguage: "ru",
   hiddenDisks: [],
+  hiddenBatteries: [],
   hiddenMetrics: {},
   sensorPicks: {},
   version: "",

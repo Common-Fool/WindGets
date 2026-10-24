@@ -502,6 +502,24 @@ pub const WIDGETS: &[Widget] = &[
         floor: Some((204.0, 68.0)),
     },
     Widget {
+        id: "battery",
+        views: &[],
+        view_heights: &[],
+        // Один размер: строк столько, сколько подключено устройств с зарядом,
+        // и высоту ставит замер содержимого (`useContentHeight`), а не реестр.
+        // Реестровая высота — карточка с двумя устройствами
+        presets: &[
+            Preset { name: "size.full", width: 280.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+        ],
+        view_presets: &[],
+        covers: &[],
+        covers_hidden: &[],
+        flexible: false,
+        chrome: false,
+        enabled: false,
+        floor: None,
+    },
+    Widget {
         id: "network",
         views: &["network.view.rows", "network.view.matrix"],
         view_heights: &[],

@@ -1,6 +1,6 @@
 [package]
 name = "windgets"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Виджеты мониторинга железа"
 authors = ["CommonFool"]
@@ -8,7 +8,7 @@ license = "MIT"
 
 [lib]
 name = "windgets_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 # Тестовой обёртки у бинаря нет, и это не лень: своих тестов в main.rs ноль, а
 # манифест требует прав администратора — cargo, запущенный обычным
@@ -143,10 +143,22 @@ windows = { version = "0.61.3", features = [
     "Foundation",
     "Media_Control",
     "Storage_Streams",
+    # Заряд периферии (`battery/`): SetupDi перечисляет узлы Bluetooth и
+    # интерфейсы HID, Properties — ключ заряда, который Windows держит у узла
+    # Bluetooth, HumanInterfaceDevice — атрибуты и отчёты HID++ Logitech.
+    # Сборки не добавляют: сгенерированный код того же крейта
+    "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_FunctionDiscovery",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Devices_Properties",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    # WIC — ради картинок буфера обмена: разобрать PNG и DIB, сжать миниатюру,
+    # закодировать PNG для показа и сохранения. Крейты `image` или `png`
+    # принесли бы свой декодер и deflate, а WIC стоит в Windows. Сборки не
+    # добавляет: сгенерированный код того же крейта
+    "Win32_Graphics_Imaging",
     # Язык интерфейса по умолчанию — язык Windows: GetUserDefaultUILanguage.
     # Крейт вроде sys-locale ради одного вызова не нужен. Сборки не добавляет:
     # сгенерированный код того же крейта
@@ -181,6 +193,9 @@ windows = { version = "0.61.3", features = [
     # KILL_ON_JOB_CLOSE гасит всё дерево разом — и при отмене, и при падении
     # самого приложения. Сборки не добавляет: сгенерированный код того же крейта
     "Win32_System_JobObjects",
+    # Перекрытый ввод-вывод HID (`battery/hidpp.rs`): ответ на вопрос к мыши
+    # ждётся со сроком, а не вечным ReadFile. Сборки не добавляет
+    "Win32_System_IO",
     "Win32_System_Memory",
     # ProcessStatus и Threading — ради виджета процессов: sysinfo отдаёт
     # рабочий набор целиком, вместе с общими страницами, а диспетчер задач
@@ -205,6 +220,9 @@ windows = { version = "0.61.3", features = [
     # сгенерированный код того же крейта
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",
+    # Вид файла в окнах выбора и сохранения (`picker.rs`): COMDLG_FILTERSPEC
+    # лежит только здесь. Сборки не добавляет
+    "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
@@ -215,3 +233,11 @@ tokio = { version = "1.53.1", features = ["rt", "macros"] }
 
 [profile.dev]
 incremental = true
+
+# Выпуск собирается одним куском со сквозной оптимизацией: exe заметно меньше,
+# сборка дольше, но её гоняют Actions, а не каждая правка. `panic` намеренно
+# остаётся `unwind`: паника рабочего потока сейчас гасит только его, а с
+# `abort` уронила бы всё приложение
+[profile.release]
+lto = true
+codegen-units = 1

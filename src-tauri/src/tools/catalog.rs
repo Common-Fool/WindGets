@@ -18,10 +18,11 @@ pub enum Component {
     YtDlp,
     QuickJs,
     PresentMon,
+    HeadsetControl,
 }
 
 impl Component {
-    pub const ALL: [Component; 4] = [Component::Ffmpeg, Component::YtDlp, Component::QuickJs, Component::PresentMon];
+    pub const ALL: [Component; 5] = [Component::Ffmpeg, Component::YtDlp, Component::QuickJs, Component::PresentMon, Component::HeadsetControl];
 }
 
 /// Часть приложения, которой нужны программы. Совпадает с `id` виджета в
@@ -32,16 +33,18 @@ pub enum Module {
     Converter,
     Downloader,
     Fps,
+    Battery,
 }
 
 impl Module {
-    pub const ALL: [Module; 3] = [Module::Converter, Module::Downloader, Module::Fps];
+    pub const ALL: [Module; 4] = [Module::Converter, Module::Downloader, Module::Fps, Module::Battery];
 
     pub fn id(self) -> &'static str {
         match self {
             Module::Converter => "converter",
             Module::Downloader => "downloader",
             Module::Fps => "fps",
+            Module::Battery => "battery",
         }
     }
 
@@ -57,6 +60,7 @@ impl Module {
             Module::Downloader => "Downloads",
             // Счётчик кадров файлов не пишет; имя ради полноты сопоставления
             Module::Fps => "Fps",
+            Module::Battery => "Battery",
         }
     }
 
@@ -69,6 +73,7 @@ impl Module {
             Module::Converter => &[Component::Ffmpeg],
             Module::Downloader => &[Component::YtDlp, Component::QuickJs, Component::Ffmpeg],
             Module::Fps => &[Component::PresentMon],
+            Module::Battery => &[Component::HeadsetControl],
         }
     }
 }
@@ -143,7 +148,12 @@ pub struct Spec {
 /// PresentMon (Intel, MIT) — консольная сборка без оверлея и службы: 0,9 МБ
 /// против 162 МБ установщика. Кадры он берёт из ETW, в игру ничего не
 /// внедряет, поэтому античитам не виден.
-pub const SPECS: [Spec; 4] = [
+///
+/// HeadsetControl (GPL v3) — заряд гарнитур десятка брендов: их донглы
+/// говорят каждый своим протоколом, и Windows этого заряда не видит. Отдельная
+/// программа, которую мы только запускаем, — с приложением она не связывается.
+/// Переносная сборка одним exe, без установщика.
+pub const SPECS: [Spec; 5] = [
     Spec {
         component: Component::Ffmpeg,
         name: "FFmpeg",
@@ -193,6 +203,19 @@ pub const SPECS: [Spec; 4] = [
         file: "PresentMon.exe",
         download_bytes: 980_320,
         disk_bytes: 980_320,
+        system: None,
+    },
+    Spec {
+        component: Component::HeadsetControl,
+        name: "HeadsetControl",
+        repo: "Sapd/HeadsetControl",
+        // Рядом лежат установщик `-setup.exe` и подписи `.asc` — не они
+        asset: AssetRule::Exact("headsetcontrol-windows-x86_64.exe"),
+        install: Install::Exe,
+        dir: "headsetcontrol",
+        file: "headsetcontrol.exe",
+        download_bytes: 1_339_392,
+        disk_bytes: 1_339_392,
         system: None,
     },
 ];

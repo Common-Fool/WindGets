@@ -464,6 +464,10 @@ pub struct Settings {
     /// карточке сам, как и до этапа 53: модели в коде не зашиты, и список
     /// показанных прятал бы любой купленный накопитель, пока его не отметят.
     pub hidden_disks: Vec<String>,
+    /// Устройства, снятые с карточки заряда, — ключами из снимка
+    /// (`battery::Device::id`). Тоже скрытые, а не показанные: новая мышь
+    /// появляется сама.
+    pub hidden_batteries: Vec<String>,
     /// Ряды, снятые с карточек процессора и видеокарты (этап 58): ключ — `cpu`
     /// или `gpu`, значения из [`METRICS`].
     ///
@@ -545,6 +549,7 @@ impl Default for Settings {
             output_dirs: BTreeMap::new(),
             language: None,
             hidden_disks: Vec::new(),
+            hidden_batteries: Vec::new(),
             hidden_metrics: BTreeMap::new(),
             sensor_picks: BTreeMap::new(),
             support_reminder: SupportReminder::default(),
@@ -909,6 +914,7 @@ fn parse_settings_checked(text: &str) -> (Settings, bool) {
     settings.output_dirs = sane_output_dirs(settings.output_dirs);
     settings.language = crate::i18n::sane(settings.language);
     settings.hidden_disks = sane_disks(settings.hidden_disks);
+    settings.hidden_batteries = sane_disks(settings.hidden_batteries);
     settings.hidden_metrics = sane_metrics(settings.hidden_metrics);
     settings.sensor_picks = sane_picks(settings.sensor_picks);
     (settings, whole)
@@ -1263,6 +1269,7 @@ mod tests {
             output_dirs: BTreeMap::from([("downloader".to_owned(), "D:\\Downloads".to_owned())]),
             language: Some("uk".to_owned()),
             hidden_disks: vec!["Samsung SSD 970 EVO Plus 2TB".to_owned()],
+            hidden_batteries: vec!["bt:0123456789AB".to_owned()],
             hidden_metrics: BTreeMap::from([("gpu".to_owned(), vec!["fan".to_owned(), "voltage".to_owned()])]),
             sensor_picks: BTreeMap::from([("chassisFan".to_owned(), "Board/Chip/Fans/Fan #2".to_owned())]),
             support_reminder: SupportReminder { first_run: 1_700_000_000, last_shown: Some(1_710_000_000), rare: true },

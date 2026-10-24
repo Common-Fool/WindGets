@@ -6,6 +6,7 @@ import { system } from "./system";
 import { text } from "./text";
 import { online } from "./online";
 import { tools } from "./tools";
+import { battery } from "./battery";
 import { DEMO_PLACE } from "./common";
 import { PREVIEWED } from "../list";
 import type { Answers, Context } from "./common";
@@ -29,6 +30,7 @@ const ANSWERS: Answers = {
   ...text,
   ...online,
   ...tools,
+  ...battery,
 
   appearance: (_args, { id, state }) => lookOf(id, state),
   set_design: (_args, { id, state }) => lookOf(id, state),

@@ -12,7 +12,10 @@ export function Bar({ fill, thickness = "thick" }: Props) {
   return (
     <div className={thickness === "thin" ? "bar bar--thin" : "bar"}>
       {clamped !== null && (
-        <div className="bar__fill" style={{ width: `${(clamped * 100).toFixed(2)}%` }} />
+        // Шаг — полпроцента, как у дуги: переход ширины — это раскладка на каждом
+        // кадре, и будить его дрожью в сотых долях незачем. `scaleX` вместо
+        // ширины сплющил бы скруглённый конец
+        <div className="bar__fill" style={{ width: `${Math.round(clamped * 200) / 2}%` }} />
       )}
     </div>
   );

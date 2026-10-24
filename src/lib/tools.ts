@@ -11,8 +11,8 @@ import type { Text } from "./i18n";
  * показывает, что стоит, чего не хватает какому модулю и как идёт установка.
  */
 
-export type ComponentId = "ffmpeg" | "ytDlp" | "quickJs" | "presentMon";
-export type ModuleId = "converter" | "downloader" | "fps";
+export type ComponentId = "ffmpeg" | "ytDlp" | "quickJs" | "presentMon" | "headsetControl";
+export type ModuleId = "converter" | "downloader" | "fps" | "battery";
 
 export type ToolComponent = {
   id: ComponentId;

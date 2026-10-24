@@ -1,4 +1,5 @@
-//! Буфер обмена: последние двадцать скопированных строк.
+//! Буфер обмена: последние двадцать скопированных строк, закреплённые строки
+//! и последние десять картинок.
 //!
 //! Системная история (Win+V) живёт всплывающим окном, которое надо вызывать и
 //! которое открывается поверх работы. Виджет держит те же строки на виду
@@ -14,6 +15,8 @@
 
 #[cfg(windows)]
 mod board;
+#[cfg(windows)]
+mod image;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,8 +41,21 @@ const CLIPBOARD_EVENT: &str = "clipboard";
 /// никто не собирался копировать.
 const STEP: Duration = Duration::from_millis(500);
 
-/// Сколько записей помним.
+/// Сколько записей помним. Закреплённые сюда не входят.
 const CAPACITY: usize = 20;
+
+/// Сколько записей можно закрепить. Закреплённые живут только в памяти, как и
+/// вся история, и потолок у них свой: иначе закрепление стало бы способом
+/// держать в памяти сколько угодно.
+const PIN_CAPACITY: usize = 20;
+
+/// Сколько картинок помним. Каждая лежит у нас PNG целиком — снимок экрана
+/// это мегабайты, а не килобайты, как строка.
+const IMAGE_CAPACITY: usize = 10;
+
+/// Потолок картинки в точках: больше 50 мегапикселей — это не снимок экрана, а
+/// чья-то панорама на сотни мегабайт в несжатом виде.
+const MAX_PIXELS: u64 = 50_000_000;
 
 /// Длина строки для показа. Куда больше, чем влезает в окно шириной 440 точек:
 /// остаток достаётся подсказке под курсором.
@@ -63,6 +79,33 @@ fn bounded_text_length(wide: &[u16]) -> Option<usize> {
 struct Entry {
     id: u64,
     text: String,
+    /// Закреплённая не вытесняется и переживает «Очистить». Только в памяти.
+    pinned: bool,
+}
+
+/// Картинка, какой она лежит у нас.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Picture {
+    id: u64,
+    /// Картинка целиком, PNG: из него и возвращаем в буфер, и сохраняем файл.
+    png: std::sync::Arc<Vec<u8>>,
+    /// sha256 от PNG: та же картинка, скопированная снова, переезжает наверх.
+    hash: [u8; 32],
+    width: u32,
+    height: u32,
+    /// Миниатюра, `data:image/png;base64,…`. В событие не едет — её просит
+    /// окно командой `clipboard_thumb`, по образцу обложки медиа.
+    thumb: String,
+}
+
+/// Картинка, какой её видит окно: без пикселей.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShownImage {
+    pub id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub current: bool,
 }
 
 /// Запись, какой её видит окно.
@@ -84,15 +127,21 @@ pub struct Shown {
     pub chars: usize,
     /// Эта запись лежит в буфере прямо сейчас.
     pub current: bool,
+    /// Закреплена: стоит над историей и не вытесняется.
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct View {
-    /// Свежая первой.
+    /// Закреплённые первыми в порядке закрепления, за ними история, свежая
+    /// первой.
     pub entries: Vec<Shown>,
-    /// Сколько записей помещается всего — для счётчика в подвале.
+    /// Сколько незакреплённых записей помещается всего — для счётчика.
     pub capacity: usize,
+    /// Свежая первой.
+    pub images: Vec<ShownImage>,
+    pub image_capacity: usize,
 }
 
 impl Default for View {
@@ -100,8 +149,19 @@ impl Default for View {
         Self {
             entries: Vec::new(),
             capacity: CAPACITY,
+            images: Vec::new(),
+            image_capacity: IMAGE_CAPACITY,
         }
     }
+}
+
+/// Что очищает кнопка в подвале: вкладку, которая открыта.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Clearing {
+    #[default]
+    Text,
+    Images,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,8 +171,19 @@ pub enum Action {
     Copy { id: u64 },
     /// Убрать запись из списка. Самого буфера это не касается.
     Remove { id: u64 },
-    /// Забыть всё и опустошить сам буфер.
-    Clear,
+    /// Закрепить запись или открепить.
+    Pin { id: u64, pinned: bool },
+    /// Вернуть картинку в буфер обмена.
+    CopyImage { id: u64 },
+    /// Убрать картинку из списка.
+    RemoveImage { id: u64 },
+    /// Сохранить картинку в PNG через окно сохранения.
+    SaveImage { id: u64 },
+    /// Забыть незакреплённые строки или картинки и опустошить сам буфер.
+    Clear {
+        #[serde(default)]
+        what: Clearing,
+    },
 }
 
 /// Список записей.
@@ -121,13 +192,36 @@ pub enum Action {
 /// нужна только чтобы узнать, что содержимое сменилось, и прочитать его.
 #[derive(Debug, Default)]
 struct History {
+    /// Закреплённые первыми, за ними незакреплённые, свежая первой.
     entries: VecDeque<Entry>,
-    /// Какая запись лежит в буфере прямо сейчас.
+    /// Свежая первой.
+    images: VecDeque<Picture>,
+    /// Какая запись или картинка лежит в буфере прямо сейчас: номера у них
+    /// общие, а в буфере бывает что-то одно.
     current: Option<u64>,
     next_id: u64,
 }
 
 impl History {
+    fn take_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// Сколько закреплённых: они стоят в начале списка подряд.
+    fn pinned_count(&self) -> usize {
+        self.entries.iter().take_while(|entry| entry.pinned).count()
+    }
+
+    /// Двадцать первая незакреплённая вытесняет самую старую. Она же
+    /// последняя в списке: закреплённые стоят впереди.
+    fn trim(&mut self) {
+        while self.entries.len() - self.pinned_count() > CAPACITY {
+            self.entries.pop_back();
+        }
+    }
+
     /// Записывает свежее содержимое буфера. Возвращает «список изменился».
     fn record(&mut self, text: &str) -> bool {
         // Пустое и пробельное — это не запись, а промах мимо нужного текста
@@ -138,25 +232,86 @@ impl History {
             return false;
         }
 
-        // Тот же текст, скопированный ещё раз, переезжает наверх, а не ложится
-        // второй строкой: он и правда самый свежий
+        // Тот же текст, скопированный ещё раз, переезжает наверх истории, а не
+        // ложится второй строкой: он и правда самый свежий. Закреплённый
+        // остаётся на своём месте — его место выбрал человек
         if let Some(at) = self.entries.iter().position(|entry| entry.text == text) {
+            if self.entries[at].pinned {
+                // Принято, даже если пометка уже стояла: `false` значил бы для
+                // опроса «в буфере чужое», и он погасил бы её
+                let id = self.entries[at].id;
+                self.mark(id);
+                return true;
+            }
             let entry = self.entries.remove(at).expect("позиция только что найдена");
             self.current = Some(entry.id);
-            self.entries.push_front(entry);
+            let top = self.pinned_count();
+            self.entries.insert(top, entry);
             return true;
         }
 
-        let id = self.next_id;
-        self.next_id += 1;
-
-        self.entries.push_front(Entry {
+        let id = self.take_id();
+        let top = self.pinned_count();
+        self.entries.insert(top, Entry {
             id,
             text: text.to_owned(),
+            pinned: false,
         });
-        self.entries.truncate(CAPACITY);
+        self.trim();
         self.current = Some(id);
 
+        true
+    }
+
+    /// Закрепляет запись в конец закреплённых или открепляет наверх истории.
+    fn pin(&mut self, id: u64, pinned: bool) -> Result<bool, ControlError> {
+        let Some(at) = self.entries.iter().position(|entry| entry.id == id) else {
+            return Err(ControlError::Missing);
+        };
+        if self.entries[at].pinned == pinned {
+            return Ok(false);
+        }
+        if pinned && self.pinned_count() >= PIN_CAPACITY {
+            return Err(ControlError::PinsFull);
+        }
+
+        let mut entry = self.entries.remove(at).expect("позиция только что найдена");
+        entry.pinned = pinned;
+        // Конец закреплённых и начало истории — одно и то же место
+        let top = self.pinned_count();
+        self.entries.insert(top, entry);
+        self.trim();
+        Ok(true)
+    }
+
+    /// Записывает картинку. Повтор переезжает наверх.
+    fn record_image(&mut self, picture: Picture) -> bool {
+        if let Some(at) = self.images.iter().position(|kept| kept.hash == picture.hash) {
+            let kept = self.images.remove(at).expect("позиция только что найдена");
+            self.current = Some(kept.id);
+            self.images.push_front(kept);
+            return true;
+        }
+
+        let id = self.take_id();
+        self.images.push_front(Picture { id, ..picture });
+        self.images.truncate(IMAGE_CAPACITY);
+        self.current = Some(id);
+        true
+    }
+
+    fn image_of(&self, id: u64) -> Option<&Picture> {
+        self.images.iter().find(|picture| picture.id == id)
+    }
+
+    fn remove_image(&mut self, id: u64) -> bool {
+        let Some(at) = self.images.iter().position(|picture| picture.id == id) else {
+            return false;
+        };
+        self.images.remove(at);
+        if self.current == Some(id) {
+            self.current = None;
+        }
         true
     }
 
@@ -195,14 +350,31 @@ impl History {
         true
     }
 
+    /// «Очистить» на вкладке строк: закреплённые остаются. Пометка гаснет —
+    /// сам буфер опустошается рядом.
     fn clear(&mut self) -> bool {
-        if self.entries.is_empty() && self.current.is_none() {
-            return false;
-        }
-
-        self.entries.clear();
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.pinned);
+        let changed = self.entries.len() != before || self.current.is_some();
         self.current = None;
-        true
+        changed
+    }
+
+    /// «Очистить» на вкладке картинок.
+    fn clear_images(&mut self) -> bool {
+        let changed = !self.images.is_empty() || self.current.is_some();
+        self.images.clear();
+        self.current = None;
+        changed
+    }
+
+    /// Выключение модуля: забывается всё, закреплённые и картинки тоже.
+    fn forget(&mut self) -> bool {
+        let changed = !self.entries.is_empty() || !self.images.is_empty() || self.current.is_some();
+        self.entries.clear();
+        self.images.clear();
+        self.current = None;
+        changed
     }
 
     fn view(&self) -> View {
@@ -217,9 +389,21 @@ impl History {
                     lines: line_count(&entry.text),
                     chars: entry.text.chars().count(),
                     current: self.current == Some(entry.id),
+                    pinned: entry.pinned,
                 })
                 .collect(),
             capacity: CAPACITY,
+            images: self
+                .images
+                .iter()
+                .map(|picture| ShownImage {
+                    id: picture.id,
+                    width: picture.width,
+                    height: picture.height,
+                    current: self.current == Some(picture.id),
+                })
+                .collect(),
+            image_capacity: IMAGE_CAPACITY,
         }
     }
 }
@@ -295,6 +479,10 @@ pub enum ControlError {
     Missing,
     CopyFailed,
     ClearFailed,
+    /// Закреплено уже [`PIN_CAPACITY`] записей.
+    PinsFull,
+    /// Картинка не сохранилась в файл.
+    SaveFailed,
 }
 
 struct Order {
@@ -360,6 +548,12 @@ impl Clipboard {
 #[tauri::command]
 pub fn clipboard_state(state: State<'_, Clipboard>) -> View {
     state.locked().view()
+}
+
+/// Миниатюра картинки, `data:`-адрес или `null`. Ходит в память, не в буфер.
+#[tauri::command]
+pub fn clipboard_thumb(state: State<'_, Clipboard>, id: u64) -> Option<String> {
+    state.locked().image_of(id).map(|picture| picture.thumb.clone())
 }
 
 /// Ждёт ответ потока через oneshot, не задерживая главный поток WebView2.
@@ -448,6 +642,9 @@ fn publish(app: &AppHandle) {
 fn work(app: AppHandle, inbox: Receiver<Order>) {
     use std::sync::mpsc::RecvTimeoutError;
 
+    // WIC — это COM, и квартира у потока своя на всю его жизнь
+    image::enter();
+
     // С чего начали, то и пропускаем: содержимое буфера на момент запуска
     // скопировано неизвестно когда, и первой записью истории оно было бы
     // враньём — «вот что ты копировал только что»
@@ -472,17 +669,17 @@ fn work(app: AppHandle, inbox: Receiver<Order>) {
         if FORGET.swap(false, Ordering::SeqCst) {
             // И номер свежий: скопированное при выключенном модуле — не новое
             seen = board::sequence();
-            changed |= app.state::<Clipboard>().locked().clear();
+            changed |= app.state::<Clipboard>().locked().forget();
         }
 
         if recording(&app) {
             changed |= poll(&app, &mut seen);
         } else {
-            // Виджет выключили: забываем список и держим номер свежим, чтобы
-            // при включении обратно не приняли за новое то, что скопировали
-            // при выключенном виджете
+            // Виджет выключили: забываем всё, закреплённые и картинки тоже, и
+            // держим номер свежим, чтобы при включении обратно не приняли за
+            // новое то, что скопировали при выключенном виджете
             seen = board::sequence();
-            changed |= app.state::<Clipboard>().locked().clear();
+            changed |= app.state::<Clipboard>().locked().forget();
         }
 
         if changed {
@@ -499,8 +696,8 @@ fn poll(app: &AppHandle, seen: &mut u32) -> bool {
         return false;
     }
 
-    let text = match board::read() {
-        Ok(text) => text,
+    let content = match board::read() {
+        Ok(content) => content,
         // Буфер держит чужое приложение (Excel с большим диапазоном, RDP,
         // другой менеджер буфера). Номер не сдвигаем: следующий тик прочтёт
         // снова, иначе эта запись пропала бы навсегда — номер больше не сменится
@@ -508,21 +705,52 @@ fn poll(app: &AppHandle, seen: &mut u32) -> bool {
     };
     *seen = now;
 
+    // Картинку разбираем до замка: WIC над снимком 4K — десятки миллисекунд,
+    // и окно, спросившее миниатюру, ждать их не должно
+    let (text, picture) = match content {
+        board::Content::Text(text) => (Some(text), None),
+        board::Content::Image(raw) => match image::picture(&raw, MAX_PIXELS) {
+            Ok(picture) => (None, Some(picture)),
+            Err(error) => {
+                eprintln!("[буфер] картинка не записана: {error}");
+                (None, None)
+            }
+        },
+        board::Content::Nothing => (None, None),
+    };
+
     let clipboard = app.state::<Clipboard>();
     let mut history = clipboard.locked();
-    let recorded = text.is_some_and(|text| history.record(&text));
+    let recorded = match (text, picture) {
+        (Some(text), _) => history.record(&text),
+        (None, Some(picture)) => history.record_image(Picture {
+            id: 0,
+            png: std::sync::Arc::new(picture.png),
+            hash: picture.hash,
+            width: picture.width,
+            height: picture.height,
+            thumb: picture.thumb,
+        }),
+        _ => false,
+    };
     if recorded {
         return true;
     }
-    // Картинка, файлы, пометка «не для истории», пустое или слишком длинное:
-    // в буфере теперь не то, что было, и подсвечивать прежнюю строку как
-    // лежащую в нём — врать (Ctrl+V вставит другое)
+    // Файлы, пометка «не для истории», пустое, слишком длинное или слишком
+    // большое: в буфере теперь не то, что было, и подсвечивать прежнюю строку
+    // как лежащую в нём — врать (Ctrl+V вставит другое)
     history.current.take().is_some()
 }
 
 /// Отвечает только после попытки исполнения, даже если список не изменился.
 #[cfg(windows)]
 fn obey_order(app: &AppHandle, order: Order, seen: &mut u32) -> bool {
+    // Сохранение ждёт человека в окне выбора, а поток буфера ждать не может:
+    // ответ уходит из потока окна выбора, когда файл записан или отменён
+    if let Action::SaveImage { id } = order.action {
+        save_image(app, id, order.reply);
+        return false;
+    }
     let outcome = obey(app, order.action, seen);
     let _ = order.reply.send(outcome.result);
     outcome.changed
@@ -538,16 +766,97 @@ fn obey(app: &AppHandle, action: Action, seen: &mut u32) -> Outcome {
             (board::sequence(), result)
         }),
         Action::Remove { id } => Outcome { changed: clipboard.locked().remove(id), result: Ok(()) },
-        Action::Clear => {
+        Action::Pin { id, pinned } => match clipboard.locked().pin(id, pinned) {
+            Ok(changed) => Outcome { changed, result: Ok(()) },
+            Err(error) => Outcome { changed: false, result: Err(error) },
+        },
+        Action::CopyImage { id } => copy_image_with(&clipboard, id, seen, |png| {
+            let result = image::dib(png).and_then(|dib| board::write_image(png, &dib, owner(app)));
+            (board::sequence(), result)
+        }),
+        Action::RemoveImage { id } => Outcome { changed: clipboard.locked().remove_image(id), result: Ok(()) },
+        // Разбирается в `obey_order`: ответ ждёт окно выбора
+        Action::SaveImage { .. } => Outcome { changed: false, result: Err(ControlError::Unavailable) },
+        Action::Clear { what } => {
             // Прежнее поведение: забываем историю даже при отказе очистки ОС.
             let result = board::empty(owner(app)).map_err(|error| {
                 eprintln!("[буфер] {error}");
                 ControlError::ClearFailed
             });
             *seen = board::sequence();
-            Outcome { changed: clipboard.locked().clear(), result }
+            let mut history = clipboard.locked();
+            let changed = match what {
+                Clearing::Text => history.clear(),
+                Clearing::Images => history.clear_images(),
+            };
+            Outcome { changed, result }
         }
     }
+}
+
+/// То же, что [`copy_with`], для картинки: PNG берётся под замком, пишется без.
+fn copy_image_with(
+    clipboard: &Clipboard,
+    id: u64,
+    seen: &mut u32,
+    write: impl FnOnce(&[u8]) -> (u32, Result<(), String>),
+) -> Outcome {
+    let Some(png) = clipboard.locked().image_of(id).map(|picture| picture.png.clone()) else {
+        return Outcome { changed: false, result: Err(ControlError::Missing) };
+    };
+    let (sequence, result) = write(&png);
+    match result {
+        Ok(()) => {
+            *seen = sequence;
+            Outcome { changed: clipboard.locked().mark(id), result: Ok(()) }
+        }
+        Err(error) => {
+            eprintln!("[буфер] {error}");
+            let changed = sequence != *seen && clipboard.locked().current.take().is_some();
+            Outcome { changed, result: Err(ControlError::CopyFailed) }
+        }
+    }
+}
+
+/// Окно сохранения с именем по часам и запись PNG как он лежит у нас.
+#[cfg(windows)]
+fn save_image(app: &AppHandle, id: u64, reply: oneshot::Sender<Result<(), ControlError>>) {
+    let Some(png) = app.state::<Clipboard>().locked().image_of(id).map(|picture| picture.png.clone()) else {
+        let _ = reply.send(Err(ControlError::Missing));
+        return;
+    };
+    let Some(owner) = owner(app) else {
+        let _ = reply.send(Err(ControlError::Unavailable));
+        return;
+    };
+
+    let what = crate::picker::Pick::Save {
+        name: format!("Clipboard {}.png", file_stamp()),
+        filter: crate::picker::Filter::PNG,
+    };
+    crate::picker::pick(owner.0 as isize, what, None, move |paths| {
+        let Some(path) = paths.into_iter().next() else {
+            // Передумал — это не отказ
+            let _ = reply.send(Ok(()));
+            return;
+        };
+        let result = crate::disk::write_atomically(&path, png.as_slice()).map_err(|error| {
+            eprintln!("[буфер] картинка не сохранилась в {}: {error}", path.display());
+            ControlError::SaveFailed
+        });
+        let _ = reply.send(result);
+    });
+}
+
+/// Время для имени файла по часам человека: двоеточий в именах Windows нет.
+#[cfg(windows)]
+fn file_stamp() -> String {
+    // SAFETY: GetLocalTime только заполняет структуру и не может отказать
+    let time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02} {:02}-{:02}-{:02}",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond
+    )
 }
 
 /// Окно виджета как владелец буфера.
@@ -771,7 +1080,85 @@ mod tests {
     #[test]
     fn an_empty_view_still_knows_its_capacity() {
         let json = serde_json::to_string(&View::default()).expect("сериализуется");
-        assert_eq!(json, r#"{"entries":[],"capacity":20}"#);
+        assert_eq!(json, r#"{"entries":[],"capacity":20,"images":[],"imageCapacity":10}"#);
+    }
+
+    /// Закреплённая стоит над историей, не вытесняется и переживает «Очистить».
+    #[test]
+    fn a_pinned_entry_outlives_the_history() {
+        let mut history = filled(&["закреплю"]);
+        let id = history.entries[0].id;
+        assert_eq!(history.pin(id, true), Ok(true));
+
+        for number in 0..=CAPACITY {
+            history.record(&format!("запись {number}"));
+        }
+        assert_eq!(history.entries.len(), CAPACITY + 1);
+        assert_eq!(history.entries[0].text, "закреплю");
+        assert_eq!(history.entries[1].text, format!("запись {CAPACITY}"));
+
+        assert!(history.clear());
+        assert_eq!(history.entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), ["закреплю"]);
+        assert!(history.forget());
+        assert!(history.entries.is_empty());
+    }
+
+    /// Повтор закреплённого текста снаружи ставит пометку и не двигает его, а
+    /// уже стоящая пометка не гаснет: опрос принимает содержимое.
+    #[test]
+    fn a_repeat_of_a_pinned_text_keeps_its_place_and_mark() {
+        let mut history = filled(&["закреплю", "другое"]);
+        let id = history.entries[1].id;
+        history.pin(id, true).expect("закрепилось");
+        history.record("третье");
+
+        assert!(history.record("закреплю"));
+        assert_eq!(history.entries[0].id, id);
+        assert_eq!(history.current, Some(id));
+        assert!(history.record("закреплю"), "повтор при стоящей пометке — тоже принят");
+        assert_eq!(history.current, Some(id));
+    }
+
+    #[test]
+    fn pins_have_their_own_ceiling_and_unpin_goes_to_the_top() {
+        let mut history = History::default();
+        for number in 0..PIN_CAPACITY {
+            history.record(&format!("строка {number}"));
+        }
+        let ids: Vec<u64> = history.entries.iter().map(|entry| entry.id).collect();
+        for id in &ids {
+            assert_eq!(history.pin(*id, true), Ok(true));
+        }
+        history.record("лишняя");
+        let extra = history.entries[PIN_CAPACITY].id;
+        assert_eq!(history.pin(extra, true), Err(ControlError::PinsFull));
+        assert_eq!(history.pin(999, true), Err(ControlError::Missing));
+
+        assert_eq!(history.pin(ids[0], false), Ok(true));
+        assert_eq!(history.entries[PIN_CAPACITY - 1].id, ids[0], "открепленная — первой в истории");
+        assert!(!history.entries[PIN_CAPACITY - 1].pinned);
+    }
+
+    fn picture(hash: u8) -> Picture {
+        Picture { id: 0, png: std::sync::Arc::new(vec![hash]), hash: [hash; 32], width: 2, height: 1, thumb: String::new() }
+    }
+
+    #[test]
+    fn images_repeat_upwards_and_fall_out_after_ten() {
+        let mut history = History::default();
+        for hash in 0..=IMAGE_CAPACITY as u8 {
+            assert!(history.record_image(picture(hash)));
+        }
+        assert_eq!(history.images.len(), IMAGE_CAPACITY);
+        let oldest = history.images.back().expect("есть").id;
+        assert!(history.record_image(picture(1)));
+        assert_eq!(history.images[0].hash, [1; 32]);
+        assert_eq!(history.current, Some(history.images[0].id));
+        assert_ne!(history.images.back().expect("есть").id, oldest, "повтор переехал, а не лёг второй");
+
+        assert!(history.clear_images());
+        assert!(history.images.is_empty());
+        assert_eq!(history.current, None);
     }
 
     /// Команды приходят с фронта размеченными по `kind`.
@@ -785,7 +1172,7 @@ mod tests {
         assert!(matches!(remove, Action::Remove { id: 3 }));
 
         let clear: Action = serde_json::from_str(r#"{"kind":"clear"}"#).expect("разбирается");
-        assert!(matches!(clear, Action::Clear));
+        assert!(matches!(clear, Action::Clear { what: Clearing::Text }));
     }
 
     #[test]

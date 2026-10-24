@@ -187,6 +187,8 @@ pub struct SettingsView {
     /// Накопители, скрытые в карточке. Снимок настроек слушают и окна
     /// виджетов, так что карточка узнаёт о снятой галочке тем же событием.
     pub hidden_disks: Vec<String>,
+    /// Устройства, снятые с карточки заряда; едут тем же снимком.
+    pub hidden_batteries: Vec<String>,
     /// Снятые ряды карточек процессора и видеокарты, по виджету (этап 58).
     /// Едут тем же снимком, что и диски: карточка слушает его сама.
     pub hidden_metrics: std::collections::BTreeMap<String, Vec<String>>,
@@ -283,6 +285,7 @@ fn view(app: &AppHandle) -> SettingsView {
             .collect(),
         system_language: crate::i18n::system(),
         hidden_disks: settings.hidden_disks.clone(),
+        hidden_batteries: settings.hidden_batteries.clone(),
         hidden_metrics: settings.hidden_metrics.clone(),
         sensor_picks: settings.sensor_picks.clone(),
         version: app.package_info().version.to_string(),
@@ -837,6 +840,22 @@ pub fn set_disk_hidden(app: AppHandle, name: String, hidden: bool) {
         settings.hidden_disks.retain(|kept| *kept != name);
         if hidden && !name.is_empty() {
             settings.hidden_disks.push(name);
+        }
+    });
+
+    emit(&app);
+}
+
+/// Снять устройство с карточки заряда или вернуть его. Устроено как диски.
+#[tauri::command]
+pub fn set_battery_hidden(app: AppHandle, id: String, hidden: bool) {
+    let state = app.state::<SettingsState>();
+
+    settings::update(&app, &state, |settings| {
+        let id = id.trim().to_owned();
+        settings.hidden_batteries.retain(|kept| *kept != id);
+        if hidden && !id.is_empty() {
+            settings.hidden_batteries.push(id);
         }
     });
 

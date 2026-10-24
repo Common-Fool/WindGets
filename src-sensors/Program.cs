@@ -92,6 +92,10 @@ namespace HwSensors
             }
 
             var visitor = new UpdateVisitor();
+            // Снимок весит десятки килобайт: свежий буфер на каждом такте ложился
+            // бы в кучу больших объектов, которую .NET Framework не уплотняет
+            var json = new StringBuilder(64 * 1024);
+            var chunk = new char[4096];
             var once = Array.IndexOf(args, "--once") >= 0;
 
             try
@@ -107,7 +111,15 @@ namespace HwSensors
                     }
 
                     computer.Accept(visitor);
-                    output.Write(Snapshot(computer));
+                    Snapshot(json, computer, visitor.Stale);
+                    // Кусками через один массив: `ToString` выделял бы ту же
+                    // большую строку заново, а `Write(StringBuilder)` в net472 нет
+                    for (var at = 0; at < json.Length; at += chunk.Length)
+                    {
+                        var count = Math.Min(chunk.Length, json.Length - at);
+                        json.CopyTo(at, chunk, 0, count);
+                        output.Write(chunk, 0, count);
+                    }
                     output.Write('\n');
                     output.Flush();
                 } while (!once);
@@ -124,9 +136,9 @@ namespace HwSensors
         /// Собирает дерево снимка: корень «Sensor», под ним имя машины, под ним
         /// железо. Первый сегмент пути — имя машины, ровно как у веб-сервера.
         /// </summary>
-        private static string Snapshot(Computer computer)
+        private static void Snapshot(StringBuilder json, Computer computer, HashSet<IHardware> stale)
         {
-            var json = new StringBuilder(64 * 1024);
+            json.Clear();
             var id = 0;
 
             json.Append("{\"id\":").Append(id++).Append(",\"Text\":\"Sensor\",\"Children\":[");
@@ -139,11 +151,10 @@ namespace HwSensors
             {
                 if (!first) json.Append(',');
                 first = false;
-                Hardware(json, hardware, ref id);
+                Hardware(json, hardware, ref id, stale);
             }
 
             json.Append("]}]}");
-            return json.ToString();
         }
 
         /// <summary>
@@ -157,7 +168,7 @@ namespace HwSensors
         /// разбор `SensorId`; идентификатор нужен ради встройки Intel, у
         /// которой вид тот же, что у дискретной.
         /// </summary>
-        private static void Hardware(StringBuilder json, IHardware hardware, ref int id)
+        private static void Hardware(StringBuilder json, IHardware hardware, ref int id, HashSet<IHardware> stale)
         {
             json.Append("{\"id\":").Append(id++).Append(",\"Text\":");
             Quote(json, hardware.Name);
@@ -168,6 +179,7 @@ namespace HwSensors
             json.Append(",\"Children\":[");
 
             var first = true;
+            var frozen = stale.Contains(hardware);
 
             // Подчинённое железо идёт раньше групп датчиков: у памяти так
             // получается сегмент «Total Memory», на который смотрят селекторы
@@ -175,7 +187,7 @@ namespace HwSensors
             {
                 if (!first) json.Append(',');
                 first = false;
-                Hardware(json, sub, ref id);
+                Hardware(json, sub, ref id, stale);
             }
 
             foreach (var group in Groups(hardware))
@@ -192,7 +204,7 @@ namespace HwSensors
                 {
                     if (!firstSensor) json.Append(',');
                     firstSensor = false;
-                    Sensor(json, sensor, ref id);
+                    Sensor(json, sensor, ref id, frozen);
                 }
 
                 json.Append("]}");
@@ -212,7 +224,7 @@ namespace HwSensors
         /// Совместимость формата от этого не страдает: лишние поля разбор
         /// пропускает, недостающие — тоже, пока их никто не спрашивает.
         /// </summary>
-        private static void Sensor(StringBuilder json, ISensor sensor, ref int id)
+        private static void Sensor(StringBuilder json, ISensor sensor, ref int id, bool frozen)
         {
             var unit = Units.Of(sensor);
 
@@ -224,9 +236,11 @@ namespace HwSensors
             Quote(json, sensor.SensorType.ToString());
 
             // Пропуск значения — прочерк, ровно как у веб-сервера. Единица при
-            // этом остаётся в RawValue, и по ней виджет знает, что показывать
+            // этом остаётся в RawValue, и по ней виджет знает, что показывать.
+            // У железа, не обновившегося на этом такте, значения прошлые, — тоже
+            // прочерк: иначе карточка выдавала бы замёрзшее число за живое
             json.Append(",\"Value\":");
-            Quote(json, sensor.Value.HasValue ? Units.Format(sensor, sensor.Value.Value) : "-");
+            Quote(json, !frozen && sensor.Value.HasValue ? Units.Format(sensor, sensor.Value.Value) : "-");
             json.Append(",\"RawValue\":");
             Quote(json, " " + unit);
             json.Append('}');
@@ -299,14 +313,37 @@ namespace HwSensors
     /// <summary>
     /// Обход дерева железа с обновлением показаний. Подчинённое железо обновляем
     /// тоже: у памяти и платы датчики живут именно там.
+    ///
+    /// Сбой одного устройства — не сбой опроса: исключение из `Update` иначе
+    /// роняло бы сайдкар, и упрямо сбоящий диск гонял бы его по кругу
+    /// «упал — подняли». Датчики устройства на таком такте уходят прочерками
+    /// (<see cref="Stale"/>), в журнал сбой попадает один раз за запуск.
     /// </summary>
     internal sealed class UpdateVisitor : IVisitor
     {
-        public void VisitComputer(IComputer computer) => computer.Traverse(this);
+        private readonly HashSet<string> failed = new HashSet<string>();
+
+        /// <summary>Железо, чей `Update` упал на нынешнем такте.</summary>
+        public readonly HashSet<IHardware> Stale = new HashSet<IHardware>();
+
+        public void VisitComputer(IComputer computer)
+        {
+            Stale.Clear();
+            computer.Traverse(this);
+        }
 
         public void VisitHardware(IHardware hardware)
         {
-            hardware.Update();
+            try
+            {
+                hardware.Update();
+            }
+            catch (Exception error)
+            {
+                Stale.Add(hardware);
+                if (failed.Add(hardware.Identifier.ToString()))
+                    Console.Error.WriteLine("не обновилось железо " + hardware.Name + ": " + error.Message);
+            }
             foreach (var sub in hardware.SubHardware) sub.Accept(this);
         }
 

@@ -28,6 +28,9 @@ pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
 const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
 
+#[cfg(windows)]
+const NORMAL_PRIORITY_CLASS: u32 = 0x0000_0020;
+
 /// Строка вывода и поток, откуда она пришла.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -64,7 +67,18 @@ pub struct Spawned {
 ///
 /// Потоки ввода-вывода, окно и приоритет выставляются здесь, а не у зовущего:
 /// так ни один запуск не забудет ни `CREATE_NO_WINDOW`, ни задания.
-pub fn spawn(mut command: Command) -> Result<Spawned, String> {
+pub fn spawn(command: Command) -> Result<Spawned, String> {
+    launch(command, true)
+}
+
+/// То же, но с обычным приоритетом — для того, кто не считает, а слушает.
+/// PresentMon под игрой, съевшей все ядра, на пониженном приоритете не
+/// успевал бы разбирать буферы ETW и терял бы кадры.
+pub fn spawn_listener(command: Command) -> Result<Spawned, String> {
+    launch(command, false)
+}
+
+fn launch(mut command: Command, below_normal: bool) -> Result<Spawned, String> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -73,7 +87,11 @@ pub fn spawn(mut command: Command) -> Result<Spawned, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | job::CREATE_SUSPENDED);
+        // Обычный класс — явным флагом: без флага ребёнок пониженного родителя
+        // наследует его класс, а задача планировщика (автозапуск) поднимает
+        // само приложение с пониженным
+        let priority = if below_normal { BELOW_NORMAL_PRIORITY_CLASS } else { NORMAL_PRIORITY_CLASS };
+        command.creation_flags(CREATE_NO_WINDOW | priority | job::CREATE_SUSPENDED);
     }
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;

@@ -29,18 +29,18 @@ const PAUSE: Duration = Duration::from_millis(40);
 /// Номер очередного временного соседа в этом процессе.
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// Пишет текст так, чтобы прежний файл либо уцелел целиком, либо сменился
-/// целиком.
+/// Пишет текст или байты так, чтобы прежний файл либо уцелел целиком, либо
+/// сменился целиком.
 ///
 /// ВАЖНО: **временный сосед у каждой записи свой.** Прежде он был один на файл
 /// (`settings.tmp`), и два писателя разом обрезали и переименовывали один и тот
 /// же файл: на диск ложилась смесь двух текстов, то есть неразборчивый JSON.
 /// Своё имя убирает только эту беду — порядок снимков вызывающий держит сам
 /// (у настроек это очередь `SAVING`, у почты и Спотифая — замок хранилища).
-pub fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
+pub fn write_atomically(path: &Path, data: impl AsRef<[u8]>) -> io::Result<()> {
     let temporary = temporary_for(path);
 
-    let outcome = fill(&temporary, text).and_then(|()| replace(&temporary, path));
+    let outcome = fill(&temporary, data.as_ref()).and_then(|()| replace(&temporary, path));
 
     if outcome.is_err() {
         // Не вышло — соседа за собой убираем: он неполный, и путать его с
@@ -127,9 +127,9 @@ fn replace(temporary: &Path, path: &Path) -> io::Result<()> {
 }
 
 /// Создаёт временного соседа и доводит его содержимое до диска.
-fn fill(temporary: &Path, text: &str) -> io::Result<()> {
+fn fill(temporary: &Path, data: &[u8]) -> io::Result<()> {
     let mut file = File::create(temporary)?;
-    file.write_all(text.as_bytes())?;
+    file.write_all(data)?;
     // Без этого переименование может лечь на диск раньше самих данных
     file.sync_all()
 }

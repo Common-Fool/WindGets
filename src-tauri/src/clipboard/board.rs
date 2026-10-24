@@ -1,7 +1,7 @@
 //! Сам буфер обмена Windows: прочитать, записать, очистить.
 //!
-//! Здесь и только здесь живут вызовы Win32, наружу уходят `Option<String>` и
-//! `Result<(), String>`. COM тут ни при чём — буфер это user32, — но правило
+//! Здесь и только здесь живут вызовы Win32 самого буфера, наружу уходят
+//! [`Content`] и `Result<(), String>`. Разбор картинок — в `image.rs`. COM тут ни при чём — буфер это user32, — но правило
 //! то же, что у звука: главный поток занят WebView2, и ходить сюда из потока
 //! команды нельзя. Чужое приложение держит буфер открытым сколько ему угодно.
 
@@ -24,6 +24,33 @@ use windows::Win32::System::Memory::{
 /// В крейте `windows` оно лежит в `Win32_System_Ole` — мегабайте
 /// сгенерированного кода, который весь целиком собирался бы ради этой строки.
 const CF_UNICODETEXT: u32 = 13;
+
+/// Картинка без заголовка файла: BITMAPINFO и точки. Числа оттуда же, из
+/// winuser.h, и по той же причине объявлены руками.
+const CF_DIB: u32 = 8;
+const CF_DIBV5: u32 = 17;
+
+/// Потолок блока картинки: 50 мегапикселей по четыре байта и заголовок.
+/// Чужой блок больше этого не копируем вовсе — точнее размер проверит WIC.
+const MAX_IMAGE_BYTES: usize = 50_000_000 * 4 + 4096;
+
+/// Что лежит в буфере.
+pub enum Content {
+    Text(String),
+    Image(Raw),
+    /// Ничего, что мы пишем: файлы, пустой буфер, пометка «не для истории»,
+    /// слишком длинный текст или слишком большая картинка.
+    Nothing,
+}
+
+/// Картинка как она лежала в буфере.
+pub enum Raw {
+    /// Зарегистрированный формат `PNG`: его кладут браузеры, «Ножницы» и
+    /// почти все снимки экрана — с прозрачностью, без потерь.
+    Png(Vec<u8>),
+    /// CF_DIBV5 или CF_DIB: BITMAPINFO и точки, без заголовка файла.
+    Dib(Vec<u8>),
+}
 
 /// Сколько раз пробуем открыть буфер.
 ///
@@ -68,25 +95,58 @@ pub fn sequence() -> u32 {
     unsafe { GetClipboardSequenceNumber() }
 }
 
-/// Текст из буфера.
+/// Содержимое буфера.
 ///
-/// `Ok(None)` — текста там нет вовсе (картинка, файлы, пустой буфер) или его
-/// запретили запоминать. `Err` — буфер держит чужое приложение: это не «текста
-/// нет», и прочесть его надо ещё раз, а не пропустить.
-pub fn read() -> Result<Option<String>, String> {
+/// `Err` — буфер держит чужое приложение: это не «ничего нет», и прочесть его
+/// надо ещё раз, а не пропустить.
+///
+/// ВАЖНО: **есть текст — пишется только текст.** Excel, Word и браузер кладут
+/// рядом с текстом картинку того же куска, и запоминать её второй записью —
+/// шум.
+pub fn read() -> Result<Content, String> {
     let _open = Open::new(None)?;
-    Ok(read_open())
-}
-
-/// Чтение из уже открытого буфера.
-fn read_open() -> Option<String> {
 
     if excluded() {
+        return Ok(Content::Nothing);
+    }
+    if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) }.is_ok() {
+        return Ok(read_text().map_or(Content::Nothing, Content::Text));
+    }
+    if let Some(png) = format_id(w!("PNG")).and_then(read_block) {
+        return Ok(Content::Image(Raw::Png(png)));
+    }
+    // V5 первым: у него есть прозрачность, а CF_DIB система выводит из него
+    // сама и альфу при этом теряет
+    for format in [CF_DIBV5, CF_DIB] {
+        if let Some(dib) = read_block(format) {
+            return Ok(Content::Image(Raw::Dib(dib)));
+        }
+    }
+    Ok(Content::Nothing)
+}
+
+/// Блок формата целиком, если он не больше потолка картинки.
+fn read_block(format: u32) -> Option<Vec<u8>> {
+    if unsafe { IsClipboardFormatAvailable(format) }.is_err() {
         return None;
     }
-    if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) }.is_err() {
+    let handle = unsafe { GetClipboardData(format) }.ok()?;
+    let memory = HGLOBAL(handle.0);
+    let size = unsafe { GlobalSize(memory) };
+    if size == 0 || size > MAX_IMAGE_BYTES {
         return None;
     }
+    let pointer = unsafe { GlobalLock(memory) }.cast::<u8>();
+    if pointer.is_null() {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(pointer, size) }.to_vec();
+    let _ = unsafe { GlobalUnlock(memory) };
+    Some(bytes)
+}
+
+/// Текст из уже открытого буфера.
+fn read_text() -> Option<String> {
 
     let handle = unsafe { GetClipboardData(CF_UNICODETEXT) }.ok()?;
     let memory = HGLOBAL(handle.0);
@@ -119,6 +179,18 @@ pub fn write(text: &str, owner: Option<HWND>) -> Result<(), String> {
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
 
     set_data(CF_UNICODETEXT, &wide)
+}
+
+/// Кладёт картинку: CF_DIB для всех и PNG для тех, кто умеет прозрачность.
+/// Остальные виды (CF_BITMAP, CF_DIBV5) система выводит из CF_DIB сама.
+pub fn write_image(png: &[u8], dib: &[u8], owner: Option<HWND>) -> Result<(), String> {
+    let format = format_id(w!("PNG")).ok_or_else(|| "не зарегистрировать формат PNG".to_owned())?;
+    let _open = Open::new(owner)?;
+
+    unsafe { EmptyClipboard() }.map_err(|error| format!("буфер не очистился: {error}"))?;
+
+    set_data(CF_DIB, dib)?;
+    set_data(format, png)
 }
 
 /// Кладёт секрет с запретом истории, облачного буфера и обработки мониторами.
@@ -248,16 +320,23 @@ mod tests {
 
         write(sample, None).expect("буфер принял текст");
 
-        assert_eq!(read().expect("буфер открылся").as_deref(), Some(sample));
+        assert_eq!(read_text_now().as_deref(), Some(sample));
         assert_ne!(sequence(), before, "номер последовательности обязан меняться");
 
         // Пустая строка — это тоже строка: буфер обязан принять её и вернуть.
         // В историю она не попадёт, но это решает `mod.rs`, а не здесь.
         write("", None).expect("буфер принял пустую строку");
-        assert_eq!(read().expect("буфер открылся").as_deref(), Some(""));
+        assert_eq!(read_text_now().as_deref(), Some(""));
 
         // А после очистки текста нет вовсе
         empty(None).expect("буфер очистился");
-        assert_eq!(read(), Ok(None));
+        assert!(matches!(read(), Ok(Content::Nothing)));
+    }
+
+    fn read_text_now() -> Option<String> {
+        match read().expect("буфер открылся") {
+            Content::Text(text) => Some(text),
+            _ => None,
+        }
     }
 }

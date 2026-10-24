@@ -87,7 +87,7 @@ const MEDIA: MediaView = {
 
 const MEDIA_ART: Awaited<ReturnType<typeof artOf>> = null;
 
-function clipboardEntry(id: number, value: string, current = false): Entry {
+function clipboardEntry(id: number, value: string, current = false, pinned = false): Entry {
   return {
     id,
     preview: value.replace(/\s+/g, " ").trim(),
@@ -95,20 +95,46 @@ function clipboardEntry(id: number, value: string, current = false): Entry {
     lines: value.split("\n").length,
     chars: value.length,
     current,
+    pinned,
   };
 }
 
 const CLIPBOARD: ClipboardState = {
   entries: [
-    clipboardEntry(6, "https://example.com/guide", true),
-    clipboardEntry(5, "Small steps make room for good ideas."),
+    clipboardEntry(6, "https://example.com/guide", true, true),
+    clipboardEntry(5, "Small steps make room for good ideas.", false, true),
     clipboardEntry(4, "const total = items.reduce((sum, item) => sum + item.price, 0);"),
     clipboardEntry(3, "Preview checklist\nCheck spacing\nReview contrast\nSave the draft"),
     clipboardEntry(2, "npm run build"),
     clipboardEntry(1, "A quiet afternoon, a fresh page, and a little focus."),
   ],
   capacity: 20,
+  images: [
+    { id: 104, width: 1920, height: 1080, current: false },
+    { id: 103, width: 800, height: 1200, current: false },
+    { id: 102, width: 640, height: 640, current: false },
+    { id: 101, width: 1200, height: 800, current: false },
+  ],
+  imageCapacity: 10,
 };
+
+/** Нейтральные геометрические миниатюры без текста и внешних ресурсов. */
+function clipboardThumbnail(id: number): string | null {
+  const image = CLIPBOARD.images.find((entry) => entry.id === id);
+  if (!image) return null;
+  const width = image.width >= image.height ? 160 : Math.round(160 * image.width / image.height);
+  const height = image.height >= image.width ? 160 : Math.round(160 * image.height / image.width);
+  const shapes = [
+    '<circle cx="45" cy="42" r="25" fill="#a5adb5"/><path d="M55 85L110 20L155 85Z" fill="#737f89"/>',
+    '<rect x="18" y="24" width="72" height="88" rx="12" fill="#7e8c97"/><circle cx="62" cy="118" r="24" fill="#b0b8bf"/>',
+    '<path d="M80 18L142 80L80 142L18 80Z" fill="#8d99a3"/><circle cx="80" cy="80" r="25" fill="#c0c7cc"/>',
+    '<rect x="12" y="18" width="88" height="60" rx="10" fill="#9ca7af"/><path d="M78 28H150V92H78Z" fill="#697985"/>',
+  ];
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height +
+    '" viewBox="0 0 160 160"><rect width="160" height="160" fill="#30373d"/>' +
+    shapes[id - 101] + '</svg>';
+  return "data:image/svg+xml," + encodeURIComponent(svg);
+}
 
 export const system: Answers = {
   processes_state: () => PROCESSES,
@@ -118,4 +144,5 @@ export const system: Answers = {
   media_state: () => MEDIA,
   media_art: () => MEDIA_ART,
   clipboard_state: () => CLIPBOARD,
+  clipboard_thumb: ({ id }) => clipboardThumbnail(Number(id)),
 };

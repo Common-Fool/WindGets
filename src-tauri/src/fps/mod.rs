@@ -239,7 +239,7 @@ fn start(exe: &Path) -> Result<Spawned, String> {
     for name in IGNORED {
         command.args(["--exclude", name]);
     }
-    child::spawn(command)
+    child::spawn_listener(command)
 }
 
 /// Гасит PresentMon и снимает его сеанс ETW.
@@ -250,6 +250,21 @@ fn start(exe: &Path) -> Result<Spawned, String> {
 fn stop(running: Spawned) {
     drop(running);
     RUNNING.store(false, Ordering::Relaxed);
+    close_session();
+}
+
+/// Снимает сеанс на выходе и перезапуске, если PresentMon работает.
+///
+/// PresentMon на выходе убивает объект задания, а убитый сеанс не снимает:
+/// без этого сеанс собирал бы события в ядре до следующего показа счётчика
+/// или до перезагрузки.
+pub fn shutdown() {
+    if RUNNING.swap(false, Ordering::Relaxed) {
+        close_session();
+    }
+}
+
+fn close_session() {
     #[cfg(windows)]
     {
         let mut command = Command::new(crate::autostart::system_exe("System32\\logman.exe"));

@@ -431,6 +431,16 @@ export function FramesIcon() {
   );
 }
 
+/** Заряд: батарейка с полосой уровня. */
+export function BatteryIcon() {
+  return (
+    <Glyph>
+      <rect x="2" y="7" width="17" height="10" rx="2" />
+      <path d="M22 11v2M6 10.5v3m3.5-3v3" />
+    </Glyph>
+  );
+}
+
 /** Звук: динамик с волной. */
 export function SoundIcon() {
   return (

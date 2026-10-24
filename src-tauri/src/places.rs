@@ -145,7 +145,7 @@ impl Session {
         // сохраняет нехватку, чтобы следующий запуск вернул хорошую копию.
         let written = self.monitor_limit.map_or(now, |limit| now.min(limit));
         if read_written(dir) != Some(written) {
-            if let Err(error) = crate::disk::write_atomically(&dir.join(WRITTEN), &written.to_string()) {
+            if let Err(error) = crate::disk::write_atomically(&dir.join(WRITTEN), written.to_string()) {
                 eprintln!("число мониторов при записи мест не записалось: {error}");
             }
         }

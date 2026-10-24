@@ -1,4 +1,5 @@
-//! Окно выбора файлов или папки — системное `IFileOpenDialog`.
+//! Окно выбора файлов или папки — системное `IFileOpenDialog`, и окно
+//! сохранения — `IFileSaveDialog`.
 //!
 //! Плагина диалогов у приложения нет, и заводить его ради двух кнопок незачем:
 //! окно Windows достаётся тем же крейтом `windows`, что и остальное.
@@ -17,17 +18,40 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Что выбирают.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pick {
     /// Несколько существующих файлов.
     Files,
     /// Одна папка.
     Folder,
+    /// Один существующий файл своего вида.
+    File { filter: Filter },
+    /// Куда сохранить: имя предложено, расширение дописывается само, занятое
+    /// имя окно переспросит.
+    Save { name: String, filter: Filter },
+}
+
+/// Вид файла в окне: подпись, маска и расширение по умолчанию.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Filter {
+    pub label: &'static str,
+    pub pattern: &'static str,
+    pub extension: &'static str,
+}
+
+impl Filter {
+    pub const PNG: Filter = Filter { label: "PNG", pattern: "*.png", extension: "png" };
+    pub const JSON: Filter = Filter { label: "JSON", pattern: "*.json", extension: "json" };
 }
 
 /// Окно выбора уже открыто. Второе поверх первого только путало бы: оба
 /// модальны к разным владельцам, и какой ответ куда — не угадать.
 static PICKING: AtomicBool = AtomicBool::new(false);
+
+/// Есть ли уже окно выбора: ожидающий ответ может сразу вернуть «занято».
+pub fn busy() -> bool {
+    PICKING.load(Ordering::SeqCst)
+}
 
 /// Открывает окно выбора и отдаёт выбранное в `done` — из своего потока.
 ///
@@ -72,6 +96,14 @@ fn show(owner: isize, what: Pick, start: Option<PathBuf>) -> windows::core::Resu
         // Окно выбора — клиент оболочки, а ей нужна однопоточная квартира
         CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).ok()?;
         let result = (|| {
+            if let Pick::Save { name, filter } = &what {
+                let dialog: windows::Win32::UI::Shell::IFileSaveDialog = CoCreateInstance(
+                    &windows::Win32::UI::Shell::FileSaveDialog,
+                    None,
+                    CLSCTX_INPROC_SERVER,
+                )?;
+                return save(&dialog, owner, name, *filter, start);
+            }
             let dialog: windows::Win32::UI::Shell::IFileOpenDialog = CoCreateInstance(
                 &windows::Win32::UI::Shell::FileOpenDialog,
                 None,
@@ -104,8 +136,14 @@ unsafe fn ask(
     options |= match what {
         Pick::Files => FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST,
         Pick::Folder => FOS_PICKFOLDERS,
+        Pick::File { .. } => FOS_FILEMUSTEXIST,
+        Pick::Save { .. } => unreachable!("сохранение идёт своим окном"),
     };
     dialog.SetOptions(options)?;
+    if let Pick::File { filter } = what {
+        let (label, pattern) = (wide(filter.label), wide(filter.pattern));
+        dialog.SetFileTypes(&[filter_spec(&label, &pattern)])?;
+    }
 
     // Начальная папка — удобство, а не условие: её могли удалить
     if let Some(start) = start.filter(|dir| dir.is_dir()) {
@@ -135,7 +173,7 @@ unsafe fn ask(
 
     let mut chosen = Vec::new();
     match what {
-        Pick::Folder => {
+        Pick::Folder | Pick::File { .. } => {
             if let Some(path) = path_of(&dialog.GetResult()?)? {
                 chosen.push(path);
             }
@@ -148,6 +186,71 @@ unsafe fn ask(
                 }
             }
         }
+        Pick::Save { .. } => {}
     }
     Ok(chosen)
+}
+
+/// Окно сохранения: одно имя или ничего.
+#[cfg(windows)]
+unsafe fn save(
+    dialog: &windows::Win32::UI::Shell::IFileSaveDialog,
+    owner: isize,
+    name: &str,
+    filter: Filter,
+    start: Option<PathBuf>,
+) -> windows::core::Result<Vec<PathBuf>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{HRESULT, PCWSTR};
+    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
+    use windows::Win32::System::Com::{CoTaskMemFree, IBindCtx};
+    use windows::Win32::UI::Shell::{
+        IShellItem, SHCreateItemFromParsingName, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT,
+        FOS_PATHMUSTEXIST, SIGDN_FILESYSPATH,
+    };
+
+    let options = dialog.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_OVERWRITEPROMPT;
+    dialog.SetOptions(options)?;
+    let (label, pattern, extension, name) = (wide(filter.label), wide(filter.pattern), wide(filter.extension), wide(name));
+    dialog.SetFileTypes(&[filter_spec(&label, &pattern)])?;
+    dialog.SetDefaultExtension(PCWSTR(extension.as_ptr()))?;
+    dialog.SetFileName(PCWSTR(name.as_ptr()))?;
+
+    if let Some(start) = start.filter(|dir| dir.is_dir()) {
+        let wide: Vec<u16> = start.as_os_str().encode_wide().chain([0]).collect();
+        if let Ok(item) =
+            SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(wide.as_ptr()), None::<&IBindCtx>)
+        {
+            let _ = dialog.SetFolder(&item);
+        }
+    }
+
+    let owner = (owner != 0).then_some(HWND(owner as *mut std::ffi::c_void));
+    if let Err(error) = dialog.Show(owner) {
+        if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+            return Ok(Vec::new());
+        }
+        return Err(error);
+    }
+
+    let item = dialog.GetResult()?;
+    let name = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+    let path = name.to_string().ok().map(PathBuf::from);
+    CoTaskMemFree(Some(name.0 as *const std::ffi::c_void));
+    Ok(path.into_iter().collect())
+}
+
+#[cfg(windows)]
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain([0]).collect()
+}
+
+/// Строки обязаны жить, пока окно открыто: структура держит только указатели.
+#[cfg(windows)]
+fn filter_spec(label: &[u16], pattern: &[u16]) -> windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+    use windows::core::PCWSTR;
+    windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+        pszName: PCWSTR(label.as_ptr()),
+        pszSpec: PCWSTR(pattern.as_ptr()),
+    }
 }

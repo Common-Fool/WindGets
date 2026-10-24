@@ -374,7 +374,7 @@ mod imp {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetCursorPos, GetWindowRect, IsWindow, IsWindowVisible, HTBOTTOM, HTBOTTOMLEFT,
+        GetCursorPos, GetWindowLongPtrW, GetWindowRect, IsWindow, IsWindowVisible, GWL_STYLE, WS_THICKFRAME, HTBOTTOM, HTBOTTOMLEFT,
         HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, WM_ENTERSIZEMOVE,
         WM_EXITSIZEMOVE, WM_MOVING, WM_NCDESTROY, WM_NCHITTEST, WM_SIZING, WINDOWPOS,
         SWP_NOMOVE, SWP_NOSIZE, WM_DPICHANGED, WM_WINDOWPOSCHANGING,
@@ -758,6 +758,13 @@ mod imp {
     /// Куда попал курсор у края окна. Курсоры Windows подставит сама: для
     /// неклиентской части tao отдаёт `WM_SETCURSOR` в `DefWindowProc`.
     unsafe fn grip_at(window: HWND, lparam: LPARAM) -> Option<u32> {
+        // Окно с готовыми размерами или запертое не тянется (стиль без
+        // `WS_THICKFRAME`): грань ему отвечала бы стрелками растягивания и
+        // съедала бы нажатия у края, ничего не растягивая
+        if GetWindowLongPtrW(window, GWL_STYLE) as u32 & WS_THICKFRAME.0 == 0 {
+            return None;
+        }
+
         let mut rect = RECT::default();
         GetWindowRect(window, &mut rect).ok()?;
 

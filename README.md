@@ -25,6 +25,8 @@ no background work.
   hardware they run on and hide what your machine does not have.
 - **Network** — download and upload speed plus ping to three targets.
 - **Processes** — top processes by CPU or memory.
+- **Battery** — charge of mice, keyboards, headsets and gamepads: Bluetooth via
+  Windows, Logitech devices via HID++, headsets via HeadsetControl.
 - **Frame counter** — FPS, 1% low and frame time of the game in front, via
   Intel PresentMon (reads ETW, injects nothing into the game).
 - **Speedtest** — on demand, via Measurement Lab (NDT7).
@@ -34,7 +36,8 @@ no background work.
 - **Media** — whatever Windows is playing right now.
 - **Mail** — IMAP inbox, up to five mailboxes.
 - **2FA codes** — TOTP, secrets encrypted with Windows DPAPI.
-- **Notes**, **To-do**, **Clipboard history**, **Password generator**.
+- **Notes**, **To-do**, **Password generator**.
+- **Clipboard history** — text and images, with pinned entries; memory only.
 - **Converter** — files to MP4, GIF, MP3, PNG or JPG via ffmpeg.
 - **Downloader** — video or audio by link via yt-dlp.
 
@@ -80,6 +83,7 @@ The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
   </tr>
   <tr>
     <td align="center"><img src="assets/screenshots/fps.webp" alt="Frame counter" width="260"><br>Frame counter</td>
+    <td align="center"><img src="assets/screenshots/battery.webp" alt="Battery" width="260"><br>Battery</td>
   </tr>
 </table>
 
@@ -94,8 +98,9 @@ The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
 - **PawnIO driver** for CPU and motherboard sensors. It is not bundled: the CPU
   card offers to install it from its official GitHub release, with SHA-256
   verification, only after you agree.
-- ffmpeg, yt-dlp, QuickJS and PresentMon are not bundled either. The
-  converter, the downloader and the frame counter fetch them from the authors' official GitHub releases when you
+- ffmpeg, yt-dlp, QuickJS, PresentMon and HeadsetControl are not bundled
+  either. The converter, the downloader, the frame counter and the battery
+  widget fetch them from the authors' official GitHub releases when you
   ask, verify SHA-256 and can remove them with one button. An ffmpeg already
   on `PATH` is used as is.
 

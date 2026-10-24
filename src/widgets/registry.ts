@@ -34,6 +34,10 @@ export const WIDGETS: Record<string, WidgetDefinition> = {
     id: "cpu",
     component: lazy(() => import("./hardware/HardwareWidget").then((module) => ({ default: module.CpuWidget }))),
   },
+  battery: {
+    id: "battery",
+    component: lazy(() => import("./battery/BatteryWidget").then((module) => ({ default: module.BatteryWidget }))),
+  },
   processes: {
     id: "processes",
     component: lazy(() => import("./processes/ProcessesWidget").then((module) => ({ default: module.ProcessesWidget }))),

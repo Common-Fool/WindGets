@@ -54,7 +54,9 @@ export function Arc({ value, span = 360, size, thickness = 8, children }: Props)
   const clamped = value === null ? null : Math.min(Math.max(value, 0), 1);
   // pathLength делает длину дуги равной ста единицам независимо от геометрии,
   // так что доля заполнения ложится в strokeDasharray напрямую
-  const dash = clamped === null ? undefined : `${(clamped * 100).toFixed(2)} 100`;
+  // Шаг — полпроцента: дрожь загрузки в сотых долях иначе каждый такт будила бы
+  // переход штриха, а с ним и тень дуги у тем референса, во всех кольцах разом
+  const dash = clamped === null ? undefined : `${Math.round(clamped * 200) / 2} 100`;
 
   const closed = span >= 360;
   // У замкнутого кольца отсчёт штриха начинается справа — доворачиваем к верху

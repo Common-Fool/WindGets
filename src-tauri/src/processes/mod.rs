@@ -309,6 +309,11 @@ fn work(app: AppHandle) {
             if shown {
                 shown = false;
                 publish(&app, View::default());
+                // Список отпускается тоже: sysinfo держит открытым каждый
+                // процесс системы, сотни дескрипторов на всё время, что окно
+                // спрятано. Заводка после показа всё равно начнётся заново
+                system = System::new_with_specifics(RefreshKind::nothing());
+                system.refresh_cpu_list(CpuRefreshKind::nothing());
             }
             std::thread::sleep(STEP);
             continue;

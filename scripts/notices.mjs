@@ -439,6 +439,7 @@ const PROGRAMS = [
   },
   { id: "quickjs", name: "QuickJS-NG", license: "MIT", url: "https://github.com/quickjs-ng/quickjs", note: "Official qjs build from https://github.com/quickjs-ng/quickjs/releases, used by yt-dlp as its JavaScript runtime." },
   { id: "presentmon", name: "PresentMon", license: "MIT", url: "https://github.com/GameTechDev/PresentMon", note: "Official console build from https://github.com/GameTechDev/PresentMon/releases, used by the frame counter to read frame events from ETW." },
+  { id: "headsetcontrol", name: "HeadsetControl", license: "GPL-3.0", url: "https://github.com/Sapd/HeadsetControl", note: "Official portable Windows build from https://github.com/Sapd/HeadsetControl/releases, run as a separate process by the battery widget to read headset battery levels. Source code: https://github.com/Sapd/HeadsetControl" },
   {
     id: "pawnio",
     name: "PawnIO",
