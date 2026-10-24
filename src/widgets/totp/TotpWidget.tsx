@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { GlassCard } from "../../components/GlassCard";
 import { copySecret } from "../../lib/copy";
-import { useWindowDrag } from "../../lib/drag";
 import { useText, type Text } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useCardClick } from "../../lib/gestures";
@@ -42,7 +41,6 @@ const LONGEST_TIMER = 2 ** 31 - 1;
 const COPIED_FOR = 2000;
 
 export function TotpWidget() {
-  useWindowDrag();
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout();

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
@@ -49,7 +48,6 @@ function asText(tasks: Task[]): string {
 }
 
 export function TodoWidget() {
-  useWindowDrag();
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout();

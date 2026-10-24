@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { copyToClipboard } from "../../lib/copy";
-import { useWindowDrag } from "../../lib/drag";
 import { duration, fileSize, transferRate } from "../../lib/format";
 import { useContentHeight, useWindowGrowth } from "../../lib/grow";
 import { useLook, useScale } from "../../lib/look";
@@ -66,7 +65,6 @@ const COPIED_MS = 1200;
  * Вид меняют пунктом меню и в настройках виджета.
  */
 export function DownloaderWidget() {
-  useWindowDrag();
   const tools = useTools();
   const view = useDownloader();
   const widgetView = useWidgetView();

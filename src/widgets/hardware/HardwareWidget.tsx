@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useTelemetry, type SourceState } from "../../lib/telemetry";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { StatusDot } from "../../components/StatusDot";
 import { GpuSection } from "./GpuSection";
@@ -14,7 +13,6 @@ import "./widget.css";
  */
 function HardwareWidget({ children }: { children: ReactNode }) {
   const state = useTelemetry();
-  useWindowDrag();
 
   return (
     <div className="widget">
@@ -49,7 +47,7 @@ function SourceBanner({ state }: { state: SourceState }) {
 
 /*
  * Каждый показатель — своё окно: их двигают и включают порознь. Тянутся они
- * за любое пустое место карточки, этим занят useWindowDrag в оболочке.
+ * за любое пустое место карточки — это `useWindowDrag` в `Shell` (`main.tsx`).
  */
 
 export function GpuWidget() {

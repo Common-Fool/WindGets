@@ -2,7 +2,6 @@ import { useRef, type ReactNode, type RefObject } from "react";
 import { useTelemetry, type Reading as Sensor } from "../../lib/telemetry";
 import { usePing, type Probe } from "../../lib/ping";
 import { activeNetwork, type Network } from "../../lib/sensors";
-import { useWindowDrag } from "../../lib/drag";
 import { formatReading, NO_VALUE } from "../../lib/format";
 import type { Accent } from "../../lib/accent";
 import { GlassCard } from "../../components/GlassCard";
@@ -280,7 +279,6 @@ export function NetworkWidget() {
   const content = useRef<HTMLDivElement>(null);
   // Claude высоту не меняет; GPT измеряет всю новую карточку, включая поля.
   useContentHeight(content, reference && probes.length > 0, [design, view, size].join("|"));
-  useWindowDrag();
 
   // Адаптер выбирается по трафику: имена локализованы, виртуальных несколько
   const network = activeNetwork(telemetry);

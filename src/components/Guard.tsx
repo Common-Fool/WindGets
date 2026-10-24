@@ -1,7 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useText } from "../lib/i18n";
-import { useWindowDrag } from "../lib/drag";
 import { Button } from "./Button";
 import { GlassCard } from "./GlassCard";
 import "./Guard.css";
@@ -40,7 +39,6 @@ export class Guard extends Component<Props, State> {
 /** Карточка отказа: окно по-прежнему тянется и открывает меню виджета. */
 function Crashed() {
   const t = useText();
-  useWindowDrag();
 
   return (
     <div className="widget">
@@ -64,7 +62,6 @@ function Crashed() {
  * строки в коде проект не держит, поэтому остаётся одна кнопка-значок повтора.
  */
 export function TextFailed() {
-  useWindowDrag();
 
   return (
     <div className="widget">

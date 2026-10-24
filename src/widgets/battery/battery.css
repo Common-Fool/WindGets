@@ -67,3 +67,56 @@
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
+
+/*
+ * Столбик значков: кольцо заряда вокруг значка устройства, под ним — имя
+ * у вида с подписью. Кольцо размером с компактный контрол плюс поле: окно в
+ * столбик шириной 64 при 100 %, с подписью — 72 (`widgets.rs`).
+ */
+.card:has(.battery[data-view="icons"]) .card__body,
+.card:has(.battery[data-view="labeled"]) .card__body {
+  padding: var(--space-3);
+}
+
+.battery[data-view="icons"],
+.battery[data-view="labeled"] {
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.battery__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  --accent: var(--status-ok);
+  --arc-size: calc(var(--control-icon-size) + var(--space-5));
+}
+
+.battery__tile[data-step="low"] { --accent: var(--status-warn); }
+.battery__tile[data-step="critical"] { --accent: var(--status-danger); }
+
+.battery__tile .arc__center { padding: 0; }
+.battery__tile .battery__icon { color: var(--text-primary); }
+.battery__tile { max-width: 100%; }
+
+/*
+ * Имя под кольцом одной строкой: влезающее стоит по центру, длинное видно
+ * началом и пробегает целиком, пока мышь над значком (`Marquee`, `active`)
+ */
+.battery__label {
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--text-3xs);
+  line-height: var(--leading-tight);
+  text-align: center;
+}
+
+/* Прочерк пустого столбика не переносится и не выпирает из узкого окна */
+.battery[data-view="icons"] .battery__empty,
+.battery[data-view="labeled"] .battery__empty {
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

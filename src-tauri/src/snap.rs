@@ -483,7 +483,7 @@ mod imp {
             }
         }
 
-        TRACKED.lock().unwrap().push((handle.0 as isize, id.to_owned()));
+        TRACKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push((handle.0 as isize, id.to_owned()));
     }
 
     /// # Safety
@@ -501,7 +501,7 @@ mod imp {
     ) -> LRESULT {
         match message {
             WM_ENTERSIZEMOVE => {
-                *MOVED.lock().unwrap() = None;
+                *MOVED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
                 remember_neighbours(window);
             }
             WM_MOVING | WM_DPICHANGED | WM_EXITSIZEMOVE | WM_WINDOWPOSCHANGING => guard_size(window, message, lparam),
@@ -515,7 +515,7 @@ mod imp {
             // предложенного прямоугольника ему только помешала бы
             WM_MOVING if snapping() => {
                 let proposed = &mut *(lparam.0 as *mut RECT);
-                let drag = &mut *DRAG.lock().unwrap();
+                let drag = &mut *DRAG.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
                 let free = free_place(drag).unwrap_or_else(|| Rect::from(*proposed));
                 let (dx, dy) = offset(free, work_area(free), &drag.targets, &mut drag.stuck);
@@ -539,7 +539,7 @@ mod imp {
                 // Предел — до замка перетаскивания: он берёт замок списка окон,
                 // а `remember_neighbours` берёт их в обратном порядке
                 let min = floor_of(window);
-                let drag = &mut *DRAG.lock().unwrap();
+                let drag = &mut *DRAG.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
                 if let Some(free) = free_size(drag, edges) {
                     let rect = resize(free, edges, work_area(free), &drag.targets, min, &mut drag.stuck);
@@ -558,7 +558,7 @@ mod imp {
             // правая с нижней прилипали бы мимо
             WM_DPICHANGED => {
                 let suggested = Rect::from(*(lparam.0 as *const RECT));
-                let drag = &mut *DRAG.lock().unwrap();
+                let drag = &mut *DRAG.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 if drag.anchor.is_some() {
                     let mut cursor = POINT::default();
                     if GetCursorPos(&mut cursor).is_ok() {
@@ -568,7 +568,7 @@ mod imp {
             }
 
             WM_EXITSIZEMOVE => {
-                *DRAG.lock().unwrap() = Drag::IDLE;
+                *DRAG.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Drag::IDLE;
                 remember_places(window.0 as isize);
             }
 
@@ -590,7 +590,7 @@ mod imp {
 
     /// Не даёт Snap растянуть перенесённое окно — см. [`Moved`].
     unsafe fn guard_size(window: HWND, message: u32, lparam: LPARAM) {
-        let mut moved = MOVED.lock().unwrap();
+        let mut moved = MOVED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let ours = moved.as_ref().is_some_and(|m| m.window == window.0 as isize);
         match message {
             WM_MOVING if !ours => {
@@ -638,7 +638,7 @@ mod imp {
         let mut targets = Vec::new();
         let anchor = anchor_of(moving);
 
-        let mut tracked = TRACKED.lock().unwrap();
+        let mut tracked = TRACKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Выключенный из трея виджет своё окно уничтожает: чистим на месте,
         // чтобы не считать чужой прямоугольник по переиспользованному HWND
         tracked.retain(|(raw, _)| IsWindow(Some(hwnd(*raw))).as_bool());
@@ -657,7 +657,7 @@ mod imp {
 
         // Новое перетаскивание начинается свободным: окно, стоящее вплотную,
         // прилипнет обратно тут же, но уже с нуля
-        *DRAG.lock().unwrap() = Drag {
+        *DRAG.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Drag {
             targets,
             stuck: Stuck::NONE,
             anchor,
@@ -819,7 +819,7 @@ mod imp {
 
     unsafe fn forget(window: HWND) {
         let raw = window.0 as isize;
-        TRACKED.lock().unwrap().retain(|(kept, _)| *kept != raw);
+        TRACKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|(kept, _)| *kept != raw);
         let _ = RemoveWindowSubclass(window, Some(procedure), SUBCLASS);
     }
 

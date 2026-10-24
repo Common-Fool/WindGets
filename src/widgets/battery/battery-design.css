@@ -18,3 +18,10 @@
 [data-design="reference"] .battery--reference .battery__name { color: var(--text-primary); }
 [data-design="reference"] .battery--reference .battery__reading { font-size: var(--text-xl); }
 [data-design="reference"] .battery--reference .battery__level .bar--thin { height: var(--space-1); }
+
+/* GPT в столбике значков: значок прежнего размера — столбик узкий */
+[data-design="reference"] .card:has(.battery[data-view="icons"]) .card__body,
+[data-design="reference"] .card:has(.battery[data-view="labeled"]) .card__body {
+  padding: var(--space-3);
+}
+[data-design="reference"] .battery--reference .battery__tile .battery__icon { grid-row: auto; font-size: var(--text-lg); }

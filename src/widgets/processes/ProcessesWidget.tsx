@@ -1,5 +1,4 @@
 import { useRef, useState, type RefObject } from "react";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { formatReading } from "../../lib/format";
 import { useLook, useScale } from "../../lib/look";
@@ -230,7 +229,6 @@ function ReferenceProcesses({ rows, mode, peak, setMode }: {
 }
 
 export function ProcessesWidget() {
-  useWindowDrag();
   const { effectiveDesign } = useLook();
   const { byCpu, byMemory } = useProcesses();
   // Состояние принадлежит виджету, поэтому смена дизайна не сбрасывает режим.

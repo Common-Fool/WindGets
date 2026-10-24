@@ -10,7 +10,6 @@ import {
   type Report,
   type Sky,
 } from "../../lib/weather";
-import { useWindowDrag } from "../../lib/drag";
 import { useCardClick } from "../../lib/gestures";
 import { useWindowResized } from "../../lib/resized";
 import { useContentHeight, useWindowGrowth } from "../../lib/grow";
@@ -347,7 +346,6 @@ export function WeatherWidget() {
   const size = useWidgetSize() === 1 ? 1 : 0;
   const widget = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
-  useWindowDrag();
 
   const report = state.status === "ready" ? state.report : null;
   const sky = report?.sky ?? "overcast";

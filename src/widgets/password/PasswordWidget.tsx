@@ -11,7 +11,6 @@ import {
   type Options,
 } from "../../lib/password";
 import { copySecret, copySelectionAsSecret } from "../../lib/copy";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
@@ -42,7 +41,6 @@ const CLASS_LABEL: Record<CharClass, string> = {
 };
 
 export function PasswordWidget() {
-  useWindowDrag();
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout();

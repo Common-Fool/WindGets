@@ -31,6 +31,11 @@ const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
 #[cfg(windows)]
 const NORMAL_PRIORITY_CLASS: u32 = 0x0000_0020;
 
+/// Предел строки вывода: программа, которая пишет без перевода строки
+/// (прогресс через `\r`), копила бы буфер до конца работы. Длиннее — режется
+/// на куски по пределу, каждый уходит своей строкой.
+const MAX_LINE: u64 = 64 * 1024;
+
 /// Строка вывода и поток, откуда она пришла.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -143,7 +148,7 @@ fn pump<R: Read + Send + 'static>(stream: R, sender: Sender<Line>, wrap: fn(Stri
 
         loop {
             buffer.clear();
-            match reader.read_until(b'\n', &mut buffer) {
+            match (&mut reader).take(MAX_LINE).read_until(b'\n', &mut buffer) {
                 Ok(0) | Err(_) => return,
                 Ok(_) => {
                     let text = String::from_utf8_lossy(&buffer)

@@ -53,6 +53,11 @@ const SOFTWARE_ID: u8 = 0x0b;
 /// за спящий слот — тоже; дольше ждать значит держать поток минуту.
 const WAIT: Duration = Duration::from_millis(400);
 
+/// Сколько ждём ответа на первый вопрос к устройству: спящую мышь приёмник
+/// сперва будит и до тех пор молчит. Замерено 0,9–1,5 с у мыши LIGHTSPEED
+/// после пары секунд без движения — втрое против 400 мс прежнего срока.
+const WAKE: Duration = Duration::from_secs(3);
+
 /// Индекс самого устройства при проводе; у приёмника — сам приёмник.
 const DIRECT: u8 = 0xff;
 /// Слоты приёмника: у Unifying их шесть, у LIGHTSPEED меньше.
@@ -319,6 +324,11 @@ impl Channel {
 
     /// Шлёт длинный запрос и ждёт свой ответ. `None` — ответа не дождались.
     fn ask(&self, index: u8, feature: u8, function: u8, params: &[u8]) -> Option<Reply> {
+        self.ask_within(WAIT, index, feature, function, params)
+    }
+
+    /// То же со своим сроком ответа.
+    fn ask_within(&self, wait: Duration, index: u8, feature: u8, function: u8, params: &[u8]) -> Option<Reply> {
         let report = request(index, feature, function, params);
 
         // Чтения ставим до записи: ответ приходит за миллисекунды и иначе
@@ -331,7 +341,7 @@ impl Channel {
             return None;
         }
 
-        let deadline = Instant::now() + WAIT;
+        let deadline = Instant::now() + wait;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -400,8 +410,14 @@ fn answer(report: &[u8], index: u8, feature: u8, function: u8) -> Option<Reply> 
 /// спит или не говорит о заряде.
 fn ask_device(channel: &Channel, index: u8, product: u16, receiver: &str) -> Option<Device> {
     // Версия протокола — заодно проверка, что за индексом кто-то живой и
-    // говорит на HID++ 2.0. Приёмник за своим индексом отвечает отказом 1.0
-    match channel.ask(index, ROOT, 1, &[0, 0, 0x5a])? {
+    // говорит на HID++ 2.0. Приёмник за своим индексом отвечает отказом 1.0.
+    //
+    // ВАЖНО: **первый вопрос ждёт дольше остальных** (`WAKE`). Беспроводная
+    // мышь без движения усыпляет связь, и приёмник молчит, пока её будит:
+    // опрос раз в минуту попадал на спящую мышь, и строка пропадала. Пустой
+    // слот приёмник отклоняет сразу, так что срок тратит только живое
+    // устройство
+    match channel.ask_within(WAKE, index, ROOT, 1, &[0, 0, 0x5a])? {
         Reply::Data(data) if data[0] >= 2 => {}
         _ => return None,
     }

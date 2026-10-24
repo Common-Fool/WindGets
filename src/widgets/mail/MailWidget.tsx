@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { useWindowDrag } from "../../lib/drag";
 import { useText, type Key } from "../../lib/i18n";
 import { LetterBrowser, LetterIncomplete } from "./LetterBrowser";
 import { useLook } from "../../lib/look";
@@ -389,7 +388,6 @@ function SetupButton({ page, title, hint, error = false }: { page: string; title
 }
 
 export function MailWidget() {
-  useWindowDrag();
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout() === 1 ? 1 : 0;

@@ -22,6 +22,17 @@ type Props = {
   className?: string;
   /** Подсказка при наведении. Обычно тот же текст целиком. */
   title?: string;
+  /**
+   * Бежать только пока это `true` — например, пока мышь над карточкой. Без
+   * него строка изредка пробегает сама. Выключенная, строка стоит началом
+   * вперёд и показывает то, что влезает.
+   */
+  active?: boolean;
+  /**
+   * Пока строка стоит, показывать только целые слова, которые влезают, — без
+   * обрубка на полуслове. Бежит она всё равно целиком.
+   */
+  wholeWords?: boolean;
 };
 
 /**
@@ -41,10 +52,37 @@ const MIN_CYCLE = 6;
 /** Ниже этого не бежим: пара точек разницы — это округление, а не хвост. */
 const SLACK = 2;
 
-export function Marquee({ text, className, title }: Props) {
+/** Холст для замеров ширины текста: один на модуль, в DOM не попадает. */
+let ruler: CanvasRenderingContext2D | null = null;
+
+/** Ширина строки шрифтом элемента. */
+function textWidth(element: HTMLElement, text: string): number {
+  ruler ??= document.createElement("canvas").getContext("2d");
+  if (ruler === null) return 0;
+  ruler.font = getComputedStyle(element).font;
+  return ruler.measureText(text).width;
+}
+
+/** Самое длинное начало из целых слов, которое влезает в `room`; хоть одно слово — всегда. */
+function wordsThatFit(element: HTMLElement, text: string, room: number): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  let fitted = words[0] ?? "";
+  for (let count = 2; count <= words.length; count++) {
+    const candidate = words.slice(0, count).join(" ");
+    if (textWidth(element, candidate) > room) break;
+    fitted = candidate;
+  }
+  return fitted;
+}
+
+export function Marquee({ text, className, title, active, wholeWords = false }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const line = useRef<HTMLSpanElement | null>(null);
   const [run, setRun] = useState(0);
+  const [fitted, setFitted] = useState(text);
+  // Влезает ли укороченная строка: одно длинное слово не влезает и тогда
+  // стоит началом слева, а не обрезается по центру с обеих сторон
+  const [fits, setFits] = useState(true);
 
   useEffect(() => {
     const frame = host.current;
@@ -52,8 +90,16 @@ export function Marquee({ text, className, title }: Props) {
     if (frame === null || inner === null) return;
 
     const measure = () => {
-      const over = inner.scrollWidth - frame.clientWidth;
+      // По словам строка в покое короче полной, и `scrollWidth` мерил бы её;
+      // ход считается от полной, поэтому она меряется холстом
+      const full = wholeWords ? textWidth(inner, text) : inner.scrollWidth;
+      const over = full - frame.clientWidth;
       setRun(over > SLACK ? over : 0);
+      if (wholeWords) {
+        const words = over > SLACK ? wordsThatFit(inner, text, frame.clientWidth) : text;
+        setFitted(words);
+        setFits(textWidth(inner, words) <= frame.clientWidth + SLACK);
+      }
     };
 
     measure();
@@ -68,7 +114,7 @@ export function Marquee({ text, className, title }: Props) {
     const watcher = new ResizeObserver(measure);
     watcher.observe(frame);
     return () => watcher.disconnect();
-  }, [text]);
+  }, [text, wholeWords]);
 
   const cycle = Math.max(MIN_CYCLE, run / SPEED / TRAVEL_SHARE);
   const [away, setAway] = useState(false);
@@ -84,7 +130,7 @@ export function Marquee({ text, className, title }: Props) {
    */
   useEffect(() => {
     setAway(false);
-    if (run === 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (run === 0 || active === false || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const travel = cycle * TRAVEL_SHARE * 1000;
     // Таймер всегда один: следующий ставится из предыдущего
@@ -92,8 +138,11 @@ export function Marquee({ text, className, title }: Props) {
     const at = (delay: number, step: () => void) => {
       timer = window.setTimeout(step, delay);
     };
+    // По наведению ход начинается почти сразу: строку позвали, а не ждут
+    let rest = active === undefined ? 0.2 : 0.05;
     const loop = () => {
-      at(cycle * 0.2 * 1000, () => {
+      at(cycle * rest * 1000, () => {
+        rest = 0.2;
         setAway(true);
         at(travel + cycle * 0.15 * 1000, () => {
           setAway(false);
@@ -105,7 +154,11 @@ export function Marquee({ text, className, title }: Props) {
     return () => window.clearTimeout(timer);
     // Текст тоже: новое название того же переполнения иначе вставало бы
     // сразу хвостом — ход прежнего продолжался бы с середины
-  }, [text, run, cycle]);
+  }, [text, run, cycle, active]);
+
+  // В покое по словам стоит укороченная строка по центру, бежит — полная
+  const resting = wholeWords && run > 0 && active === false;
+  const shown = resting ? fitted : text;
 
   const style =
     run > 0
@@ -116,7 +169,7 @@ export function Marquee({ text, className, title }: Props) {
       : undefined;
 
   const frame = ["marquee"];
-  if (run > 0) frame.push("marquee--runs");
+  if (run > 0 && (!resting || !fits)) frame.push("marquee--runs");
   if (className !== undefined) frame.push(className);
 
   return (
@@ -126,7 +179,7 @@ export function Marquee({ text, className, title }: Props) {
         className={run > 0 ? "marquee__line marquee__line--runs" : "marquee__line"}
         data-away={away && run > 0 ? "true" : undefined}
       >
-        {text}
+        {shown}
       </span>
     </div>
   );

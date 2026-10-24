@@ -503,21 +503,35 @@ pub const WIDGETS: &[Widget] = &[
     },
     Widget {
         id: "battery",
-        views: &[],
+        // Список строками и столбик значков с кольцом заряда — без подписи и
+        // с именем устройства под кольцом
+        views: &["view.batteryList", "view.batteryIcons", "view.batteryIconsLabeled"],
         view_heights: &[],
-        // Один размер: строк столько, сколько подключено устройств с зарядом,
-        // и высоту ставит замер содержимого (`useContentHeight`), а не реестр.
-        // Реестровая высота — карточка с двумя устройствами
-        presets: &[
-            Preset { name: "size.full", width: 280.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+        presets: &[],
+        // По одному размеру на вид: строк столько, сколько подключено
+        // устройств с зарядом, и высоту ставит замер содержимого
+        // (`useContentHeight`), а не реестр. Реестровая высота — два устройства
+        view_presets: &[
+            &[
+                Preset { name: "size.full", width: 280.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+            ],
+            &[
+                Preset { name: "size.full", width: 64.0, height: Some(114.0), below: None, below_height: None, keeps: None },
+            ],
+            &[
+                // Чуть шире: имя одной строкой под кольцом, длинное бежит
+                // при наведении
+                Preset { name: "size.full", width: 72.0, height: Some(148.0), below: None, below_height: None, keeps: None },
+            ],
         ],
-        view_presets: &[],
         covers: &[],
         covers_hidden: &[],
         flexible: false,
         chrome: false,
         enabled: false,
-        floor: None,
+        // Столбик значков уже общего предела, как вертикальный пульт звука;
+        // окно не тянется, и предел ловит только промах
+        floor: Some((64.0, MIN_HEIGHT)),
     },
     Widget {
         id: "network",
@@ -1650,6 +1664,12 @@ mod tests {
             if widget.id == "sound" {
                 assert!(!widget.flexible);
                 assert_eq!((width, height), (118.0, MIN_HEIGHT));
+                continue;
+            }
+            // Столбик значков заряда — та же история
+            if widget.id == "battery" {
+                assert!(!widget.flexible);
+                assert_eq!((width, height), (64.0, MIN_HEIGHT));
                 continue;
             }
             // Квадрат счётчика кадров — та же история: не тянется, одно число

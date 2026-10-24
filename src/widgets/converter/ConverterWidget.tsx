@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useWindowDrag } from "../../lib/drag";
 import { useLook, useScale } from "../../lib/look";
 import { useWidth } from "../../lib/size";
 import { fitWave } from "./wave";
@@ -53,7 +52,6 @@ import { useText, type Text } from "../../lib/i18n";
  * приходят в список сами, а сюда — только «над карточкой несут файлы».
  */
 export function ConverterWidget() {
-  useWindowDrag();
   const t = useText();
   const tools = useTools();
   const view = useConverter();

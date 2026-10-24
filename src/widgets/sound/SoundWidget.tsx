@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useWindowResized } from "../../lib/resized";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import { usePresetWindowGrowth, useSoundSidePanel } from "../../lib/grow";
 import { useHeight, useWidth } from "../../lib/size";
@@ -172,7 +171,6 @@ function TrackRow({ track }: { track: Track }) {
 
 export function SoundWidget() {
   const design = useLook().effectiveDesign;
-  useWindowDrag();
   const t = useText();
   const state = useSound();
   const own = useOwnRow();

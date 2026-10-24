@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useWindowDrag } from "../../lib/drag";
 import { useText } from "../../lib/i18n";
 import {
   clipboardThumb, control, controlConfirmed, useClipboard,
@@ -54,20 +53,18 @@ function failureLabel(t: ReturnType<typeof useText>, failure: ControlFailure, pi
   return t("clipboard.copyFailed");
 }
 
-function Tabs({ tab, entries, images, onChange }: {
+function Tabs({ tab, onChange }: {
   tab: ClearTarget;
-  entries: number;
-  images: number;
   onChange: (tab: ClearTarget) => void;
 }) {
   const t = useText();
   return (
     <div className="clip-tabs" data-no-drag>
       <button type="button" aria-pressed={tab === "text"} onClick={() => onChange("text")}>
-        {t("clipboard.tabText")} <span className="tabular">{entries}</span>
+        {t("clipboard.tabText")}
       </button>
       <button type="button" aria-pressed={tab === "images"} onClick={() => onChange("images")}>
-        {t("clipboard.tabImages")} <span className="tabular">{images}</span>
+        {t("clipboard.tabImages")}
       </button>
     </div>
   );
@@ -161,7 +158,6 @@ function Row({ entry, current, onCopy, onDrop, onPin }: RowProps) {
 }
 
 function AppClipboard() {
-  useWindowDrag();
   const t = useText();
   const { entries, capacity, images = NO_IMAGES, imageCapacity = 0 } = useClipboard();
   const [tab, setTab] = useState<ClearTarget>("text");
@@ -238,7 +234,7 @@ function AppClipboard() {
             </ul>
           )}
           <div className="clip__foot">
-            <Tabs tab={tab} entries={entries.length} images={images.length} onChange={selectTab} />
+            <Tabs tab={tab} onChange={selectTab} />
             <span className="clip__count tabular" data-error={failure || undefined}
               role={failure ? "alert" : undefined} title={failureText || undefined}>
               {failureText || t("clipboard.count", { count: historyCount, capacity: limit })}
@@ -257,38 +253,38 @@ function AppClipboard() {
   );
 }
 
-/** GPT сохраняет многострочный предпросмотр и метаданные строки. */
+/** GPT сохраняет многострочный предпросмотр; справа число знаков и действия. */
 function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop, onPin }: RowProps & {
   pending: boolean;
   failed: boolean;
 }) {
   const t = useText();
   const preview = entry.formattedPreview?.trim() ? entry.formattedPreview : entry.preview;
-  const title = [preview, t.count("clipboard.chars", entry.chars),
-    ...(entry.lines > 1 ? [t.count("clipboard.linesShort", entry.lines)] : [])].join("\n");
+  const title = preview + "\n" + t.count("clipboard.chars", entry.chars);
   return (
     <li className="clip-ref__item" data-current={current} data-failed={failed}>
       <button type="button" className="clip-ref__text" title={title} aria-busy={pending}
         aria-current={current ? "true" : undefined} onClick={onCopy}>
         <span className="clip-ref__preview">{preview}</span>
       </button>
-      <span className="clip-ref__meta tabular">
-        <span title={t.count("clipboard.chars", entry.chars)}>
+      {/* Действия сверху, число знаков под ними: один блок у правого края */}
+      <span className="clip-ref__side">
+        <span className="clip-ref__tools">
+          <PinButton entry={entry} className="clip-ref__pin" onClick={onPin} />
+          <button type="button" className="clip-ref__drop" title={t("common.remove")}
+            aria-label={t("common.remove")} onClick={onDrop}>
+            <CloseIcon />
+          </button>
+        </span>
+        <span className="clip-ref__meta tabular">
           {t.count("clipboard.charsShort", entry.chars)}
         </span>
-        {entry.lines > 1 && <span>{t.count("clipboard.linesShort", entry.lines)}</span>}
       </span>
-      <PinButton entry={entry} className="clip-ref__pin" onClick={onPin} />
-      <button type="button" className="clip-ref__drop" title={t("common.remove")}
-        aria-label={t("common.remove")} onClick={onDrop}>
-        <CloseIcon />
-      </button>
     </li>
   );
 }
 
 function ReferenceClipboard() {
-  useWindowDrag();
   const t = useText();
   const { entries, capacity, images = NO_IMAGES, imageCapacity = 0 } = useClipboard();
   const [tab, setTab] = useState<ClearTarget>("text");
@@ -390,7 +386,7 @@ function ReferenceClipboard() {
               </div>
             )}
             <div className="clip-ref__actions">
-              <Tabs tab={tab} entries={entries.length} images={images.length} onChange={selectTab} />
+              <Tabs tab={tab} onChange={selectTab} />
               <span className="clip-ref__count tabular">
                 {t("clipboard.count", { count: historyCount, capacity: limit })}
               </span>

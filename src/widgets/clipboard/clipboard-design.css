@@ -14,6 +14,9 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+  /* Полоса прокрутки уходит в правое поле карточки: крестик строки встаёт
+     под корзину подвала, а не на ширину полосы левее */
+  margin-right: calc(-1 * var(--scrollbar-thin));
   margin-bottom: var(--space-1);
 }
 
@@ -21,9 +24,8 @@
   height: 100%;
   min-width: 0;
   margin: 0;
-  /* Четыре точки бегунка и отдельный зазор до области строк. Стабильный
-     резерв не двигает текст при появлении полосы. */
-  padding: 0 calc(12px * var(--scale)) 0 0;
+  /* Стабильный резерв под бегунок не двигает текст при появлении полосы */
+  padding: 0;
   list-style: none;
   overflow-x: hidden;
   overflow-y: auto;
@@ -59,10 +61,11 @@
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: calc(7px * var(--scale));
+  gap: calc(2px * var(--scale));
   min-width: 0;
   min-height: calc(25px * var(--scale));
-  padding: calc(4px * var(--scale)) calc(6px * var(--scale));
+  /* Справа поля нет: число знаков и действия прижаты к краю строки */
+  padding: calc(4px * var(--scale)) 0 calc(4px * var(--scale)) calc(6px * var(--scale));
   border-radius: var(--radius-control);
   transition: background var(--duration-fast) var(--ease);
 }
@@ -128,13 +131,30 @@
   color: var(--text-primary);
 }
 
-.clip-ref__meta {
+/* Блок у правого края, по центру строки: кнопки сверху, число знаков под ними */
+.clip-ref__side {
   display: flex;
   flex: none;
   flex-direction: column;
   align-items: flex-end;
-  gap: calc(4px * var(--scale));
-  min-width: calc(44px * var(--scale));
+  align-self: center;
+}
+
+.clip-ref__tools {
+  display: flex;
+}
+
+/* Ниже квадрата: кнопки с числом под ними не выше двух строк текста, иначе
+   строка росла бы от блока действий. Ширина — прежняя, для попадания мышью */
+.clip-ref__tools .clip-ref__pin,
+.clip-ref__tools .clip-ref__drop {
+  height: calc(20px * var(--scale));
+}
+
+.clip-ref__meta {
+  /* Правый край числа — по значку ✕, а не по его кнопке: значок в 1em стоит
+     посреди квадрата */
+  padding-right: calc((var(--control-icon-size) - var(--text-md)) / 2);
   color: var(--text-muted);
   font-size: calc(10.5px * var(--scale));
   line-height: calc(13px * var(--scale));

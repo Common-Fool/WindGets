@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { useWindowDrag } from "../../lib/drag";
 import { useLook } from "../../lib/look";
 import { useWidgetLayout } from "../../lib/view";
 import { useText } from "../../lib/i18n";
@@ -52,7 +51,6 @@ function same(a: Book, b: Book): boolean {
 }
 
 export function NotesWidget() {
-  useWindowDrag();
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
   const layout = useWidgetLayout();

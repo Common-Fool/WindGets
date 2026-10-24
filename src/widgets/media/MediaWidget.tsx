@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { GlassCard } from "../../components/GlassCard";
 import { Marquee } from "../../components/Marquee";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon } from "../../components/Transport";
-import { useWindowDrag } from "../../lib/drag";
 import { useContentHeight } from "../../lib/grow";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
@@ -53,7 +52,6 @@ const SEEK_CLOSE = 2;
 const SMALLEST_SIZE = 3;
 
 export function MediaWidget() {
-  useWindowDrag();
 
   const size = useWidgetSize();
   const layout = useWidgetLayout() === 1 ? 1 : 0;

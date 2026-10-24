@@ -1,4 +1,3 @@
-import { useWindowDrag } from "../../lib/drag";
 import { useWidgetView } from "../../lib/view";
 import { useFps, type FpsView } from "../../lib/fps";
 import { missingFor, useTools } from "../../lib/tools";
@@ -82,7 +81,6 @@ export function FpsWidget() {
   const tools = useTools();
   const view = useFps();
   const look = useWidgetView();
-  useWindowDrag();
 
   if (missingFor(tools, "fps").length > 0) {
     return (

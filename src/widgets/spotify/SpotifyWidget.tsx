@@ -6,7 +6,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useWindowDrag } from "../../lib/drag";
 import { useWidgetCover, useWidgetLayout, useWidgetSize, useWidgetView } from "../../lib/view";
 import { usePresetWindowGrowth } from "../../lib/grow";
 import { useWindowResized } from "../../lib/resized";
@@ -69,7 +68,6 @@ function useFailure(): [string | null, (reason: string | null) => void] {
 }
 
 export function SpotifyWidget() {
-  useWindowDrag();
   const t = useText();
 
   // Раскладку выбирают из меню или из настроек виджета, щелчком по карточке

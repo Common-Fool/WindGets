@@ -6,7 +6,6 @@ import {
   type Report,
   type Snapshot,
 } from "../../lib/speedtest";
-import { useWindowDrag } from "../../lib/drag";
 import { useText, type Text } from "../../lib/i18n";
 import { NO_VALUE } from "../../lib/format";
 import { useLook } from "../../lib/look";
@@ -58,7 +57,6 @@ export function SpeedtestWidget() {
   const gaugeOnly = widgetView === 2; // только кольцо замера, истории нет вовсе
   const size = useWidgetSize();
   const content = useRef<HTMLDivElement>(null);
-  useWindowDrag();
 
   const measured = report(view);
   const running = view.status === "running";

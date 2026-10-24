@@ -7,6 +7,7 @@ import { resolveWidget, WIDGETS } from "./widgets/registry";
 import { initLook } from "./lib/look";
 import { initText, useText, useTextFailed, useTextReady, type Key } from "./lib/i18n";
 import { useWidgetMenu } from "./lib/gestures";
+import { useWindowDrag } from "./lib/drag";
 import { Guard, TextFailed } from "./components/Guard";
 import "./styles/tokens.css";
 import "./styles/base.css";
@@ -43,15 +44,23 @@ const TITLE_KEY = OWN_TITLES[requestedId] ?? (`widget.${requestedId}` as Key);
  * Оболочка окна: одна на все окна, включая настройки и витрину.
  *
  * Держит то, что нужно каждому окну и ни одному виджету в отдельности:
- * запрет меню WebView2 и своё меню по правой кнопке. Виджет, забывший позвать
- * этот хук у себя, вернул бы в окно «Обновить / Сохранить как / Печать», —
- * поэтому вызов стоит здесь, а не в карточках.
+ * запрет меню WebView2, своё меню по правой кнопке и перетаскивание окна.
+ * Виджет, забывший позвать такой хук у себя, вернул бы в окно «Обновить /
+ * Сохранить как / Печать» или не двигался бы вовсе (так было с зарядом,
+ * отладкой датчиков и витриной), — поэтому вызовы стоят здесь, а не в
+ * карточках. Повторный вызов в виджете дал бы два перетаскивания на одно
+ * нажатие; ловит `scripts/check-window-drag.mjs`.
  *
  * Окно настроек меню виджета не получает: `open_widget_menu` не находит его в
- * реестре и молча возвращается.
+ * реестре и молча возвращается. Замок положения его не запирает — в нём стоит
+ * сам выключатель (`useWindowDrag`).
+ *
+ * Хуки стоят до ранних выходов: экран отказа словаря и карточка падения
+ * виджета тоже двигаются.
  */
 function Shell({ children }: { children: ReactNode }) {
   useWidgetMenu();
+  useWindowDrag(requestedId === "settings");
   const t = useText();
   const ready = useTextReady();
   const failed = useTextFailed();

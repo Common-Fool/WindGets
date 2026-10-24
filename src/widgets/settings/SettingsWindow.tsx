@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { closeSettings, setModule, setWidgetOption, useSettings, type WidgetRow } from "../../lib/settings";
 import { useLook } from "../../lib/look";
-import { useWindowDrag } from "../../lib/drag";
 import { useText, type Key } from "../../lib/i18n";
 import {
   ChevronIcon,
@@ -148,7 +147,6 @@ function useShown(): boolean {
 
 export function SettingsWindow() {
   // Блокировку положения окно настроек не слушает: в нём стоит её выключатель
-  useWindowDrag(true);
   const t = useText();
   const settings = useSettings();
   const reference = useLook().effectiveDesign === "reference";

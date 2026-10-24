@@ -44,6 +44,14 @@ const STEP: Duration = Duration::from_secs(1);
 /// каждый вопрос к мыши — это обмен по радио.
 const PERIOD: Duration = Duration::from_secs(60);
 
+/// Через сколько переспрашиваем, если знакомое устройство не ответило.
+///
+/// Один пропущенный ответ — не уход: мышь занята, G HUB перебил вопрос,
+/// HeadsetControl не уложился. Строка пропадала бы на целую минуту и
+/// возвращалась, поэтому устройство держится до повторного вопроса и уходит
+/// только со вторым промахом подряд.
+const RETRY: Duration = Duration::from_secs(5);
+
 /// Вид устройства — ради значка в строке.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,10 +149,34 @@ fn merge(windows: Vec<Device>, logitech: Vec<Device>, headsets: Vec<Device>) -> 
         fresh
     });
 
+    order(&mut devices);
+    devices
+}
+
+/// По виду, затем по имени: строки не прыгают от того, кто ответил первым.
+fn order(devices: &mut [Device]) {
     devices.sort_by(|a, b| {
         (a.kind as u8).cmp(&(b.kind as u8)).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    devices
+}
+
+/// Сводит свежий опрос с прошлым снимком.
+///
+/// Знакомое устройство, не ответившее впервые, остаётся с прежним зарядом и
+/// попадает в список промахов; не ответившее второй раз подряд уходит.
+/// Возвращает снимок и новые промахи: пустые — переспрашивать некого.
+fn settle(previous: &[Device], fresh: Vec<Device>, missed: &[String]) -> (Vec<Device>, Vec<String>) {
+    let mut devices = fresh;
+    let mut misses = Vec::new();
+    for old in previous {
+        if devices.iter().any(|device| device.id == old.id) || missed.contains(&old.id) {
+            continue;
+        }
+        misses.push(old.id.clone());
+        devices.push(old.clone());
+    }
+    order(&mut devices);
+    (devices, misses)
 }
 
 /// Окно показано: только тогда и спрашиваем (правило звука).
@@ -167,21 +199,32 @@ pub fn spawn(app: AppHandle) {
 fn work(app: AppHandle) {
     let mut last: Option<Instant> = None;
     let mut was_watched = false;
+    let mut missed: Vec<String> = Vec::new();
+    // Первый вопрос после показа окна переспрашивается так же, как промах:
+    // при запуске HeadsetControl и донглы бывают не готовы, и окно стояло бы
+    // пустым целую минуту
+    let mut recheck = false;
 
     loop {
         std::thread::sleep(STEP);
 
         let now_watched = watched(&app);
         // Окно только что показали — спрашиваем сразу, а не через минуту
-        let due = last.is_none_or(|at| at.elapsed() >= PERIOD) || (now_watched && !was_watched);
+        let shown = now_watched && !was_watched;
+        let wait = if missed.is_empty() && !recheck { PERIOD } else { RETRY };
+        let due = last.is_none_or(|at| at.elapsed() >= wait) || shown;
         was_watched = now_watched;
         if !now_watched || !due {
             continue;
         }
         last = Some(Instant::now());
+        recheck = shown;
 
-        let devices = poll(&app);
+        let fresh = poll(&app);
         let state = app.state::<Battery>();
+        let previous = state.locked().devices.clone();
+        let (devices, misses) = settle(&previous, fresh, &missed);
+        missed = misses;
         let view = View { ready: true, devices };
         let changed = {
             let mut current = state.locked();
@@ -252,6 +295,25 @@ mod tests {
 
         assert_eq!(merged.iter().map(|device| device.name.as_str()).collect::<Vec<_>>(), ["Mouse", "Alpha pad", "zeta pad"]);
         assert_eq!(merged[2].level, 100);
+    }
+
+    #[test]
+    fn a_device_leaves_only_on_the_second_miss_in_a_row() {
+        let mouse = device("lg:1", "Mouse", Kind::Mouse, Source::Logitech, None);
+        let headset = device("hs:1", "Headset", Kind::Headset, Source::Headset, None);
+        let previous = vec![mouse.clone(), headset.clone()];
+
+        let (kept, missed) = settle(&previous, vec![headset.clone()], &[]);
+        assert_eq!(kept, previous, "первый промах строку не снимает");
+        assert_eq!(missed, ["lg:1"]);
+
+        let (left, missed) = settle(&kept, vec![headset.clone()], &missed);
+        assert_eq!(left, [headset.clone()], "второй подряд — снимает");
+        assert!(missed.is_empty());
+
+        let (back, missed) = settle(&kept, vec![mouse.clone(), headset], &["lg:1".to_owned()]);
+        assert_eq!(back, previous, "ответившее снова — на месте и без промаха");
+        assert!(missed.is_empty());
     }
 
     #[test]
