@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { GlassCard } from "../../components/GlassCard";
 import { Bar } from "../../components/Bar";
+import { useWindowDrag } from "../../lib/drag";
 import { batteryStep, useBattery } from "../../lib/battery";
 import { NO_VALUE } from "../../lib/format";
 import { useContentHeight } from "../../lib/grow";
@@ -19,6 +20,7 @@ export function BatteryWidget() {
   const gpt = useLook().effectiveDesign === "reference";
   const list = useRef<HTMLDivElement>(null);
   const shown = devices.filter((device) => !hiddenBatteries.includes(device.id));
+  useWindowDrag();
 
   // Пустое состояние тоже меряется: окно всегда обнимает одну строку.
   useContentHeight(list, true, `${gpt}:${ready ? shown.length : 0}`, true);
