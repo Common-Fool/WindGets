@@ -139,6 +139,8 @@ fn start(app: &AppHandle, id: &str) {
         // (правило буфера обмена); выключенный он забывает сам
         "clipboard" => once("clipboard", || crate::clipboard::spawn(app.clone())),
         "processes" => once("processes", || crate::processes::spawn(app.clone())),
+        // PresentMon поток поднимает сам и только при видимом окне
+        "fps" => once("fps", || crate::fps::spawn(app.clone())),
         "weather" => once("weather", || crate::weather::spawn(app.clone())),
         "mail" => once("mail", || crate::mail::spawn(app.clone())),
         // Медиасессии — это WinRT, и из потока команды к ним ходить нельзя

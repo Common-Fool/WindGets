@@ -52,15 +52,20 @@ function lookOf(id: string, state: PreviewState): Look {
   return { ...state.look, scale: 1, cardOpacity: row?.cardOpacity ?? state.settings.cardOpacity };
 }
 
-/** Без рамки (проверка в браузере): GPT, «Сланец», одна строка виджета. */
+/**
+ * Без рамки (проверка в браузере): одна строка виджета. Дизайн — из адреса
+ * (`&design=app` — Claude, иначе GPT), вид — `&view=1`.
+ */
 export function defaultState(id: string): PreviewState {
+  const query = new URLSearchParams(window.location.search);
+  const design = query.get("design") === "app" ? "app" : "reference";
   const look: Look = {
-    design: "reference",
-    effectiveDesign: "reference",
+    design,
+    effectiveDesign: design,
     cardOpacity: EMPTY_SETTINGS.cardOpacity,
     scale: 1,
-    palette: "gpt",
-    glass: "gpt",
+    palette: design === "reference" ? "gpt" : "reference-classic",
+    glass: design === "reference" ? "gpt" : "obsidian",
     accentColor: DEFAULT_ACCENT_COLOR,
     customColors: DEFAULT_CUSTOM_COLORS,
     vivid: 1,
@@ -72,7 +77,7 @@ export function defaultState(id: string): PreviewState {
     enabled: true,
     alwaysOnTop: false,
     locked: false,
-    view: 0,
+    view: Number(query.get("view") ?? 0),
     views: [],
     layout: 0,
     layouts: [],
@@ -85,10 +90,10 @@ export function defaultState(id: string): PreviewState {
     scale: null,
     preview: [360, 240],
   };
-  const language = new URLSearchParams(window.location.search).get("lang") ?? "ru";
+  const language = query.get("lang") ?? "ru";
   // Само окно настроек — проверка галереи в браузере: строка на каждый виджет
   const rows = id === "settings"
     ? PREVIEWED.map((widget, index) => ({ ...row, id: widget, title: widget, enabled: index < 6 }))
     : [row];
-  return { look, language, settings: { ...EMPTY_SETTINGS, design: "reference", widgets: rows } };
+  return { look, language, settings: { ...EMPTY_SETTINGS, design, widgets: rows } };
 }

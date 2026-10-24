@@ -14,10 +14,13 @@ import { WIDGET_ICONS } from "../icons";
 import { Navigate, Picked } from "./nav";
 
 /** Модули со своими скачанными программами. */
-const TOOL_MODULES: readonly ModuleId[] = ["converter", "downloader"];
+const TOOL_MODULES: readonly ModuleId[] = ["converter", "downloader", "fps"];
 
 /** Ключ описания виджета в каталоге. Есть у каждого — держит `every_widget_has_a_description`. */
 const about = (id: string) => `widgetAbout.${id}` as Key;
+
+/** Короткое описание — на карточке в одну строку; полное стоит под превью. */
+const brief = (id: string) => `widgetBrief.${id}` as Key;
 
 /**
  * Раздел «Виджеты»: галерея карточек по образцу Themia (22 октября, слово
@@ -180,7 +183,7 @@ function Card({
         <span className="widget-card__icon">{Icon !== undefined && <Icon />}</span>
         <span className="widget-card__text">
           <span className="widget-card__name" title={widget.title}>{widget.title}</span>
-          <span className="widget-card__about">{t(about(widget.id))}</span>
+          <span className="widget-card__about" title={t(about(widget.id))}>{t(brief(widget.id))}</span>
         </span>
       </button>
       <button

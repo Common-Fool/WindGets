@@ -49,7 +49,7 @@ jobs:
         run: npm run typecheck
 
       # Регрессии фронта без Tauri: доставка событий окнам, очереди панелей,
-      # отказы буфера, волна звука
+      # отказы буфера, волна звука, подмена IPC у превью виджетов
       - name: Front regressions
         shell: pwsh
         run: |
@@ -60,6 +60,8 @@ jobs:
           node scripts/check-wave.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-widget-panels.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/check-preview-ipc.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build installer

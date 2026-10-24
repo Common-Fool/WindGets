@@ -37,6 +37,7 @@ WIDGETS = [
     ("password", "Password generator"),
     ("converter", "Converter"),
     ("downloader", "Downloader"),
+    ("fps", "Frame counter"),
 ]
 
 # Снимки сняты с плотностью точек 2; кадр уменьшается до 0.6 — чётко и легко

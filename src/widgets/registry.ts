@@ -46,6 +46,10 @@ export const WIDGETS: Record<string, WidgetDefinition> = {
     id: "network",
     component: lazy(() => import("./network/NetworkWidget").then((module) => ({ default: module.NetworkWidget }))),
   },
+  fps: {
+    id: "fps",
+    component: lazy(() => import("./fps/FpsWidget").then((module) => ({ default: module.FpsWidget }))),
+  },
   weather: {
     id: "weather",
     component: lazy(() => import("./weather/WeatherWidget").then((module) => ({ default: module.WeatherWidget }))),

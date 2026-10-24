@@ -1,5 +1,6 @@
 import type { ClipboardState, Entry } from "../../lib/clipboard";
 import type { artOf, View as MediaView } from "../../lib/media";
+import type { FpsView } from "../../lib/fps";
 import type { Group, ProcessesState } from "../../lib/processes";
 import type { Icon, SoundState } from "../../lib/sound";
 import { GIB, NOW, type Answers } from "./common";
@@ -21,6 +22,24 @@ const GROUPS: Group[] = [
 const PROCESSES: ProcessesState = {
   byCpu: [...GROUPS].sort((a, b) => b.cpu - a.cpu),
   byMemory: [...GROUPS].sort((a, b) => b.memory - a.memory),
+};
+
+/* Игра нейтральная и выдуманная; история — ровная волна с одной просадкой */
+const FPS: FpsView = {
+  status: "live",
+  app: "DemoGame",
+  mode: "Hardware: Independent Flip",
+  fps: 142,
+  average: 138.4,
+  low1: 96,
+  low01: 71,
+  frameMs: 7.04,
+  gpuBusy: 97,
+  latency: 18.2,
+  dropped: 0,
+  history: Array.from({ length: 120 }, (_, index) =>
+    Math.round(138 + 8 * Math.sin(index / 6) - (index > 80 && index < 86 ? 45 : 0))),
+  problem: null,
 };
 
 const SOUND: SoundState = {
@@ -93,6 +112,7 @@ const CLIPBOARD: ClipboardState = {
 
 export const system: Answers = {
   processes_state: () => PROCESSES,
+  fps_state: () => FPS,
   sound_state: () => SOUND,
   sound_icon: () => SOUND_ICON,
   media_state: () => MEDIA,

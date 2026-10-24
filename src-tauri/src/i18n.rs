@@ -373,8 +373,9 @@ mod tests {
     #[test]
     fn every_widget_has_a_description() {
         for widget in crate::widgets::WIDGETS {
-            let key = format!("widgetAbout.{}", widget.id);
-            assert!(TABLES[0].contains_key(&key), "нет описания «{key}»");
+            for key in [format!("widgetAbout.{}", widget.id), format!("widgetBrief.{}", widget.id)] {
+                assert!(TABLES[0].contains_key(&key), "нет описания «{key}»");
+            }
         }
     }
 

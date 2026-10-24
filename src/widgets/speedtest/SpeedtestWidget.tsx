@@ -97,8 +97,13 @@ export function SpeedtestWidget() {
 
   // У истории своя высота, у итогов — собственная. Измерение не зависит от
   // прежней высоты окна, поэтому убранный блок не оставляет пустого места.
-  useContentHeight(content, effectiveDesign === "app",
-    `app|${widgetView}|${size}|${view.status}|${running ? view.stage : ""}|${reason ?? ""}|${t.language}`);
+  //
+  // ВАЖНО: **во время замера окно держит высоту покоя** (22 октября, слово
+  // пользователя): спидометр вместо истории другой высоты, и окно прыгало на
+  // каждом замере. Пока идёт замер, подгонка выключена, а блок замера
+  // заполняет карточку и ужимает дугу под её высоту (`cqh` в CSS).
+  useContentHeight(content, effectiveDesign === "app" && !running,
+    `app|${widgetView}|${size}|${view.status}|${reason ?? ""}|${t.language}`);
 
   // Состояние замера, отказ и lockout принадлежат этому компоненту:
   // смена дизайна меняет только содержимое и не запускает таймер заново.
@@ -114,7 +119,8 @@ export function SpeedtestWidget() {
   return (
     <div className="widget speedtest-app-widget">
       <GlassCard accent={activeAccent}>
-        <div className="speed" data-gauge={running || gaugeOnly ? "true" : undefined} ref={content}>
+        <div className="speed" data-gauge={running || gaugeOnly ? "true" : undefined}
+          data-running={running ? "true" : undefined} ref={content}>
           {/* История пополнится только в конце; во время замера виден спидометр. */}
           {!running && !gaugeOnly && (
             columns ? (
@@ -204,12 +210,12 @@ function ReferenceSpeedtest({ view, t, measured, columns, separateColumns, gauge
   const layout = !gaugeOnly && savedLayout === 1 ? "b" : "a";
   const size = gaugeOnly || savedSize === 1 ? 1 : 0;
   const content = useRef<HTMLDivElement>(null);
-  const stage = view.status === "running" ? view.stage : undefined;
 
   // Меряем весь блок, включая кнопку, город и многострочный отказ. Ширину
-  // задаёт выбранный размер, высота не зависит от нынешней высоты окна.
-  useContentHeight(content, true,
-    `reference|${layout}|${size}|${separateColumns ? 3 : columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${stage ?? ""}|${reason ?? ""}|${t.language}`);
+  // задаёт выбранный размер, высота не зависит от нынешней высоты окна. Во
+  // время замера — высота покоя, как у Claude выше.
+  useContentHeight(content, !running,
+    `reference|${layout}|${size}|${separateColumns ? 3 : columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${reason ?? ""}|${t.language}`);
 
   const button = <SpeedAction t={t} locked={locked} onStart={onStart} hero={gaugeOnly} />;
 

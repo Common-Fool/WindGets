@@ -153,7 +153,9 @@ function ReferenceStatus({
   const title = failed ? failure : phase === "done" ? view.output ?? view.title ?? t("downloader.saved")
     : busy ? view.title ?? t("downloader.getting")
     : phase === "cancelled" ? t("tools.failure.cancelled") : t("downloader.idle");
-  const hint = failed ? [failure, view.detail, t("downloader.dismissFailure")].filter(Boolean).join("\n")
+  // У отказа подсказка — только наш текст: сырой вывод yt-dlp и строка «убрать
+  // отказ» растягивали её на три строки (22 октября, слово пользователя)
+  const hint = failed ? failure ?? undefined
     : busy ? [view.title, detailText, busyText].filter(Boolean).join("\n")
     : phase === "done" ? view.output ?? undefined : view.outDir ?? undefined;
   const fill = view.status === "downloading" ? view.percent : null;
@@ -192,7 +194,8 @@ function ReferenceStatus({
   return (
     <div className="dl-a__status" data-phase={phase} title={hint}>
       {failed ? (
-        <button type="button" className="dl-a__full-dismiss" title={hint} onClick={onDismiss}>
+        <button type="button" className="dl-a__full-dismiss" title={hint}
+          aria-label={`${failure} — ${t("downloader.dismissFailure")}`} onClick={onDismiss}>
           <span className="dl-a__status-title">{failure}</span>
           <span className="dl-a__status-hint">{t("downloader.dismissFailure")}</span>
         </button>

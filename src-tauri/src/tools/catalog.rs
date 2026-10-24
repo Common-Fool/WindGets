@@ -17,10 +17,11 @@ pub enum Component {
     Ffmpeg,
     YtDlp,
     QuickJs,
+    PresentMon,
 }
 
 impl Component {
-    pub const ALL: [Component; 3] = [Component::Ffmpeg, Component::YtDlp, Component::QuickJs];
+    pub const ALL: [Component; 4] = [Component::Ffmpeg, Component::YtDlp, Component::QuickJs, Component::PresentMon];
 }
 
 /// Часть приложения, которой нужны программы. Совпадает с `id` виджета в
@@ -30,15 +31,17 @@ impl Component {
 pub enum Module {
     Converter,
     Downloader,
+    Fps,
 }
 
 impl Module {
-    pub const ALL: [Module; 2] = [Module::Converter, Module::Downloader];
+    pub const ALL: [Module; 3] = [Module::Converter, Module::Downloader, Module::Fps];
 
     pub fn id(self) -> &'static str {
         match self {
             Module::Converter => "converter",
             Module::Downloader => "downloader",
+            Module::Fps => "fps",
         }
     }
 
@@ -52,6 +55,8 @@ impl Module {
         match self {
             Module::Converter => "Converter",
             Module::Downloader => "Downloads",
+            // Счётчик кадров файлов не пишет; имя ради полноты сопоставления
+            Module::Fps => "Fps",
         }
     }
 
@@ -63,6 +68,7 @@ impl Module {
         match self {
             Module::Converter => &[Component::Ffmpeg],
             Module::Downloader => &[Component::YtDlp, Component::QuickJs, Component::Ffmpeg],
+            Module::Fps => &[Component::PresentMon],
         }
     }
 }
@@ -121,7 +127,7 @@ pub struct Spec {
     pub system: Option<&'static str>,
 }
 
-/// Все три программы.
+/// Все программы.
 ///
 /// ffmpeg — облегчённая сборка gyan.dev (essentials): 35 МБ в 7z против 87 МБ
 /// zip у сборок yt-dlp и 194 МБ у полной. Из архива берётся один `ffmpeg.exe`:
@@ -133,7 +139,11 @@ pub struct Spec {
 /// 43 МБ: YouTube с ним отдаёт все форматы, задачи решаются за две-три секунды
 /// (замерено). Если Deno у человека стоит, yt-dlp возьмёт его сам — он у него
 /// в приоритете.
-pub const SPECS: [Spec; 3] = [
+///
+/// PresentMon (Intel, MIT) — консольная сборка без оверлея и службы: 0,9 МБ
+/// против 162 МБ установщика. Кадры он берёт из ETW, в игру ничего не
+/// внедряет, поэтому античитам не виден.
+pub const SPECS: [Spec; 4] = [
     Spec {
         component: Component::Ffmpeg,
         name: "FFmpeg",
@@ -170,6 +180,19 @@ pub const SPECS: [Spec; 3] = [
         file: "qjs.exe",
         download_bytes: 2_151_363,
         disk_bytes: 2_151_363,
+        system: None,
+    },
+    Spec {
+        component: Component::PresentMon,
+        name: "PresentMon",
+        repo: "GameTechDev/PresentMon",
+        // `PresentMon-2.6.0-x64.exe`; рядом лежат `.msi` и arm64 — не они
+        asset: AssetRule::Around { prefix: "PresentMon-", suffix: "-x64.exe" },
+        install: Install::Exe,
+        dir: "presentmon",
+        file: "PresentMon.exe",
+        download_bytes: 980_320,
+        disk_bytes: 980_320,
         system: None,
     },
 ];
@@ -215,6 +238,15 @@ mod tests {
     }
 
     #[test]
+    fn the_presentmon_rule_takes_only_the_x64_console() {
+        let rule = spec(Component::PresentMon).asset;
+        assert!(rule.matches("PresentMon-2.6.0-x64.exe"));
+        assert!(!rule.matches("PresentMon-2.6.0.msi"));
+        assert!(!rule.matches("PresentMon-2.6.0-arm64.exe"));
+        assert!(!rule.matches("ReleaseSymbols.zip"));
+    }
+
+    #[test]
     fn the_downloader_needs_all_three_and_the_converter_one() {
         assert_eq!(Module::Converter.needs(), &[Component::Ffmpeg]);
         assert_eq!(Module::Downloader.needs().len(), 3);
@@ -224,6 +256,7 @@ mod tests {
     fn ids_arrive_in_camel_case() {
         assert_eq!(serde_json::to_string(&Component::YtDlp).unwrap(), "\"ytDlp\"");
         assert_eq!(serde_json::to_string(&Component::QuickJs).unwrap(), "\"quickJs\"");
+        assert_eq!(serde_json::to_string(&Component::PresentMon).unwrap(), "\"presentMon\"");
         assert_eq!(serde_json::to_string(&Module::Downloader).unwrap(), "\"downloader\"");
     }
 }

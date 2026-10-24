@@ -13,7 +13,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-use crate::settings::{self, SettingsState};
+use crate::settings::SettingsState;
 use crate::{settings_window, widgets, windows};
 
 pub const TRAY_ID: &str = "main";
@@ -121,28 +121,8 @@ fn handle(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         OPEN => settings_window::show(app),
 
-        HIDE_ALL => {
-            let next = !state.get().hidden_all;
-            settings::update(app, &state, |settings| settings.hidden_all = next);
-
-            if next {
-                windows::hide_all(app);
-            } else {
-                windows::show_all(app);
-            }
-
-            refresh(app);
-            settings_window::emit(app);
-        }
-
-        LOCK => {
-            let next = !state.get().locked;
-            settings::update(app, &state, |settings| settings.locked = next);
-
-            settings_window::apply_flags(app);
-            refresh(app);
-            settings_window::emit(app);
-        }
+        HIDE_ALL => settings_window::set_hidden_all(app, !state.get().hidden_all),
+        LOCK => settings_window::set_locked(app, !state.get().locked),
 
         QUIT => windows::quit(app),
 

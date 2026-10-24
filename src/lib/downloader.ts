@@ -21,7 +21,7 @@ export type Status =
   | "failed"
   | "cancelled";
 
-export type Reason = "broken" | "signIn" | "unavailable" | "unsupported" | "network" | "failed";
+export type Reason = "broken" | "signIn" | "botCheck" | "unavailable" | "unsupported" | "network" | "failed";
 
 /** Скачанное за этот запуск: только в памяти Rust, до выхода. */
 export type Saved = {

@@ -295,10 +295,14 @@ async fn install(app: &AppHandle) -> Result<(), Code> {
     })
     .await?;
     std::fs::rename(&partial, &setup).map_err(|error| disk(&error))?;
+    // Права установщик наследует — приложение повышено, а папка открыта на
+    // запись обычному пользователю: запускаем запертые проверенные байты
+    // (`fetch::seal`)
+    let sealed = fetch::seal(&setup, digest)?;
 
     // Запускаем и не ждём: установщик сам дождётся, пока мы выйдем, и сам
-    // поднимет новую версию. Права он наследует — приложение повышено.
-    Command::new(&setup).args(INSTALLER_ARGS).spawn().map_err(|error| {
+    // поднимет новую версию
+    Command::new(&sealed.path).args(INSTALLER_ARGS).spawn().map_err(|error| {
         eprintln!("[обновление] установщик не запустился: {error}");
         Code::Launch
     })?;

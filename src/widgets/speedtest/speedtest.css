@@ -277,3 +277,22 @@
 @container card (width < 20em) {
   .speed .trend__legend { display: none; }
 }
+
+/*
+ * Идёт замер: окно держит высоту покоя (подгонка выключена, SpeedtestWidget),
+ * блок замера заполняет карточку, а дуга ужимается под её высоту. Только при
+ * замере: в покое заполнение замкнуло бы подгонку саму на себя.
+ */
+.speed[data-running="true"] {
+  height: 100%;
+}
+
+.speed[data-running="true"] .speed__dial {
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+}
+
+.speed[data-running="true"] .speed-gauge {
+  --arc-size: min(calc(120px * var(--scale)), 48cqh);
+}

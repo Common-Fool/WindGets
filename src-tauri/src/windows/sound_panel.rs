@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 use crate::settings::SettingsState;
 use crate::widgets;
 
@@ -105,10 +105,10 @@ fn layout(anchor: Point, base: (i32, i32), panel: (i32, i32), area: Rect, previo
 }
 
 fn apply(window: &WebviewWindow, target: Rect) -> Result<(), String> {
-    window.set_size(PhysicalSize::new(target.width as u32, target.height as u32))
-        .map_err(|error| error.to_string())?;
-    window.set_position(PhysicalPosition::new(target.x, target.y))
-        .map_err(|error| error.to_string())
+    crate::snap::release_size_guard(window);
+    // Одним вызовом: раскрытие влево иначе на миг росло бы вправо, на соседний
+    // монитор (`windows::set_bounds`)
+    crate::windows::set_bounds(window, target.x, target.y, target.width as u32, target.height as u32)
 }
 
 fn fit_main(window: &WebviewWindow, request: Request) -> Result<Reply, String> {

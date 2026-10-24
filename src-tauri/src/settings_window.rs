@@ -64,17 +64,16 @@ const TARGET_EVENT: &str = "settings-target";
 /// каждую секунду, никому его не показывая.
 const SHOWN_EVENT: &str = "settings-shown";
 
-/// Ширину держит раздел «Виджеты» (22 октября): колонка разделов с деревом
-/// (216 точек — замер самого длинного имени на пяти языках, испанского
-/// «Generador de contraseñas», `.settings__nav` в settings.css), справа
-/// карточки виджетов и живое превью выбранной рядом с ними. На 880 превью
-/// получает около 330 точек — полный размер большинства карточек уменьшается
-/// не больше чем вдвое. Уже ~520 точек раздела превью уходит само
-/// (`@container`), поэтому предел окна остался прежним.
-const WIDTH: f64 = 880.0;
-const HEIGHT: f64 = 600.0;
-const MIN_WIDTH: f64 = 628.0;
-const MIN_HEIGHT: f64 = 420.0;
+/// Размер окна постоянный (24 октября, слово пользователя): тянуть его
+/// незачем, а суженное окно делало карточки раздела «Виджеты» нечитаемыми.
+/// Колонка разделов с деревом — 216 точек (замер испанского «Generador de
+/// contraseñas», `.settings__nav` в settings.css), справа карточки виджетов
+/// в два столбца и живое превью выбранной. Что не влезает — сокращается или
+/// уходит в подсказку, а не растит окно.
+const WIDTH: f64 = 940.0;
+const HEIGHT: f64 = 900.0;
+const MIN_WIDTH: f64 = WIDTH;
+const MIN_HEIGHT: f64 = HEIGHT;
 
 /// Предел парой — для прилипания при растягивании (`windows::min_logical`).
 pub const MIN_SIZE: (f64, f64) = (MIN_WIDTH, MIN_HEIGHT);
@@ -478,8 +477,7 @@ fn center_and_clamp(
 
 fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
     let url = format!("index.html?widget={LABEL}");
-    // Только старт без сохранённой геометрии: restore_state ниже возвращает
-    // размеры пользователя; размер один на оба дизайна
+    // Размер один на оба дизайна и не меняется
     let (width, height) = (WIDTH, HEIGHT);
 
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(url.into()))
@@ -500,7 +498,7 @@ fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
         // чужие окна — и без кнопки в панели и без Alt+Tab доставать его
         // пришлось бы из трея каждый раз.
         .skip_taskbar(false)
-        .resizable(true)
+        .resizable(false)
         // Поверх всех настройки не держим — ни насовсем, ни пока они в фокусе.
         // Плата известна и принята: виджеты сами поверх всех, поэтому окно
         // настроек будет уходить под них, и виджет придётся отодвинуть или
@@ -519,7 +517,8 @@ fn build(app: &AppHandle) -> Result<WebviewWindow, String> {
 
     // Место и размер помним наравне с виджетами: настройки открывают часто,
     // и каждый раз ловить окно посреди экрана — то ещё удовольствие
-    let _ = window.restore_state(StateFlags::POSITION | StateFlags::SIZE);
+    // Только место: сохранённый прежде размер растянутого окна не возвращается
+    let _ = window.restore_state(StateFlags::POSITION);
 
     // Прилипает как все окна, и оттуда же идёт запись позиций по концу
     // перетаскивания. Блокировка положения его не касается: в нём стоит её
@@ -716,6 +715,30 @@ pub fn set_widget_size(app: AppHandle, id: String, index: usize) {
     emit(&app);
 }
 
+/// Общий путь для рубильника в настройках и в трее: сперва состояние,
+/// затем окна и меню в главном потоке, после — снимок настроек.
+pub fn set_hidden_all(app: &AppHandle, value: bool) {
+    let state = app.state::<SettingsState>();
+    settings::update(app, &state, |settings| settings.hidden_all = value);
+    windows::on_main(app, move |app| {
+        if value {
+            windows::hide_all(&app);
+        } else {
+            windows::show_all(&app);
+        }
+        crate::tray::refresh(&app);
+    });
+    emit(app);
+}
+
+pub fn set_locked(app: &AppHandle, value: bool) {
+    let state = app.state::<SettingsState>();
+    settings::update(app, &state, |settings| settings.locked = value);
+    apply_flags(app);
+    windows::on_main(app, |app| crate::tray::refresh(&app));
+    emit(app);
+}
+
 /// Рубильники: `hidden_all`, `locked`, `snapping`, `autostart`.
 ///
 /// Одной командой, а не четырьмя: у всех четырёх одна форма и один ответ —
@@ -725,22 +748,8 @@ pub fn set_flag(app: AppHandle, name: String, value: bool) {
     let state = app.state::<SettingsState>();
 
     match name.as_str() {
-        "hidden_all" => {
-            settings::update(&app, &state, |settings| settings.hidden_all = value);
-            windows::on_main(&app, move |app| {
-                if value {
-                    windows::hide_all(&app);
-                } else {
-                    windows::show_all(&app);
-                }
-                crate::tray::refresh(&app);
-            });
-        }
-        "locked" => {
-            settings::update(&app, &state, |settings| settings.locked = value);
-            apply_flags(&app);
-            windows::on_main(&app, |app| crate::tray::refresh(&app));
-        }
+        "hidden_all" => return set_hidden_all(&app, value),
+        "locked" => return set_locked(&app, value),
         "snapping" => {
             settings::update(&app, &state, |settings| settings.snapping = value);
             apply_flags(&app);

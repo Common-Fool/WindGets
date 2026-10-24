@@ -197,6 +197,13 @@
   background-size: calc(6px * var(--scale)) 100%; background-repeat: no-repeat; background-position: center;
 }
 .sound__vertical-volume .sound__percent { width: auto; text-align: center; font-size: var(--text-xs); }
+/* У правого края монитора основа зеркальная (панель раскрывается влево):
+   шкала у края экрана, стрелки раскрытия — со стороны панели. */
+.sound[data-view="vertical"][data-side="left"] .sound__controls {
+  grid-template-columns: minmax(0, 1fr) calc(28px * var(--scale));
+}
+.sound[data-view="vertical"][data-side="left"] .sound__vertical-volume { order: 1; }
+.sound[data-view="vertical"][data-side="left"] .sound__tower-actions .sound__tower-disclosure { right: auto; left: 0; }
 .sound[data-view="vertical"] .sound__panel {
   width: calc(280px * var(--scale)); height: calc(252px * var(--scale) - 2px);
   flex: 0 0 auto; min-height: 0;

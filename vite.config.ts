@@ -31,9 +31,19 @@ function previewIpc(): Plugin {
 
 export default defineConfig({
   plugins: [previewIpc(), react()],
-  // В разработке API отдаётся как есть, без предсборки esbuild: иначе плагин
-  // выше его не увидел бы
-  optimizeDeps: { exclude: ["@tauri-apps/api"] },
+  // В разработке API отдаётся как есть, без предсборки: иначе плагин выше его
+  // не увидел бы. Подпути поимённо — имя пакета их не исключает, и предсборка
+  // молча возвращала непереписанный API (рамка превью тогда не грузится)
+  optimizeDeps: {
+    exclude: [
+      "@tauri-apps/api",
+      "@tauri-apps/api/core",
+      "@tauri-apps/api/event",
+      "@tauri-apps/api/window",
+      "@tauri-apps/api/webview",
+      "@tauri-apps/api/webviewWindow",
+    ],
+  },
   // Tauri сам пишет в консоль, чистка экрана Vite мешает читать его вывод
   clearScreen: false,
   server: {

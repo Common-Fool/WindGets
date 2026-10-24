@@ -3,15 +3,16 @@ import { liveSnapshot } from "./live";
 import type { Text } from "./i18n";
 
 /*
- * Докачиваемые программы конвертера и загрузчика: ffmpeg, yt-dlp, QuickJS.
+ * Докачиваемые программы конвертера, загрузчика и счётчика кадров: ffmpeg,
+ * yt-dlp, QuickJS, PresentMon.
  *
  * В установщик они не кладутся — приложение скачивает их само, только по
  * нажатию, с официальных выпусков на GitHub, и само обновляет. Этот стор
  * показывает, что стоит, чего не хватает какому модулю и как идёт установка.
  */
 
-export type ComponentId = "ffmpeg" | "ytDlp" | "quickJs";
-export type ModuleId = "converter" | "downloader";
+export type ComponentId = "ffmpeg" | "ytDlp" | "quickJs" | "presentMon";
+export type ModuleId = "converter" | "downloader" | "fps";
 
 export type ToolComponent = {
   id: ComponentId;

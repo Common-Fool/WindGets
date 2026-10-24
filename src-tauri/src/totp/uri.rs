@@ -100,7 +100,11 @@ pub fn parse(link: &str) -> Result<Parsed, String> {
                     .filter(|digits| (u64::from(MIN_DIGITS)..=u64::from(MAX_DIGITS)).contains(digits))
                     .ok_or_else(|| tr!("totp.error.digits", digits = asked))? as u8;
             }
-            "period" => period = value.parse().unwrap_or(DEFAULT_PERIOD),
+            "period" => {
+                let asked = value.trim();
+                period = asked.parse::<u32>().ok().filter(|period| *period > 0)
+                    .ok_or_else(|| tr!("totp.error.period", period = asked))?;
+            }
             // Чужой алгоритм не подменяется SHA-1: то же «нули опаснее
             // пропусков», что у датчиков, — код был бы неверным всегда
             "algorithm" => match Algorithm::from_name(&value) {
@@ -211,14 +215,17 @@ mod tests {
         assert_eq!(got.shape.algorithm, Algorithm::Sha256);
     }
 
-    /// Нулевой период приводится к умолчанию там же, где и всё остальное.
     #[test]
-    fn a_broken_shape_falls_back_to_the_defaults() {
-        let got = parse("otpauth://totp/A:b?secret=JBSWY3DP&period=0")
-            .expect("с мусором в форме");
-        assert_eq!(got.shape.digits, DEFAULT_DIGITS);
-        assert_eq!(got.shape.period, DEFAULT_PERIOD);
-        assert_eq!(got.shape.algorithm, Algorithm::Sha1);
+    fn invalid_explicit_periods_are_refused_and_spaces_are_trimmed() {
+        for period in ["0", "-1", "4294967296", "", "нет", "30.0", "%200%20"] {
+            let error = parse(&format!("otpauth://totp/A:b?secret=JBSWY3DP&period={period}"))
+                .expect_err("неподдерживаемый период отвергается");
+            assert_eq!(error, tr!("totp.error.period", period = percent(period).trim()));
+        }
+        for (period, expected) in [("%2060%20", 60), ("1", 1), ("4294967295", u32::MAX)] {
+            assert_eq!(parse(&format!("otpauth://totp/A:b?secret=JBSWY3DP&period={period}"))
+                .unwrap().shape.period, expected);
+        }
     }
 
     /// Чужой алгоритм и число цифр вне шести—восьми — отказ, а не тихая

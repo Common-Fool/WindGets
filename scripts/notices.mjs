@@ -438,6 +438,7 @@ const PROGRAMS = [
     note: "Official yt-dlp.exe from https://github.com/yt-dlp/yt-dlp/releases. yt-dlp's own code is released under the Unlicense; the PyInstaller-bundled executable includes GPLv3+ code and is distributed under GPLv3+, see its THIRD_PARTY_LICENSES.txt.",
   },
   { id: "quickjs", name: "QuickJS-NG", license: "MIT", url: "https://github.com/quickjs-ng/quickjs", note: "Official qjs build from https://github.com/quickjs-ng/quickjs/releases, used by yt-dlp as its JavaScript runtime." },
+  { id: "presentmon", name: "PresentMon", license: "MIT", url: "https://github.com/GameTechDev/PresentMon", note: "Official console build from https://github.com/GameTechDev/PresentMon/releases, used by the frame counter to read frame events from ETW." },
   {
     id: "pawnio",
     name: "PawnIO",

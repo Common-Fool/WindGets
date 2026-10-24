@@ -27,6 +27,7 @@ mod update;
 mod picker;
 mod ping;
 mod poller;
+mod fps;
 mod processes;
 mod sensors;
 mod settings;
@@ -104,6 +105,7 @@ pub fn run() {
         .manage(sound::Sound::default())
         .manage(clipboard::Clipboard::default())
         .manage(processes::Processes::default())
+        .manage(fps::Fps::default())
         .manage(weather::Weather::default())
         .manage(converter::Converter::default())
         .manage(downloader::Downloader::default())
@@ -119,6 +121,7 @@ pub fn run() {
             clipboard::clipboard_copy_secret,
             journal::report_crash,
             processes::processes_state,
+            fps::fps_state,
             notes::notes_pages,
             notes::set_notes_pages,
             todo::todo_lists,
@@ -312,8 +315,6 @@ pub fn run() {
             // звать некуда (нет ни одной ссылки), не показывает ничего
             support_reminder::start(&handle);
             update::start(&handle);
-            // Хвосты прерванных установок программ — всегда: место на диске
-            // они занимают независимо от того, включён ли модуль
             Ok(())
         })
         .build(context)

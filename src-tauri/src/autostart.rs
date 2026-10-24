@@ -26,18 +26,30 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// они начинают с каталога самого приложения.** Подложенный туда файл с тем же
 /// именем запустился бы вместо системного — и с нашими правами, а приложение
 /// работает от администратора. В установленном виде каталог защищён правами,
-/// но в разработке он открыт на запись, и полагаться тут не на что. Путь берём
-/// от `SystemRoot`; если переменной нет, остаётся прежнее поведение — хуже
-/// не станет.
+/// но в разработке он открыт на запись, и полагаться тут не на что.
+///
+/// ВАЖНО: **папку Windows спрашиваем у системы, а не у переменной
+/// `SystemRoot`.** Окружение собирается и из `HKCU\Environment`, куда пишет
+/// пользователь без повышения: подставленная там папка отдала бы наш запуск
+/// подложенному exe. `GetSystemWindowsDirectoryW` окружения не читает.
 ///
 /// Общая на всё приложение: тем же путём идут `tar.exe` у компонентов и
 /// `explorer.exe` у «показать в папке».
 #[cfg(windows)]
 pub(crate) fn system_exe(relative: &str) -> std::path::PathBuf {
-    match std::env::var_os("SystemRoot") {
-        Some(root) => std::path::Path::new(&root).join(relative),
-        None => std::path::PathBuf::from(relative),
-    }
+    use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+
+    let mut wide = [0u16; 260];
+    // SAFETY: буфер — срез с длиной; ответ больше буфера значит «не влезло»
+    let length = unsafe { GetSystemWindowsDirectoryW(Some(&mut wide)) } as usize;
+    let root = if length > 0 && length < wide.len() {
+        String::from_utf16_lossy(&wide[..length])
+    } else {
+        // Отказать системный вызов не должен; на этот случай — обычная папка,
+        // но не относительный путь, который искался бы от рабочего каталога
+        r"C:\Windows".to_owned()
+    };
+    std::path::Path::new(&root).join(relative)
 }
 
 fn schtasks(args: &[&str]) -> Result<(), String> {
@@ -109,7 +121,73 @@ pub fn enable() -> Result<(), String> {
     schtasks(&[
         "/Create", "/TN", TASK, "/TR", &target, "/SC", "ONLOGON", "/RU", &user, "/RL", "HIGHEST",
         "/IT", "/DELAY", "0000:15", "/F",
-    ])
+    ])?;
+    // Задача уже есть и работает: неудача правки — не отказ включения, иначе
+    // галочка осталась бы снятой при живой задаче. Правку повторит запуск
+    // (`settings::reconcile_autostart`)
+    if let Err(error) = relax() {
+        eprintln!("[автозапуск] {error}");
+    }
+    Ok(())
+}
+
+/// Снимает с задачи умолчания `schtasks`, которые гасят приложение.
+///
+/// ВАЖНО: **`schtasks /Create` без XML ставит лимит работы 72 часа и запреты
+/// питания от батареи.** Через трое суток без перезагрузки Windows убивала бы
+/// приложение на любой машине, а на ноутбуке оно не стартовало бы от батареи и
+/// гибло бы, когда выдернут зарядку. Ключей для этого у `schtasks` нет, а XML
+/// пришлось бы класть файлом в открытую пользователю папку и отдавать
+/// повышенному `schtasks` — подменяемая команда автозапуска. Поэтому правим
+/// уже заведённую задачу через COM планировщика в отдельном PowerShell, как и
+/// проверку наличия.
+#[cfg(windows)]
+pub fn relax() -> Result<(), String> {
+    let outcome = powershell(&relax_script(TASK))
+        .map_err(|error| format!("настройка задачи не запустилась: {error}"))?;
+    if outcome.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "настройки задачи не поправились (код {:?}): {}",
+        outcome.status.code(),
+        String::from_utf8_lossy(&outcome.stderr).trim()
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn relax() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn relax_script(task: &str) -> String {
+    // Имя передаётся строкой PowerShell, а не частью выполняемого выражения.
+    let task = task.replace('\'', "''");
+    // Регистрируем заново только при расхождении: 6 — создать или обновить,
+    // пользователь и вид входа — те же, что у задачи
+    format!(r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {{
+    $scheduler = New-Object -ComObject Schedule.Service
+    $scheduler.Connect()
+    $folder = $scheduler.GetFolder('\')
+    $definition = $folder.GetTask('{task}').Definition
+    $settings = $definition.Settings
+    if ($settings.DisallowStartIfOnBatteries -or $settings.StopIfGoingOnBatteries -or $settings.ExecutionTimeLimit -ne 'PT0S') {{
+        $settings.DisallowStartIfOnBatteries = $false
+        $settings.StopIfGoingOnBatteries = $false
+        $settings.ExecutionTimeLimit = 'PT0S'
+        $principal = $definition.Principal
+        $null = $folder.RegisterTaskDefinition('{task}', $definition, 6, $principal.UserId, $null, $principal.LogonType)
+    }}
+    exit 0
+}} catch {{
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}}
+"#)
 }
 
 /// Убирает задачу. Отсутствие задачи ошибкой не считаем: цель достигнута.
@@ -147,15 +225,21 @@ pub fn is_enabled() -> Result<bool, String> {
 /// /Query до этого пути не доходит.
 #[cfg(windows)]
 fn query_missing() -> Result<bool, String> {
-    use std::os::windows::process::CommandExt;
-
-    let script = presence_script(TASK);
-    let outcome = Command::new(system_exe("System32\\WindowsPowerShell\\v1.0\\powershell.exe"))
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
+    let outcome = powershell(&presence_script(TASK))
         .map_err(|error| format!("проверка планировщика не запустилась: {error}"))?;
     presence_result(outcome.status.code(), &String::from_utf8_lossy(&outcome.stderr))
+}
+
+/// Скрипт планировщика в отдельном PowerShell без окна: COM планировщика не
+/// пересекается с COM главного потока WebView2.
+#[cfg(windows)]
+fn powershell(script: &str) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+
+    Command::new(system_exe("System32\\WindowsPowerShell\\v1.0\\powershell.exe"))
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
 }
 
 #[cfg(not(windows))]
@@ -296,6 +380,23 @@ mod tests {
         for code in [None, Some(1), Some(5), Some(-1)] {
             assert!(presence_result(code, "проверка не удалась").is_err());
         }
+    }
+
+    #[test]
+    fn the_task_loses_the_schtasks_defaults() {
+        let script = relax_script("name'quoted");
+        assert!(script.contains("GetTask('name''quoted')"));
+        assert!(script.contains("ExecutionTimeLimit = 'PT0S'"));
+        assert!(script.contains("DisallowStartIfOnBatteries = $false"));
+        assert!(script.contains("StopIfGoingOnBatteries = $false"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_programs_live_in_an_absolute_folder() {
+        let path = system_exe("System32\\schtasks.exe");
+        assert!(path.is_absolute(), "{}", path.display());
+        assert!(path.exists(), "{}", path.display());
     }
 
     #[test]

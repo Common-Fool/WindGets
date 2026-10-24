@@ -25,6 +25,8 @@ no background work.
   hardware they run on and hide what your machine does not have.
 - **Network** — download and upload speed plus ping to three targets.
 - **Processes** — top processes by CPU or memory.
+- **Frame counter** — FPS, 1% low and frame time of the game in front, via
+  Intel PresentMon (reads ETW, injects nothing into the game).
 - **Speedtest** — on demand, via Measurement Lab (NDT7).
 - **Weather** — Open-Meteo, no account or key needed.
 - **Sound** — output devices and a per-app volume mixer.
@@ -76,6 +78,9 @@ The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
     <td align="center"><img src="assets/screenshots/converter.webp" alt="Converter" width="260"><br>Converter</td>
     <td align="center"><img src="assets/screenshots/downloader.webp" alt="Downloader" width="260"><br>Downloader</td>
   </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/fps.webp" alt="Frame counter" width="260"><br>Frame counter</td>
+  </tr>
 </table>
 
 </details>
@@ -89,8 +94,8 @@ The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
 - **PawnIO driver** for CPU and motherboard sensors. It is not bundled: the CPU
   card offers to install it from its official GitHub release, with SHA-256
   verification, only after you agree.
-- ffmpeg, yt-dlp and QuickJS are not bundled either. The converter and the
-  downloader fetch them from the authors' official GitHub releases when you
+- ffmpeg, yt-dlp, QuickJS and PresentMon are not bundled either. The
+  converter, the downloader and the frame counter fetch them from the authors' official GitHub releases when you
   ask, verify SHA-256 and can remove them with one button. An ffmpeg already
   on `PATH` is used as is.
 

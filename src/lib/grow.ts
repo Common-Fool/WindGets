@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLook, type Design } from "./look";
-import { useWindowReset, useWindowResized } from "./resized";
+import { useWindowMoved, useWindowReset, useWindowResized } from "./resized";
 
 /*
  * Окно, которое растёт под раскрытую панель, например плейлисты у пульта.
@@ -257,6 +257,15 @@ export function useSoundSidePanel(
   const [resized, setResized] = useState(0);
   const latest = useRef(0);
   useWindowResized(() => {
+    latest.current += 1;
+    setResized((value) => value + 1);
+  });
+  // Перенесли к другому краю — основа отзеркаливается. Спрашиваем только при
+  // закрытой панели: тогда Rust окно не двигает, а лишь называет сторону по
+  // нынешнему месту. Раскрытую панель перенос не переворачивает.
+  const closed = panelWidth === 0;
+  useWindowMoved(() => {
+    if (!closed) return;
     latest.current += 1;
     setResized((value) => value + 1);
   });

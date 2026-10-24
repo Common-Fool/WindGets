@@ -21,6 +21,9 @@ export const SIZE_EVENT = "widget-size";
 
 export const RESET_EVENT = "widget-reset";
 
+/** Окно перенесли мышью; шлёт его Rust по концу перетаскивания. */
+export const MOVED_EVENT = "widget-moved";
+
 function useWindowEvent(event: string, handler: () => void): void {
   const act = useRef(handler);
 
@@ -55,4 +58,9 @@ export function useWindowResized(handler: () => void): void {
 /** Сброшена основа: состояние панели остаётся, её высота применяется заново. */
 export function useWindowReset(handler: () => void): void {
   useWindowEvent(RESET_EVENT, handler);
+}
+
+/** Окно перенесли мышью — место у края экрана могло смениться. */
+export function useWindowMoved(handler: () => void): void {
+  useWindowEvent(MOVED_EVENT, handler);
 }

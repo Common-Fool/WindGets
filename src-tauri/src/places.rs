@@ -20,7 +20,7 @@
 //! не разбирается или был записан при меньшем числе мониторов, чем есть
 //! сейчас и было у копии. Убранный насовсем монитор копию не вернёт: мониторов
 //! сейчас меньше, чем у неё, и раскладкой остаётся то, что расставил человек.
-//! Начали без части мониторов — хорошую копию в этом запуске не обновляем,
+//! Не хватало мониторов при запуске или записи — копию в этом сеансе не обновляем,
 //! даже если они вернулись: сама раскладка пока могла остаться каскадом.
 //! Ошибка чтения основного файла запрещает его замену до перезапуска.
 
@@ -58,6 +58,10 @@ fn monitors() -> u32 {
 /// приложения, когда спросить у Tauri ещё не у кого.
 pub fn dir(identifier: &str) -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|root| Path::new(&root).join(identifier))
+}
+
+fn read_written(dir: &Path) -> Option<u32> {
+    std::fs::read_to_string(dir.join(WRITTEN)).ok()?.trim().parse().ok()
 }
 
 fn read_good(dir: &Path) -> Option<Good> {
@@ -106,9 +110,7 @@ impl Session {
         if now < good.monitors {
             self.monitor_limit = Some(now);
         }
-        let written = std::fs::read_to_string(dir.join(WRITTEN))
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok());
+        let written = read_written(dir);
 
         let reason = match main {
             Err(MainError::Invalid) => "файл мест не разобрался",
@@ -131,22 +133,31 @@ impl Session {
         if self.writable { MAIN } else { ".window-state.unread.json" }
     }
 
-    fn after_save(&self, dir: &Path, now: u32) {
+    fn after_save(&mut self, dir: &Path, now: u32) {
         if !self.writable {
             return;
+        }
+        let previous = read_good(dir);
+        if previous.as_ref().is_some_and(|good| now < good.monitors) {
+            self.monitor_limit = Some(self.monitor_limit.map_or(now, |limit| now.min(limit)));
         }
         // Даже после возвращения монитора каскад остаётся каскадом. Метка
         // сохраняет нехватку, чтобы следующий запуск вернул хорошую копию.
         let written = self.monitor_limit.map_or(now, |limit| now.min(limit));
-        if let Err(error) = crate::disk::write_atomically(&dir.join(WRITTEN), &written.to_string()) {
-            eprintln!("число мониторов при записи мест не записалось: {error}");
+        if read_written(dir) != Some(written) {
+            if let Err(error) = crate::disk::write_atomically(&dir.join(WRITTEN), &written.to_string()) {
+                eprintln!("число мониторов при записи мест не записалось: {error}");
+            }
         }
-        if self.monitor_limit.is_some() || read_good(dir).is_some_and(|good| now < good.monitors) {
+        if self.monitor_limit.is_some() {
             return;
         }
         let Ok(Some(places)) = read_main(dir) else {
             return;
         };
+        if previous.is_some_and(|good| good.monitors == now && good.places == places) {
+            return;
+        }
         let good = Good { monitors: now, places };
         match serde_json::to_string(&good) {
             Ok(text) => {
@@ -173,7 +184,7 @@ pub fn filename() -> &'static str {
 }
 
 /// После удачной записи плагином: отметить число мониторов и обновить копию,
-/// если раскладка в этом запуске не была загружена без части мониторов.
+/// если в этом сеансе при запуске и записях хватало мониторов.
 pub fn after_save(dir: &Path) {
     SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).after_save(dir, monitors());
 }
@@ -267,6 +278,48 @@ mod tests {
         std::fs::remove_file(dir.join(MAIN)).unwrap();
         std::fs::create_dir(dir.join(MAIN)).unwrap();
         assert!(matches!(read_main(&dir), Err(MainError::Read(_))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_monitor_lost_during_the_session_preserves_the_copy_until_restart() {
+        let dir = scratch("places-monitor-lost-during-session");
+        std::fs::write(dir.join(MAIN), r#"{"cpu":{"x":-900}}"#).unwrap();
+        let mut session = Session::new();
+        session.after_save(&dir, 2);
+        let good = std::fs::read(dir.join(GOOD)).unwrap();
+        std::fs::write(dir.join(MAIN), r#"{"cpu":{"x":26}}"#).unwrap();
+        session.after_save(&dir, 1);
+        assert_eq!(session.monitor_limit, Some(1));
+        session.after_save(&dir, 2);
+        assert_eq!(std::fs::read(dir.join(GOOD)).unwrap(), good);
+        assert_eq!(read_written(&dir), Some(1));
+        Session::new().heal(&dir, 2, read_main(&dir));
+        assert_eq!(read_main(&dir).unwrap().unwrap()["cpu"]["x"], -900);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn identical_places_and_monitor_counts_do_not_rewrite_the_companions() {
+        let dir = scratch("places-unchanged-companions");
+        let places = serde_json::json!({ "cpu": { "x": 10 } });
+        let text = serde_json::to_string_pretty(&Good { monitors: 2, places: places.clone() }).unwrap();
+        std::fs::write(dir.join(GOOD), &text).unwrap();
+        std::fs::write(dir.join(MAIN), serde_json::to_string(&places).unwrap()).unwrap();
+        std::fs::write(dir.join(WRITTEN), " 2\n").unwrap();
+        let mut session = Session::new();
+        session.after_save(&dir, 2);
+        // Форматирование отличается от записи after_save: перезапись видна
+        // по байтам и не зависит от точности часов файловой системы.
+        assert_eq!(std::fs::read_to_string(dir.join(GOOD)).unwrap(), text);
+        assert_eq!(std::fs::read_to_string(dir.join(WRITTEN)).unwrap(), " 2\n");
+        std::fs::write(dir.join(MAIN), r#"{"cpu":{"x":20}}"#).unwrap();
+        session.after_save(&dir, 2);
+        assert_eq!(read_good(&dir).unwrap().places["cpu"]["x"], 20);
+        assert_eq!(std::fs::read_to_string(dir.join(WRITTEN)).unwrap(), " 2\n");
+        session.after_save(&dir, 3);
+        assert_eq!(read_good(&dir).unwrap().monitors, 3);
+        assert_eq!(read_written(&dir), Some(3));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

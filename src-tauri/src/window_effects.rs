@@ -84,7 +84,7 @@ pub fn effective_design(settings: &settings::Settings, label: &str) -> settings:
 /// Карточка напоминания о донатах (`support-reminder`) собрана на общих
 /// токенах и идёт за выбранным дизайном с самого начала.
 fn new_design_ready(label: &str) -> bool {
-    matches!(label, "cpu" | "gpu" | "sound" | "processes" | "disks" | "network" | "speedtest" | "weather" | "media" | "spotify" | "clipboard" | "notes" | "todo" | "mail" | "password" | "totp" | "converter" | "downloader" | "settings" | crate::support_reminder::LABEL)
+    matches!(label, "cpu" | "gpu" | "sound" | "processes" | "fps" | "disks" | "network" | "speedtest" | "weather" | "media" | "spotify" | "clipboard" | "notes" | "todo" | "mail" | "password" | "totp" | "converter" | "downloader" | "settings" | crate::support_reminder::LABEL)
 }
 
 /// Смена дизайна не пересоздаёт окна и не меняет их виды, размеры и панели.

@@ -13,10 +13,13 @@ const TOOLS: ToolsView = {
       downloadBytes: 18 * 1024 ** 2, diskBytes: 18 * 1024 ** 2, checkedAt: Math.floor(NOW / 1000) },
     { id: "quickJs", name: "QuickJS", presence: "installed", version: "0.10.1",
       downloadBytes: 2 * 1024 ** 2, diskBytes: 2 * 1024 ** 2, checkedAt: Math.floor(NOW / 1000) },
+    { id: "presentMon", name: "PresentMon", presence: "installed", version: "2.6.0",
+      downloadBytes: 980_320, diskBytes: 980_320, checkedAt: Math.floor(NOW / 1000) },
   ],
   modules: [
     { id: "converter", needs: ["ffmpeg"], missing: [] },
     { id: "downloader", needs: ["ytDlp", "quickJs", "ffmpeg"], missing: [] },
+    { id: "fps", needs: ["presentMon"], missing: [] },
   ],
   job: null,
   failure: null,

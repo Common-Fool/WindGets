@@ -89,9 +89,6 @@ sha1 = "0.10.6"
 async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
 # Разбор MIME, кодировок RFC 2047 и частей тела писем для карточки почты
 mail-parser = "0.11.8"
-# Мост между Tokio и futures-io ради async-imap: транспорт держит Tokio,
-# а клиент IMAP принимает AsyncRead/AsyncWrite из futures-io. Уже в Cargo.lock
-tokio-util = { version = "0.7.19", features = ["compat"] }
 # TLS-обёртка над сокетом Tokio для IMAPS на системном schannel через native-tls
 tokio-native-tls = "0.3.1"
 # Список процессов ради своего виджета. Своими руками это снимок Toolhelp32,

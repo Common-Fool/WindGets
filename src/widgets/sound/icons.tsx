@@ -42,8 +42,8 @@ export function SpeakerIcon() {
   );
 }
 
-export function ChevronIcon({ up = false, right = false }: { up?: boolean; right?: boolean }) {
-  return <Glyph><path d={right ? "m9 6 6 6-6 6" : up ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} /></Glyph>;
+export function ChevronIcon({ up = false, right = false, left = false }: { up?: boolean; right?: boolean; left?: boolean }) {
+  return <Glyph><path d={left ? "m15 6-6 6 6 6" : right ? "m9 6 6 6-6 6" : up ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} /></Glyph>;
 }
 
 export function CycleIcon() {

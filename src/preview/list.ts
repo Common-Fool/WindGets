@@ -13,6 +13,7 @@ export const PREVIEWED: readonly string[] = [
   "processes",
   "disks",
   "network",
+  "fps",
   "weather",
   "speedtest",
   "sound",

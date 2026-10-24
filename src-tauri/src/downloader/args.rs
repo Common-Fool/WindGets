@@ -187,9 +187,13 @@ pub fn part_of(format_ids: &str, current: &str) -> Option<(usize, usize)> {
 pub enum Reason {
     /// Сайт поменялся, и этот yt-dlp его больше не понимает: лечится свежим.
     Broken,
-    /// Нужен вход: закрытое, для подписчиков, по возрасту, «подтвердите, что
-    /// вы не робот». Без cookies этого не скачать — и делать этого мы не будем.
+    /// Нужен вход: закрытое, для подписчиков, по возрасту. Без cookies этого
+    /// не скачать — и делать этого мы не будем.
     SignIn,
+    /// «Подтвердите, что вы не бот»: YouTube не пускает адрес — почти всегда
+    /// VPN или прокси. Пишет он это словами «Sign in…», но вход тут ни при
+    /// чём, лечится выключенным VPN (22 октября, слово пользователя).
+    BotCheck,
     Unavailable,
     Unsupported,
     Network,
@@ -221,6 +225,8 @@ pub fn classify_error(lines: &[String]) -> Reason {
         "HTTP Error 403",
     ]) {
         Reason::Broken
+    } else if has(&["not a bot", "not a robot"]) {
+        Reason::BotCheck
     } else if has(&["Sign in", "sign in", "Private video", "members-only", "confirm your age"]) {
         Reason::SignIn
     } else if has(&["Unsupported URL"]) {
@@ -414,9 +420,14 @@ mod tests {
             classify_error(&lines("ERROR: [generic] video: Unable to download webpage: HTTPSConnection(host='x.invalid', port=443): Failed to resolve 'x.invalid' ([Errno 11001] getaddrinfo failed)")),
             Reason::Network
         );
+        // Проверка на бота — не вход, хоть и начинается с «Sign in»
         assert_eq!(
-            classify_error(&lines("ERROR: [youtube] abc: Sign in to confirm you’re not a bot")),
-            Reason::SignIn
+            classify_error(&lines("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication.")),
+            Reason::BotCheck
+        );
+        assert_eq!(
+            classify_error(&lines("ERROR: [youtube] abc: Sign in to confirm you're not a bot")),
+            Reason::BotCheck
         );
         assert_eq!(
             classify_error(&lines("ERROR: [youtube] abc: Private video. Sign in if you've been granted access to this video")),

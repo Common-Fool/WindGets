@@ -46,7 +46,8 @@ const DOWNLOAD_BYTES: u64 = 3_410_960;
 /// обновиться.
 const MIN_MAJOR: u32 = 2;
 
-/// Установщик ставит драйвер за секунды; срок — на случай, если он встал.
+/// Установщик ставит драйвер за секунды; дольше — пишем в журнал, но ждём
+/// до конца (`run_unbound`).
 const INSTALLER_LIMIT: Duration = Duration::from_secs(300);
 
 /// Как часто опрос датчиков проверяет, не поставили ли драйвер мимо нас.
@@ -392,7 +393,7 @@ async fn install(app: &AppHandle) -> Result<(), Problem> {
     publish(app);
 
     let client = crate::tools::client()?;
-    let release = github::latest(&client, REPO).await?;
+    let release = crate::tools::latest(&pawnio.cancel, &client, REPO).await?;
     let asset = github::pick_asset(&release, AssetRule::Exact(ASSET))?;
     let digest = github::parse_digest(asset.digest.as_deref())?;
 
@@ -410,11 +411,19 @@ async fn install(app: &AppHandle) -> Result<(), Problem> {
     .await?;
     let _ = std::fs::remove_file(&setup);
     std::fs::rename(&partial, &setup).map_err(|error| disk(&error))?;
+    // Установщик идёт от администратора из папки, открытой на запись
+    // пользователю: запускаем запертые проверенные байты (`fetch::seal`)
+    let sealed = fetch::seal(&setup, digest)?;
+
+    // Драйвер, стоявший до нас, — чужой (FanControl, LHM), даже если мы его
+    // обновили: «Удалить» не должен снести его из-под другой программы
+    let foreign = registry_value("DisplayVersion").is_some() && !pawnio.lock().stored.ours;
 
     pawnio.set_job(Some(Job::Installing));
     publish(app);
 
-    let outcome = run_quietly(Command::new(&setup), &["-install", "-silent"]).await;
+    let outcome = run_quietly(Command::new(&sealed.path), &["-install", "-silent"]).await;
+    drop(sealed);
     // Установщик своё дело сделал: драйвер стоит в Program Files, и для
     // удаления у него свой uninstall.exe
     let _ = std::fs::remove_dir_all(&dir);
@@ -422,7 +431,7 @@ async fn install(app: &AppHandle) -> Result<(), Problem> {
     match outcome {
         Some(code) if DONE.contains(&code) => {
             eprintln!("[pawnio] установлен {} (код {code})", release.tag_name);
-            pawnio.remember(Stored { ours: true, tag: Some(release.tag_name.clone()) });
+            pawnio.remember(Stored { ours: !foreign, tag: Some(release.tag_name.clone()) });
             Ok(())
         }
         exit => {
@@ -433,28 +442,45 @@ async fn install(app: &AppHandle) -> Result<(), Problem> {
 }
 
 /// Запускает установщик или удаление с погашенным сайдкаром и ждёт конца.
-/// `None` — не запустился, убит по сроку или код не узнать.
+/// `None` — не запустился или код не узнать.
 async fn run_quietly(mut command: Command, args: &[&str]) -> Option<i32> {
     command.args(args);
     crate::poller::hold(true);
-    // Создаём задание только после подтверждения: срок ожидания не даёт
-    // разрешения ставить поверх ещё работающего сайдкара.
+    // Запускаем только после подтверждения: срок ожидания не даёт разрешения
+    // ставить поверх ещё работающего сайдкара.
     let ran = run_after_stop(crate::poller::held, SIDECAR_GONE, || {
-        tauri::async_runtime::spawn_blocking(move || crate::child::run(command, INSTALLER_LIMIT))
+        tauri::async_runtime::spawn_blocking(move || run_unbound(command, INSTALLER_LIMIT))
     }).await?.await;
-    match ran {
-        Ok(Ok((code, lines))) => {
-            for line in lines.iter().filter(|line| !line.text().trim().is_empty()) {
-                eprintln!("[pawnio] {}", line.text());
-            }
-            code
-        }
-        Ok(Err(error)) => {
-            eprintln!("[pawnio] установщик не запустился: {error}");
-            None
-        }
+    ran.unwrap_or_else(|error| {
+        eprintln!("[pawnio] поток установщика упал: {error}");
+        None
+    })
+}
+
+/// Запуск установщика драйвера мимо `child::run`.
+///
+/// ВАЖНО: **драйвер, брошенный посреди установки, хуже любого исхода.**
+/// `child::run` сажает процесс в задание с `KILL_ON_JOB_CLOSE` и по сроку
+/// убивает: установщик гиб бы с выходом или падением приложения и по таймеру.
+/// Здесь процесс свой, вне задания, и ждём его до конца: срок — только запись
+/// в журнал по окончании. Перестань мы ждать раньше, «занято» снялось бы, а сайдкар
+/// поднялся бы и открыл драйвер, который установщик ещё меняет.
+fn run_unbound(mut command: Command, limit: Duration) -> Option<i32> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::child::CREATE_NO_WINDOW);
+    }
+    command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let started = Instant::now();
+    let status = command.spawn().and_then(|mut child| child.wait());
+    if started.elapsed() > limit {
+        eprintln!("[pawnio] установщик работал {} с — дольше обычного", started.elapsed().as_secs());
+    }
+    match status {
+        Ok(status) => status.code(),
         Err(error) => {
-            eprintln!("[pawnio] поток установщика упал: {error}");
+            eprintln!("[pawnio] установщик не запустился или не дождались его: {error}");
             None
         }
     }

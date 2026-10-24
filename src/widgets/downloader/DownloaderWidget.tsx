@@ -415,7 +415,10 @@ function Status({
       case "failed":
         phase = "failed";
         text = reasonText(t, view.reason ?? "failed", view.detail);
-        hint = view.detail ?? text;
+        // Только наш текст: у разобранного отказа сырой вывод yt-dlp — шум на
+        // три строки (22 октября, слово пользователя), у неразобранного он и
+        // есть текст. Подробности — в журнале
+        hint = text;
         break;
       case "cancelled":
         phase = "cancelled";

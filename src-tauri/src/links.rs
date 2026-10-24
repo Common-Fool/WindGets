@@ -34,11 +34,8 @@ pub(crate) fn launch(target: &str) {
     #[cfg(windows)]
     {
         // Ответа не ждём — `spawn`, а не `status`: браузер живёт своей жизнью.
-        // Путь полный от SystemRoot: см. `autostart::system_exe` и `settings_window::open_config_dir`.
-        let explorer = match std::env::var_os("SystemRoot") {
-            Some(root) => std::path::Path::new(&root).join("explorer.exe"),
-            None => std::path::PathBuf::from("explorer.exe"),
-        };
+        // Путь полный: см. `autostart::system_exe` и `settings_window::open_config_dir`.
+        let explorer = crate::autostart::system_exe("explorer.exe");
         if let Err(error) = std::process::Command::new(explorer).arg(target).spawn() {
             eprintln!("ссылка не открылась: {error}");
         }

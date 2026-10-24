@@ -78,6 +78,24 @@ pub enum Status {
     Cancelled,
 }
 
+impl Item {
+    fn apply_probe(&mut self, result: Result<(Option<Probe>, Option<Kind>), String>) {
+        match result {
+            Ok((Some(probe), Some(kind))) => {
+                self.targets = args::targets(kind, probe.audio.is_some());
+                self.kind = Some(kind);
+                self.probe = Some(probe);
+                self.status = Status::Ready;
+            }
+            Ok(_) => self.status = Status::Unsupported,
+            Err(reason) => {
+                self.status = Status::Failed;
+                self.reason = Some(reason);
+            }
+        }
+    }
+}
+
 struct Item {
     id: u64,
     path: PathBuf,
@@ -340,6 +358,22 @@ impl Converter {
 }
 
 impl Inner {
+    /// История уступает место новой работе, но живые строки не вытесняются.
+    fn make_room(&mut self) -> bool {
+        if self.items.len() < MAX_ITEMS {
+            return true;
+        }
+        let oldest = self.items.iter().position(|item| {
+            matches!(item.status, Status::Done | Status::Failed | Status::Unsupported | Status::Cancelled)
+        });
+        if let Some(index) = oldest {
+            self.items.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
     fn remove(&mut self, id: u64) {
         let trimmed = self.trim_subject().is_some_and(|item| item.id == id);
         self.items.retain(|item| item.id != id);
@@ -539,7 +573,7 @@ pub fn accept_drops(app: &AppHandle) {
     let (ask, hover, drop) = (app.clone(), app.clone(), app.clone());
     let attached = crate::file_drop::attach(
         &window,
-        move || !ask.state::<Converter>().lock().running,
+        move || accepts_files(&ask),
         // Из оконной процедуры к Tauri не ходим: событие уходит своим
         // потоком, а процедура возвращается сразу
         move |over| {
@@ -550,7 +584,7 @@ pub fn accept_drops(app: &AppHandle) {
         },
         move |paths| {
             let converter = drop.state::<Converter>();
-            if !converter.lock().running {
+            if accepts_files(&drop) {
                 converter.order(Order::Add(paths));
             }
         },
@@ -586,8 +620,18 @@ fn work(app: AppHandle, inbox: Receiver<Order>) {
     }
 }
 
+/// Без готового ffmpeg файлы не принимаются: незавершённый поиск ещё не
+/// означает отсутствующую программу. Проверяем и при броске, и в очереди.
+fn accepts_files(app: &AppHandle) -> bool {
+    app.state::<Tools>().ready(Module::Converter) && !app.state::<Converter>().lock().running
+}
+
 /// Ставит файлы в список и пробует каждый.
 fn add(app: &AppHandle, paths: Vec<PathBuf>) {
+    if !app.state::<Tools>().ready(Module::Converter) {
+        eprintln!("[конвертер] файлы не приняты: FFmpeg ещё не готов");
+        return;
+    }
     let converter = app.state::<Converter>();
     let ffmpeg = app.state::<Tools>().locate(Component::Ffmpeg);
 
@@ -600,13 +644,14 @@ fn add(app: &AppHandle, paths: Vec<PathBuf>) {
         let mut inner = converter.lock();
         let mut fresh = Vec::new();
         for path in paths {
-            if inner.items.len() >= MAX_ITEMS {
-                continue;
-            }
             let queued = inner.items.iter().any(|item| {
                 item.path == path && matches!(item.status, Status::Probing | Status::Ready)
             });
             if queued {
+                continue;
+            }
+            if !inner.make_room() {
+                eprintln!("[конвертер] файл не добавлен: предел {MAX_ITEMS} живых строк: {}", path.display());
                 continue;
             }
 
@@ -645,39 +690,43 @@ fn add(app: &AppHandle, paths: Vec<PathBuf>) {
             publish(app);
             break;
         }
-        let probed = ffmpeg.as_deref().map(|ffmpeg| probe_file(ffmpeg, &path));
+        let probed = ffmpeg.as_deref()
+            .ok_or_else(|| tr!("converter.error.noFfmpeg"))
+            .and_then(|ffmpeg| probe_file(ffmpeg, &path));
         let mut inner = converter.lock();
         let Some(item) = inner.items.iter_mut().find(|item| item.id == id) else {
             continue;
         };
-        match probed {
-            Some((Some(probe), Some(kind))) => {
-                item.targets = args::targets(kind, probe.audio.is_some());
-                item.kind = Some(kind);
-                item.probe = Some(probe);
-                item.status = Status::Ready;
-            }
-            Some(_) => item.status = Status::Unsupported,
-            None => {
-                item.status = Status::Failed;
-                item.reason = Some(tr!("converter.error.noFfmpeg"));
-            }
-        }
+        item.apply_probe(probed);
         drop(inner);
         publish(app);
     }
 }
 
 /// Что внутри файла.
-fn probe_file(ffmpeg: &Path, path: &Path) -> (Option<Probe>, Option<Kind>) {
+fn probe_file(ffmpeg: &Path, path: &Path) -> Result<(Option<Probe>, Option<Kind>), String> {
+    probe_file_with(ffmpeg, path, child::run)
+}
+
+fn probe_failure(error: String) -> String {
+    if error == "timed out" {
+        tr!("converter.error.probeTimeout")
+    } else {
+        format!("{}: {error}", tr!("converter.error.noStart"))
+    }
+}
+
+fn probe_file_with(
+    ffmpeg: &Path,
+    path: &Path,
+    mut run: impl FnMut(Command, Duration) -> Result<(Option<i32>, Vec<Line>), String>,
+) -> Result<(Option<Probe>, Option<Kind>), String> {
     let mut command = Command::new(ffmpeg);
     command.args(["-hide_banner", "-nostdin", "-i"]).arg(path);
-    let Ok((_, lines)) = child::run(command, PROBE_LIMIT) else {
-        return (None, None);
-    };
+    let (_, lines) = run(command, PROBE_LIMIT).map_err(probe_failure)?;
     let texts: Vec<&str> = lines.iter().map(Line::text).collect();
     let Some(probe) = probe::parse(&texts) else {
-        return (None, None);
+        return Ok((None, None));
     };
 
     let frames = if probe::needs_frame_count(&probe) {
@@ -686,16 +735,15 @@ fn probe_file(ffmpeg: &Path, path: &Path) -> (Option<Probe>, Option<Kind>) {
             .args(["-hide_banner", "-nostdin", "-v", "error", "-i"])
             .arg(path)
             .args(["-map", "0:v:0", "-c", "copy", "-f", "null", "-", "-progress", "pipe:1"]);
-        child::run(command, PROBE_LIMIT).ok().and_then(|(_, lines)| {
-            let texts: Vec<&str> = lines.iter().map(Line::text).collect();
-            probe::parse_frames(&texts)
-        })
+        let (_, lines) = run(command, PROBE_LIMIT).map_err(probe_failure)?;
+        let texts: Vec<&str> = lines.iter().map(Line::text).collect();
+        probe::parse_frames(&texts)
     } else {
         None
     };
 
     let kind = probe::classify(&probe, frames);
-    (Some(probe), kind)
+    Ok((Some(probe), kind))
 }
 
 /// Чем кончилась одна конвертация.
@@ -1006,7 +1054,7 @@ pub fn converter_state(app: AppHandle) -> Option<View> {
 /// Выбор файлов окном Windows поверх карточки.
 #[tauri::command]
 pub fn converter_pick(app: AppHandle, window: WebviewWindow) {
-    if app.state::<Converter>().lock().running {
+    if !accepts_files(&app) {
         return;
     }
     let owner = window.hwnd().map(|hwnd| hwnd.0 as isize).unwrap_or(0);
@@ -1309,6 +1357,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn completed_rows_make_room_for_new_files_without_losing_live_work() {
+        for status in [Status::Done, Status::Failed, Status::Unsupported, Status::Cancelled] {
+            let mut inner = Inner::default();
+            inner.items.push(item(1, Kind::Video, true, Status::Ready));
+            inner.items.push(item(2, Kind::Video, true, status));
+            inner.items.push(item(3, Kind::Video, true, Status::Done));
+            for id in 4..=MAX_ITEMS as u64 {
+                inner.items.push(item(id, Kind::Video, true, Status::Probing));
+            }
+            assert!(inner.make_room());
+            assert_eq!(inner.items.len(), MAX_ITEMS - 1);
+            assert_eq!(inner.items[0].id, 1);
+            assert_eq!(inner.items[1].id, 3, "вытесняется самая старая завершённая строка");
+        }
+    }
+
+    #[test]
+    fn a_full_live_queue_rejects_overflow_without_removing_items() {
+        let mut inner = Inner::default();
+        for id in 1..=MAX_ITEMS as u64 {
+            let status = [Status::Probing, Status::Ready, Status::Running][id as usize % 3];
+            inner.items.push(item(id, Kind::Video, true, status));
+        }
+        assert!(!inner.make_room());
+        assert_eq!(inner.items.len(), MAX_ITEMS);
+        assert_eq!(inner.items[0].id, 1);
+    }
+
+    #[test]
+    fn probe_launch_and_timeout_failures_are_not_unsupported_files() {
+        for error in ["не удалось создать процесс", "timed out"] {
+            let result = probe_file_with(Path::new("ffmpeg"), Path::new("clip"), |_, _| Err(error.to_owned()));
+            let mut row = item(1, Kind::Video, true, Status::Probing);
+            row.apply_probe(result);
+            assert_eq!(row.status, Status::Failed);
+            let reason = row.reason.unwrap();
+            if error == "timed out" {
+                assert_eq!(reason, tr!("converter.error.probeTimeout"));
+            } else {
+                assert!(reason.contains(error));
+            }
+        }
+        let result = probe_file_with(Path::new("ffmpeg"), Path::new("notes.txt"), |_, _| {
+            Ok((Some(1), vec![Line::Err("Invalid data found when processing input".to_owned())]))
+        });
+        let mut row = item(2, Kind::Video, true, Status::Probing);
+        row.apply_probe(result);
+        assert_eq!(row.status, Status::Unsupported);
+        assert!(row.reason.is_none());
+    }
+
+    #[test]
+    fn a_failed_gif_frame_count_is_a_probe_failure_too() {
+        let mut calls = 0;
+        let result = probe_file_with(Path::new("ffmpeg"), Path::new("clip.gif"), |_, _| {
+            calls += 1;
+            if calls == 1 {
+                Ok((Some(1), vec![
+                    Line::Err("Input #0, gif, from 'clip.gif':".to_owned()),
+                    Line::Err("  Stream #0:0: Video: gif, bgra, 320x240, 10 fps".to_owned()),
+                ]))
+            } else {
+                Err("timed out".to_owned())
+            }
+        });
+        assert_eq!(calls, 2);
+        let mut row = item(1, Kind::Video, false, Status::Probing);
+        row.apply_probe(result);
+        assert_eq!(row.status, Status::Failed);
+        assert_eq!(row.reason, Some(tr!("converter.error.probeTimeout")));
+    }
+
+    #[test]
     fn shutdown_removes_only_the_active_pair_and_cannot_be_undone_by_batch_cancel_reset() {
         let dir = std::env::temp_dir().join(format!("windgets-converter-shutdown-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1508,15 +1629,15 @@ mod tests {
         let alpha = make(&["-f", "lavfi", "-i", "color=c=red@0.5:s=300x200,format=rgba", "-frames:v", "1"], "alpha.png");
         let gif = make(&["-f", "lavfi", "-i", "testsrc2=s=160x120:r=10:d=1"], "anim.gif");
 
-        let (probe, kind) = probe_file(&ffmpeg, &video);
+        let (probe, kind) = probe_file(&ffmpeg, &video).unwrap();
         let probe = probe.expect("видео разобралось");
         assert_eq!(kind, Some(Kind::Video));
         assert!(probe.audio.is_some());
         assert!((probe.duration.unwrap() - 3.0).abs() < 0.2);
 
-        let (alpha_probe, alpha_kind) = probe_file(&ffmpeg, &alpha);
+        let (alpha_probe, alpha_kind) = probe_file(&ffmpeg, &alpha).unwrap();
         assert_eq!(alpha_kind, Some(Kind::Image));
-        assert_eq!(probe_file(&ffmpeg, &gif).1, Some(Kind::Video), "десять кадров — ролик");
+        assert_eq!(probe_file(&ffmpeg, &gif).unwrap().1, Some(Kind::Video), "десять кадров — ролик");
 
         // Видеокарта — если проба её нашла; процессор — всегда
         let found = encoder_for(&Converter::default(), &ffmpeg);
@@ -1546,7 +1667,7 @@ mod tests {
             );
         }
 
-        let (cut, _) = probe_file(&ffmpeg, &dir.join("out.mp4"));
+        let (cut, _) = probe_file(&ffmpeg, &dir.join("out.mp4")).unwrap();
         assert!((cut.unwrap().duration.unwrap() - 1.5).abs() < 0.2, "обрезка не сработала");
 
         let _ = std::fs::remove_dir_all(&dir);

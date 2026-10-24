@@ -174,6 +174,9 @@ impl Shutdown {
 /// теперь собирает `modules::set` из пула, и это двести миллисекунд.
 pub fn prepare_all(app: &AppHandle) {
     let settings = app.state::<SettingsState>().get();
+    // Даже выключенное с запуска окно хранит ручной размер при этом масштабе.
+    // Включившись после движения ползунка, оно догонит новую пропорцию.
+    *LAYOUT_SCALE.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = initial_layout_scales(&settings);
 
     for widget in widgets::shown() {
         // Выключенный модуль не грузится вовсе: ни окна, ни webview в памяти
@@ -186,6 +189,10 @@ pub fn prepare_all(app: &AppHandle) {
             eprintln!("{error}");
         }
     }
+}
+
+fn initial_layout_scales(settings: &settings::Settings) -> BTreeMap<String, f64> {
+    widgets::shown().map(|widget| (widget.id.to_owned(), settings.scale_of(widget))).collect()
 }
 
 /// Масштаб, при котором в последний раз ставили размер этому окну.
@@ -392,6 +399,21 @@ const SIZE_EVENT: &str = "widget-size";
 /// Сброс раскладки поставил окну новую основу (`useWindowReset`): панели
 /// остаются раскрытыми и заново меряют высоту от неё.
 const RESET_EVENT: &str = "widget-reset";
+/// Окно перенесли мышью (`useWindowMoved`). Слушает вертикальный звук: от
+/// края монитора зависит, в какую сторону смотрит его основа.
+const MOVED_EVENT: &str = "widget-moved";
+
+/// Конец перетаскивания окна `hwnd`. Звуку — адресным событием: сторону
+/// панели и зеркало основы он переспрашивает у `fit_sound_panel`.
+#[cfg(windows)]
+pub fn moved(app: &AppHandle, hwnd: isize) {
+    let Some(window) = app.get_webview_window("sound") else {
+        return;
+    };
+    if window.hwnd().is_ok_and(|own| own.0 as isize == hwnd) {
+        tell(&window, MOVED_EVENT, ());
+    }
+}
 
 /// Событие одному окну, а не всем.
 ///
@@ -422,7 +444,10 @@ pub fn set_size(app: &AppHandle, id: &str, index: usize) {
     // новый размер помещается снизу, тем же расчётом, что у роста: иначе
     // пульт или погода, поднятые под плейлисты и прогноз, висели бы над краем
     if let (Ok(place), Ok(size)) = (window.outer_position(), window.inner_size()) {
-        settle(&window, place, size.height);
+        let y = settle(&window, place, size.height);
+        if y != place.y {
+            let _ = window.set_position(PhysicalPosition::new(place.x, y));
+        }
     }
     if was_side_panel || (id == "sound" && view == 2) {
         sound_panel::clamp_base(&window);
@@ -474,8 +499,43 @@ pub fn grow(window: &WebviewWindow, by: f64) {
     // окно ниже основы
     crate::snap::release_size_guard(window);
     let height = (size.height as i32 + step).max(1) as u32;
-    let _ = window.set_size(PhysicalSize::new(size.width, height));
-    settle(window, place, height);
+    let y = settle(window, place, height);
+    let _ = set_bounds(window, place.x, y, size.width, height);
+}
+
+/// Место и размер окна — одним `SetWindowPos`.
+///
+/// ВАЖНО: **не `set_size`, а затем `set_position`.** Между двумя вызовами окно
+/// на миг живёт новым размером на старом месте: панель звука у правого края
+/// левого монитора вырастала через границу на соседний, Windows перерисовывала
+/// окно дважды и пересчитывала его под другой монитор — карточка мигала и
+/// мелькала на чужом экране. Размер — внутренний, как у `set_size`.
+pub fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+        };
+
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+        let outer = window.outer_size().map_err(|error| error.to_string())?;
+        let inner = window.inner_size().map_err(|error| error.to_string())?;
+        let frame_width = outer.width as i32 - inner.width as i32;
+        let frame_height = outer.height as i32 - inner.height as i32;
+        // SAFETY: HWND живого окна, вызов из главного потока
+        unsafe {
+            SetWindowPos(
+                hwnd, None, x, y, width as i32 + frame_width, height as i32 + frame_height,
+                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+            )
+        }
+        .map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        window.set_size(PhysicalSize::new(width, height)).map_err(|error| error.to_string())?;
+        window.set_position(PhysicalPosition::new(x, y)).map_err(|error| error.to_string())
+    }
 }
 
 /// Ставит окно так, чтобы выросшее влезло в рабочую область, а сжавшееся
@@ -489,9 +549,11 @@ pub fn grow(window: &WebviewWindow, by: f64) {
 ///
 /// Поэтому смотрим не на знак шага, а на место: не влезло снизу — поднимаем на
 /// недостающее, освободилось снизу — опускаем, но не ниже того, откуда подняли.
-fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) {
+///
+/// Окно не двигает, а называет верх: место и размер ставятся одним вызовом.
+fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) -> i32 {
     let Ok(Some(monitor)) = window.current_monitor() else {
-        return;
+        return place.y;
     };
     let area = monitor.work_area();
 
@@ -514,17 +576,16 @@ fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) {
 
     let (shift, owed) = placement(top, bottom, place.y, height as i32, raised);
     if shift == 0 {
-        return;
+        return place.y;
     }
 
     let settled = place.y + shift;
-    let _ = window.set_position(PhysicalPosition::new(place.x, settled));
-
     if owed > 0 {
         lifted.insert(window.label().to_owned(), Lift { owed, y: settled });
     } else {
         lifted.remove(window.label());
     }
+    settled
 }
 
 /// Куда подвинуть окно и сколько подъёма за ним останется.
@@ -548,9 +609,26 @@ fn placement(top: i32, bottom: i32, y: i32, height: i32, raised: i32) -> (i32, i
 
 #[cfg(test)]
 mod tests {
-    use super::{placement, resizes};
+    use super::{initial_layout_scales, placement, resizes};
     use crate::settings::{Settings, WidgetSettings};
     use crate::widgets;
+
+    #[test]
+    fn startup_remembers_scale_for_disabled_widgets_and_their_overrides() {
+        let mut settings = Settings { scale: 0.9, ..Settings::default() };
+        settings.set_widget("notes", WidgetSettings { enabled: false, ..WidgetSettings::default() });
+        settings.set_widget("converter", WidgetSettings { enabled: false, scale: Some(1.1), ..WidgetSettings::default() });
+        let measured = initial_layout_scales(&settings);
+        assert_eq!(measured.len(), widgets::shown().count());
+        assert_eq!(measured["notes"], 0.9);
+        assert_eq!(measured["converter"], 1.1);
+        settings.scale = 1.3;
+        let notes = widgets::find("notes").unwrap();
+        let converter = widgets::find("converter").unwrap();
+        assert!(!settings.widget(notes).enabled && !settings.widget(converter).enabled);
+        assert!((settings.scale_of(notes) / measured["notes"] - 1.3 / 0.9).abs() < 0.0001);
+        assert_eq!(settings.scale_of(converter) / measured["converter"], 1.0);
+    }
 
     /// Своя блокировка запирает окно, но отпереть запертое общим рубильником
     /// не может. Проверяется на текстовом виджете: у остальных размер и так
@@ -1031,6 +1109,7 @@ pub fn reset_places(app: &AppHandle) {
             column = 0;
         }
 
+        crate::snap::release_size_guard(window);
         let _ = window.set_size(size);
         let _ = window.set_min_size(Some(widget.min_size(scale)));
         let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -1148,6 +1227,7 @@ pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<sett
         if let Some(width) = hardware_width(&app.state::<SettingsState>().get(), &label) {
             let physical_width = (width * factor).round() as u32;
             if size.width.abs_diff(physical_width) >= 2 {
+                crate::snap::release_size_guard(&window);
                 let _ = window.set_size(PhysicalSize::new(physical_width, size.height));
             }
         }

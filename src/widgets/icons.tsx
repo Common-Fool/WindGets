@@ -19,6 +19,7 @@ import {
   NetworkIcon,
   NotepadIcon,
   ShapesIcon,
+  FramesIcon,
   SoundIcon,
 } from "../components/Icons";
 
@@ -35,6 +36,7 @@ export const WIDGET_ICONS: Record<string, ComponentType> = {
   disks: DriveIcon,
   network: NetworkIcon,
   processes: ListIcon,
+  fps: FramesIcon,
   weather: CloudSunIcon,
   speedtest: GaugeIcon,
   sound: SoundIcon,

@@ -9,9 +9,10 @@
 //! [`Account`] написан руками и печатает заглушку: `eprintln!("{account:?}")`,
 //! поставленный когда-нибудь в отладке, не должен положить ключ в лог.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -181,7 +182,11 @@ pub fn load(app: &AppHandle) -> Loaded {
         }
     };
 
-    let text = match crate::disk::read_existing(&path) {
+    load_path(&path)
+}
+
+fn load_path(path: &Path) -> Loaded {
+    let text = match crate::disk::read_existing(path) {
         Ok(Some(text)) => text,
         Ok(None) => return Loaded::default(),
         Err(error) => {
@@ -191,9 +196,17 @@ pub fn load(app: &AppHandle) -> Loaded {
     };
 
     match parse(&text) {
-        Some(stored) => Loaded { stored, trouble: None },
+        Some((stored, repaired)) => {
+            if repaired {
+                if let Err(error) = write_path(path, &stored) {
+                    eprintln!("2FA: исправленные ключи записей не сохранились: {error}");
+                    return Loaded { stored, trouble: Some(Trouble::Unreadable) };
+                }
+            }
+            Loaded { stored, trouble: None }
+        },
         None => {
-            match crate::disk::set_aside(&path) {
+            match crate::disk::set_aside(path) {
                 Ok(aside) => eprintln!("2FA: totp.json не разобрался, файл отложен в {}", aside.display()),
                 Err(error) => {
                     // Не отложился — значит, запись поверх его бы затёрла:
@@ -208,8 +221,23 @@ pub fn load(app: &AppHandle) -> Loaded {
 }
 
 /// Разбор текста файла; `None` — файл испорчен.
-fn parse(text: &str) -> Option<Stored> {
-    serde_json::from_str(text).ok()
+fn parse(text: &str) -> Option<(Stored, bool)> {
+    let mut stored: Stored = serde_json::from_str(text).ok()?;
+    let mut repaired = false;
+    let mut seen = HashSet::new();
+    for account in &mut stored.accounts {
+        if account.id.trim().is_empty() || seen.contains(&account.id) {
+            loop {
+                account.id = new_id();
+                if !seen.contains(&account.id) {
+                    break;
+                }
+            }
+            repaired = true;
+        }
+        seen.insert(account.id.clone());
+    }
+    Some((stored, repaired))
 }
 
 /// Атомарно сохраняет записи на диск. Подробность отказа — в журнал (она
@@ -222,14 +250,17 @@ pub fn save(app: &AppHandle, accounts: &Stored) -> Result<(), String> {
 }
 
 fn write(app: &AppHandle, accounts: &Stored) -> Result<(), String> {
-    let path = file_path(app)?;
+    write_path(&file_path(app)?, accounts)
+}
+
+fn write_path(path: &Path, accounts: &Stored) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("не создать каталог настроек: {error}"))?;
     }
     let text = serde_json::to_string_pretty(accounts)
         .map_err(|error| format!("не сериализовать записи 2FA: {error}"))?;
-    crate::disk::write_atomically(&path, &text)
+    crate::disk::write_atomically(path, &text)
         .map_err(|error| format!("не записать записи 2FA: {error}"))
 }
 
@@ -261,6 +292,35 @@ mod tests {
             algorithm: Algorithm::Sha1,
             added_at: 1_700_000_000,
         }
+    }
+
+    #[test]
+    fn loading_repairs_empty_and_duplicate_ids_and_persists_them() {
+        let mut accounts = vec![sample(); 4];
+        accounts[1].id.clear();
+        accounts[2].id = "   ".into();
+        let path = std::env::temp_dir().join(format!("windgets-totp-{}.json", new_id()));
+        let before = Stored { accounts };
+        fs::write(&path, serde_json::to_string(&before).unwrap()).unwrap();
+        let loaded = load_path(&path);
+        assert_eq!(loaded.trouble, None);
+        let kept = &loaded.stored.accounts;
+        assert_eq!(kept.len(), 4);
+        assert_eq!(kept[0].id, before.accounts[0].id);
+        let ids: HashSet<_> = kept.iter().map(|account| account.id.as_str()).collect();
+        assert_eq!(ids.len(), kept.len());
+        for (account, old) in kept.iter().zip(&before.accounts) {
+            assert!(!account.id.trim().is_empty());
+            let mut restored = account.clone();
+            restored.id = old.id.clone();
+            assert_eq!(&restored, old, "кроме ключа все поля сохранены");
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let (saved, repaired) = parse(&text).unwrap();
+        assert!(!repaired);
+        assert_eq!(saved, loaded.stored);
+        assert_eq!(load_path(&path).stored, saved);
+        fs::remove_file(path).unwrap();
     }
 
     /// Инвариант безопасности в виде теста: в том, что уезжает в окно, секрета
@@ -360,7 +420,7 @@ mod tests {
     fn a_broken_file_is_told_apart_from_a_whole_one() {
         assert!(parse("не json").is_none());
         assert!(parse(r#"{"accounts":"много"}"#).is_none());
-        assert!(parse("{}").is_some_and(|stored| stored.accounts.is_empty()));
+        assert!(parse("{}").is_some_and(|(stored, repaired)| stored.accounts.is_empty() && !repaired));
         assert!(parse(r#"{"accounts":[]}"#).is_some());
     }
 }

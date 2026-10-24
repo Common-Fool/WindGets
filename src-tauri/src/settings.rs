@@ -1100,6 +1100,13 @@ pub fn reconcile_autostart(app: &AppHandle) {
             update(&app, &state, |settings| settings.autostart = actual);
             crate::settings_window::emit(&app);
         }
+        // Задача прежней версии носит умолчания `schtasks` (72 часа, батарея):
+        // поправить её здесь же, раз планировщик уже спрошен
+        if actual {
+            if let Err(error) = crate::autostart::relax() {
+                eprintln!("[автозапуск] {error}");
+            }
+        }
     });
 }
 

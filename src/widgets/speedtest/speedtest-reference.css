@@ -275,7 +275,7 @@
 }
 
 .speed-reference__run > .speed-gauge {
-  --arc-size: calc(120px * var(--scale));
+  --arc-size: min(calc(120px * var(--scale)), var(--speed-run-cap, 100vh));
   grid-area: gauge;
   align-self: center;
 }
@@ -313,7 +313,7 @@
 }
 
 .speed-reference[data-layout="a"][data-size="1"] .speed-reference__run > .speed-gauge {
-  --arc-size: calc(144px * var(--scale));
+  --arc-size: min(calc(144px * var(--scale)), var(--speed-run-cap, 100vh));
   --speed-gauge-number: calc(34px * var(--scale));
 }
 
@@ -352,7 +352,7 @@
 }
 
 .speed-reference[data-layout="b"] .speed-reference__run > .speed-gauge {
-  --arc-size: calc(132px * var(--scale));
+  --arc-size: min(calc(132px * var(--scale)), var(--speed-run-cap, 100vh));
   --speed-gauge-number: calc(34px * var(--scale));
 }
 
@@ -372,7 +372,7 @@
 }
 
 .speed-reference[data-layout="b"][data-size="1"] .speed-reference__run > .speed-gauge {
-  --arc-size: calc(112px * var(--scale));
+  --arc-size: min(calc(112px * var(--scale)), var(--speed-run-cap, 100vh));
   --speed-gauge-number: calc(26px * var(--scale));
 }
 
@@ -385,5 +385,24 @@
 }
 .speed-reference__dial { grid-area: dial; display: flex; flex-direction: column; align-items: center; gap: calc(6px * var(--scale)); }
 .speed-reference__dial > .speed-reference__current-phase { margin: 0; text-align: center; }
-.speed-reference__dial .speed-gauge { --arc-size: calc(120px * var(--scale)); --speed-gauge-number: calc(28px * var(--scale)); }
+.speed-reference__dial .speed-gauge { --arc-size: min(calc(120px * var(--scale)), var(--speed-run-cap, 100vh)); --speed-gauge-number: calc(28px * var(--scale)); }
 .speed-reference[data-gauge="true"] .speed-reference__results { padding: 0; border: 0; }
+
+/*
+ * Идёт замер: высота окна — покоя (SpeedtestWidget), блок заполняет
+ * карточку, дуга не выше доли её высоты. В покое не заполняем — подгонка по
+ * содержимому замкнулась бы на себя.
+ */
+.speed-reference[data-running="true"] {
+  height: 100%;
+}
+
+.speed-reference[data-running="true"] .speed-reference__run,
+.speed-reference[data-running="true"] .speed-reference__dial {
+  height: 100%;
+  min-height: 0;
+}
+
+.speed-reference[data-running="true"] {
+  --speed-run-cap: 52cqh;
+}

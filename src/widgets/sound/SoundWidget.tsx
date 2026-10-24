@@ -215,6 +215,9 @@ export function SoundWidget() {
   const panelWidth = useWidth(panelBox);
   const side = useSoundSidePanel(view, size, scale,
     panel === "none" ? 0 : panelWidth, panel === "none" ? 0 : opened + 2);
+  // У правого края основа зеркальная: шкала у края, стрелки смотрят туда,
+  // куда раскроется панель
+  const mirrored = view === 2 && side === "left";
   useEffect(() => {
     // Пока строка настроек не приехала, готовый размер ещё неизвестен.
     if (own === undefined || view === 2) return;
@@ -370,7 +373,7 @@ export function SoundWidget() {
                   <div className="sound__tower-unit sound__tower-cell" data-active={panel === "outputs"}
                     data-enabled={state.canSwitch} onClick={openFromCell("outputs")}>
                     <div className="sound__tower-actions">{speakerButton}
-                      <SoundButton className="sound__tower-disclosure" icon={<ChevronIcon right />} disabled={!state.canSwitch}
+                      <SoundButton className="sound__tower-disclosure" icon={<ChevronIcon right={!mirrored} left={mirrored} />} disabled={!state.canSwitch}
                         expanded={panel === "outputs"} title={t("sound.showOutputs")} onClick={() => toggleDevices("outputs")} />
                     </div>
                     <button type="button" className="sound__tower-device" title={state.canSwitch
@@ -383,7 +386,7 @@ export function SoundWidget() {
                   <div className="sound__tower-unit sound__tower-cell" data-active={panel === "inputs"}
                     data-enabled={state.canSwitch} onClick={openFromCell("inputs")}>
                     <div className="sound__tower-actions">{micButton}
-                      <SoundButton className="sound__tower-disclosure" icon={<ChevronIcon right />} disabled={!state.canSwitch}
+                      <SoundButton className="sound__tower-disclosure" icon={<ChevronIcon right={!mirrored} left={mirrored} />} disabled={!state.canSwitch}
                         expanded={panel === "inputs"} title={t("sound.showInputs")} onClick={() => toggleDevices("inputs")} />
                     </div>
                     {/* Подпись ведёт по микрофонам, а не глушит: глушит значок над ней */}
@@ -404,7 +407,7 @@ export function SoundWidget() {
                     }}>
                     <span className="sound__tower-actions" aria-hidden="true">
                       <span className="sound__tower-primary sound__glyph"><MixerIcon /></span>
-                      <span className="sound__tower-disclosure sound__glyph"><ChevronIcon right /></span>
+                      <span className="sound__tower-disclosure sound__glyph"><ChevronIcon right={!mirrored} left={mirrored} /></span>
                     </span>
                     <span className="sound__tower-label">{t("sound.mixer")}</span>
                   </div>

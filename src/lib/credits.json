@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "src-tauri/Cargo.lock": "3b86c6afc9053bac8d6d79cf5256f90507221fae13f9eee5d0734ede6e5ff90c",
+    "src-tauri/Cargo.lock": "d828f84f5330007a3329bfcdfa2cdb131409499e54f2f6454fa0ac62d4e692e7",
     "package-lock.json": "bb9f243642d6d2cd8c814dd990a0fb79c8e6f12f7d1eb110d89334b48f84490a",
     "src-sensors/Sensors.csproj": "eb924b57fb049e9834bb18ce718e00b1bf977f7132cecb146cab97e2fd89efd1"
   },
@@ -49,6 +49,12 @@
       "name": "QuickJS-NG",
       "license": "MIT",
       "url": "https://github.com/quickjs-ng/quickjs"
+    },
+    {
+      "id": "presentmon",
+      "name": "PresentMon",
+      "license": "MIT",
+      "url": "https://github.com/GameTechDev/PresentMon"
     },
     {
       "id": "pawnio",

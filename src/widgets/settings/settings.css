@@ -664,27 +664,16 @@
 /* ==================== Раздел «Виджеты»: карточки и превью ==================== */
 
 /*
- * Галерея по образцу Themia (22 октября, слово пользователя): слева карточки
- * в два столбца, справа живое превью выбранной. Раздел сам себе контейнер:
- * в окне уже ~520 точек превью уходит, остаются одни карточки — описание у
- * них своё. Столбцов карточек столько, сколько влезает по 220 точек.
+ * Галерея по образцу Themia (22 октября, слово пользователя): слева карточки,
+ * справа живое превью выбранной. Превью есть на любой ширине окна, а карточек
+ * в ряду не меньше двух (24 октября, слово пользователя); на просторе их
+ * столько, сколько влезает по 220 точек.
  */
 .gallery {
-  container-type: inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--space-5);
-}
-
-@container (width < 520px) {
-  .gallery__list {
-    grid-column: 1 / -1;
-  }
-
-  .gallery__preview {
-    display: none;
-  }
 }
 
 .gallery__list {
@@ -696,7 +685,8 @@
 
 .gallery__group {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* Столбик не шире половины ряда: двух меньше не бывает */
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, calc((100% - var(--space-2)) / 2)), 1fr));
   gap: var(--space-2);
 }
 
@@ -770,15 +760,14 @@
   white-space: nowrap;
 }
 
-/* Две строки описания, длиннее — эллипсис: целиком оно под превью */
+/* Короткое описание в одну строку; полное — под превью и в подсказке */
 .widget-card__about {
-  display: -webkit-box;
   overflow: hidden;
   color: var(--text-muted);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Галочка включает, крестик выключает — квадратный значок, как все компактные */

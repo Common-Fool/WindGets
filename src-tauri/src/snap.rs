@@ -569,7 +569,7 @@ mod imp {
 
             WM_EXITSIZEMOVE => {
                 *DRAG.lock().unwrap() = Drag::IDLE;
-                remember_places();
+                remember_places(window.0 as isize);
             }
 
             // Полоса захвата: сообщение приходит на каждое движение мыши,
@@ -794,7 +794,7 @@ mod imp {
     /// Не на месте: изнутри оконной процедуры это значило бы файловый
     /// ввод-вывод и опрос окон, не выходя из модального цикла. Работа встаёт в
     /// очередь главного потока, и к её исполнению цикл уже закончится.
-    fn remember_places() {
+    fn remember_places(moved: isize) {
         let Some(app) = APP.get().cloned() else {
             return;
         };
@@ -804,7 +804,10 @@ mod imp {
         // ждёт главный поток. Главный же поток, разбирая `Moved` того же окна,
         // ждёт этот замок — и оба стоят навсегда. Очередь главного потока
         // дойдёт до записи уже после модального цикла перетаскивания
-        crate::windows::on_main(&app, |app| crate::windows::save_places(&app));
+        crate::windows::on_main(&app, move |app| {
+            crate::windows::save_places(&app);
+            crate::windows::moved(&app, moved);
+        });
     }
 
     unsafe fn forget(window: HWND) {

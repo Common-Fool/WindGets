@@ -23,6 +23,7 @@ import { ConverterSection } from "./ConverterSection";
 import { DownloaderSection } from "./DownloaderSection";
 import { DriverField } from "./DriverField";
 import { DrivesSection } from "./DrivesSection";
+import { FpsSection } from "./FpsSection";
 import { MailAccountSection, MailBoxesSection, MailPreviewField } from "./MailSection";
 import { useMail } from "../../lib/mail";
 import { MediaSection } from "./MediaSection";
@@ -60,6 +61,7 @@ const OWN_SECTIONS: Record<string, ComponentType<{ id: string }>> = {
   cpu: CpuSettings,
   disks: DrivesSection,
   downloader: DownloaderSection,
+  fps: FpsSection,
   gpu: MetricsSection,
   mail: MailBoxesSection,
   media: MediaSection,

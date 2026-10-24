@@ -420,6 +420,17 @@ export function GaugeIcon() {
   );
 }
 
+/** Счётчик кадров: экран и ломаная времени кадра на нём. */
+export function FramesIcon() {
+  return (
+    <Glyph>
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="m6.5 13 3-4 3 2.5 4-5" />
+      <path d="M9 20.5h6" />
+    </Glyph>
+  );
+}
+
 /** Звук: динамик с волной. */
 export function SoundIcon() {
   return (

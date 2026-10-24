@@ -215,9 +215,14 @@ fn is_still(probe: &Probe, frames: Option<u64>) -> bool {
     if format == "gif" {
         return frames == Some(1);
     }
-    // Снимок в контейнере — HEIC или AVIF с телефона: видео без звука и без
-    // длины. Настоящий ролик без звука длину имеет
-    probe.audio.is_none() && probe.duration.is_none_or(|duration| duration <= 0.1)
+    // HEIC/AVIF ffmpeg читает как семейство MOV/MP4 либо своим именем.
+    // Отсутствие длины само по себе не отличает снимок от немого ролика:
+    // MediaRecorder, сырые H.264/HEVC и транспортные потоки тоже её не дают.
+    let image_container = format.split(',').any(|name| {
+        matches!(name, "mov" | "mp4" | "m4a" | "3gp" | "3g2" | "mj2" | "heif" | "avif")
+    });
+    image_container && probe.audio.is_none()
+        && probe.duration.is_none_or(|duration| duration <= 0.1)
 }
 
 /// Есть ли в пиксельном формате прозрачность.
@@ -315,6 +320,41 @@ At least one output file must be specified";
         assert_eq!(classify(&probe, Some(20)), Some(Kind::Video));
         assert_eq!(classify(&probe, Some(1)), Some(Kind::Image));
         assert_eq!(probe.video.unwrap().pix_fmt.as_deref(), Some("bgra"));
+    }
+
+    #[test]
+    fn silent_streams_without_duration_remain_video() {
+        for (format, codec, name) in [
+            ("matroska,webm", "vp9", "recording.webm"),
+            ("matroska,webm", "h264", "recording.mkv"),
+            ("h264", "h264", "recording.h264"),
+            ("hevc", "hevc", "recording.hevc"),
+            ("mpegts", "h264", "recording.ts"),
+        ] {
+            let text = format!("Input #0, {format}, from '{name}':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: {codec}, yuv420p, 1280x720, 30 fps, 30 tbr, 1k tbn");
+            let parsed = probe(&text);
+            assert!(parsed.audio.is_none() && parsed.duration.is_none());
+            assert_eq!(classify(&parsed, None), Some(Kind::Video), "{name}");
+        }
+    }
+
+    #[test]
+    fn container_photos_still_work_but_silent_movies_are_video() {
+        for (format, codec) in [
+            ("mov,mp4,m4a,3gp,3g2,mj2", "hevc"),
+            ("heif", "hevc"),
+            ("avif", "av1"),
+        ] {
+            for duration in ["N/A", "00:00:00.04", "00:00:04.00"] {
+                let text = format!("Input #0, {format}, from 'photo':
+  Duration: {duration}, bitrate: N/A
+  Stream #0:0: Video: {codec}, yuv420p, 1600x1200, 25 fps, 25 tbr, 25 tbn");
+                let expected = if duration == "00:00:04.00" { Kind::Video } else { Kind::Image };
+                assert_eq!(classify(&probe(&text), None), Some(expected), "{format}: {duration}");
+            }
+        }
     }
 
     #[test]

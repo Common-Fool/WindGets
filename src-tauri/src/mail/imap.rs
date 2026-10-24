@@ -479,7 +479,20 @@ impl Fetched<'_> {
 async fn checked_fetch<T, R>(
     session: &mut async_imap::Session<T>,
     command: &str,
+    parse: impl FnMut(&Fetched<'_>) -> Option<R>,
+) -> Result<Vec<R>, MailError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    fetch_with_empty_error(session, command, parse,
+        MailError::Network("сервер не отдал ни одного письма из запрошенных".to_owned())).await
+}
+
+async fn fetch_with_empty_error<T, R>(
+    session: &mut async_imap::Session<T>,
+    command: &str,
     mut parse: impl FnMut(&Fetched<'_>) -> Option<R>,
+    empty_error: MailError,
 ) -> Result<Vec<R>, MailError>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
@@ -498,7 +511,7 @@ where
                     return Err(MailError::Network(format!("ошибка завершения FETCH: {received:?} {status:?} {code:?} {information:?}")));
                 }
                 if !answered {
-                    return Err(MailError::Network("сервер не отдал ни одного письма из запрошенных".to_owned()));
+                    return Err(empty_error);
                 }
                 return Ok(values);
             }
@@ -687,11 +700,6 @@ async fn delete_letter_session(
         .await
         .map_err(|e| MailError::Network(format!("ошибка LIST: {e}")))?;
 
-    struct FolderInfo {
-        name: String,
-        has_trash_attr: bool,
-    }
-
     let mut folders = Vec::new();
     while let Some(res) = list_stream.next().await {
         if let Ok(name) = res {
@@ -701,23 +709,14 @@ async fn delete_letter_session(
             });
             folders.push(FolderInfo {
                 name: name.name().to_string(),
+                delimiter: name.delimiter().map(str::to_owned),
                 has_trash_attr,
             });
         }
     }
     drop(list_stream);
 
-    // Порядок поиска: флаг `\Trash`, потом имя `Trash`, потом `[Gmail]/Trash`
-    let trash_folder = folders
-        .iter()
-        .find(|f| f.has_trash_attr)
-        .or_else(|| folders.iter().find(|f| f.name.eq_ignore_ascii_case("Trash")))
-        .or_else(|| {
-            folders
-                .iter()
-                .find(|f| f.name == "[Gmail]/Trash" || f.name.eq_ignore_ascii_case("[Gmail]/Trash"))
-        })
-        .map(|f| f.name.clone());
+    let trash_folder = find_trash_folder(&folders);
 
     let Some(trash_mailbox) = trash_folder else {
         let _ = session.logout().await;
@@ -770,25 +769,89 @@ async fn delete_letter_session(
     Ok(())
 }
 
-/// Находит UID последних десяти писем.
+struct FolderInfo {
+    name: String,
+    delimiter: Option<String>,
+    has_trash_attr: bool,
+}
+
+fn find_trash_folder(folders: &[FolderInfo]) -> Option<String> {
+    folders.iter().find(|folder| folder.has_trash_attr)
+        .or_else(|| folders.iter().find(|folder| folder.name.eq_ignore_ascii_case("Trash")))
+        .or_else(|| folders.iter().find(|folder| folder.name.eq_ignore_ascii_case("[Gmail]/Trash")))
+        .or_else(|| folders.iter().find(|folder| {
+            let leaf = folder.delimiter.as_deref().filter(|delimiter| !delimiter.is_empty())
+                .and_then(|delimiter| folder.name.rsplit_once(delimiter).map(|(_, leaf)| leaf))
+                .unwrap_or(&folder.name);
+            // async-imap возвращает имя из LIST как есть, без modified UTF-7.
+            ["Trash", "Deleted Items", "Deleted Messages", "Deleted"].iter()
+                .any(|name| leaf.eq_ignore_ascii_case(name))
+                || decode_mailbox_name(leaf).is_some_and(|name| name.to_lowercase() == "корзина")
+        }))
+        .map(|folder| folder.name.clone())
+}
+
+/// Раскодирует modified UTF-7 только для сравнения; команда получает имя из LIST.
+fn decode_mailbox_name(name: &str) -> Option<String> {
+    use base64::Engine;
+
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start + 1..];
+        let end = tail.find('-')?;
+        if end == 0 {
+            out.push('&');
+        } else {
+            let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(tail[..end].replace(',', "/")).ok()?;
+            if bytes.len() % 2 != 0 {
+                return None;
+            }
+            let units: Vec<u16> = bytes.chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]])).collect();
+            out.push_str(&String::from_utf16(&units).ok()?);
+        }
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Находит UID последних десяти неудалённых писем.
 ///
 /// ВАЖНО: **спрашиваем номерами сообщений, а не `UID SEARCH ALL`.** Поиск по
 /// всему ящику возвращает UID каждого письма — в почте, копившейся годами, это
 /// десятки тысяч чисел, и приходят они каждые две минуты внутри общего срока в
 /// пятнадцать секунд. Последние письма — это всегда хвост нумерации, и хвост
-/// берётся одним коротким запросом независимо от размера ящика.
+/// берётся короткими диапазонами, пропуская помеченные к удалению письма.
 async fn get_last_uids<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send>(
     session: &mut async_imap::Session<T>,
     exists: u32,
 ) -> Result<Vec<u32>, MailError> {
-    let seq_start = exists.saturating_sub(LAST_LETTERS - 1).max(1);
-    let mut uids = checked_fetch(session, &format!("FETCH {seq_start}:* UID"), |fetch| fetch.uid()).await?;
-    // Письма в ящике есть, а номеров не пришло — это отказ, а не пустой ящик
-    if uids.is_empty() {
-        return Err(MailError::Network("сервер не отдал номера последних писем".to_owned()));
+    let mut end = exists;
+    let mut uids = Vec::new();
+    // Не больше пяти коротких диапазонов: удалённые не занимают места десятка.
+    for _ in 0..5 {
+        if end == 0 || uids.len() >= LAST_LETTERS as usize {
+            break;
+        }
+        let start = end.saturating_sub(LAST_LETTERS - 1).max(1);
+        let fetched = checked_fetch(session, &format!("FETCH {start}:{end} (UID FLAGS)"), |fetch| {
+            fetch.uid().map(|uid| (uid, fetch.flags().any(|flag| flag == Flag::Deleted)))
+        }).await?;
+        if fetched.is_empty() {
+            return Err(MailError::Network("сервер не отдал номера последних писем".to_owned()));
+        }
+        uids.extend(fetched.into_iter().filter_map(|(uid, deleted)| (!deleted).then_some(uid)));
+        end = start - 1;
     }
-
     uids.sort_unstable();
+    uids.dedup();
+    if uids.len() > LAST_LETTERS as usize {
+        uids.drain(..uids.len() - LAST_LETTERS as usize);
+    }
     Ok(uids)
 }
 
@@ -891,14 +954,21 @@ async fn fetch_body_session(
     // для этого есть своя кнопка
     checked_inbox(&mut session, uid_validity, false).await?;
 
-    let bodies = checked_fetch(&mut session, &format!("UID FETCH {uid} (RFC822.SIZE BODY.PEEK[]<0.{BODY_LIMIT}>)"), fetched_letter_body).await?;
-    let letter_body = bodies.into_iter().next().unwrap_or(LetterBody {
-        truncated: false,
-        text: None,
-        attachments: Vec::new(),
-    });
+    let letter_body = fetch_body_from_session(&mut session, uid).await?;
     let _ = session.logout().await;
     Ok(letter_body)
+}
+
+/// Пропавшее письмо требует обновить список; отказ команды остаётся сетевым.
+async fn fetch_body_from_session<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send>(
+    session: &mut async_imap::Session<T>,
+    uid: u32,
+) -> Result<LetterBody, MailError> {
+    let bodies = fetch_with_empty_error(session,
+        &format!("UID FETCH {uid} (RFC822.SIZE BODY.PEEK[]<0.{BODY_LIMIT}>)"),
+        fetched_letter_body, MailError::Stale).await?;
+    bodies.into_iter().next()
+        .ok_or_else(|| MailError::Network("сервер не отдал тело запрошенного письма".to_owned()))
 }
 
 /// Признак обрезки сохраняется, даже если оборванный MIME не разобрался.
@@ -1477,7 +1547,7 @@ fn strip_tag_and_content(input: &str, tag: &str) -> String {
 
         // Ищем конец открывающего тега '>'
         let Some(tag_end_idx) = after_tag_start.find('>') else {
-            rest = "";
+            rest = after_tag_start;
             break;
         };
 
@@ -1495,12 +1565,12 @@ fn strip_tag_and_content(input: &str, tag: &str) -> String {
             if let Some(close_end_idx) = after_close_start.find('>') {
                 rest = &after_close_start[close_end_idx + 1..];
             } else {
-                rest = "";
+                rest = after_tag_start;
                 break;
             }
         } else {
-            // Закрывающий тег не найден (например, обрезанный HTML) — отбрасываем до конца
-            rest = "";
+            // Без закрывающего тега сохраняем хвост: это может быть обычный текст.
+            rest = after_tag_start;
             break;
         }
     }
@@ -1586,26 +1656,29 @@ pub fn prepare_html_for_text(html: &str) -> String {
 /// Записи ссылок `[слово](адрес)` — одним словом: для превью.
 fn link_words(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(open) = rest.find('[') {
-        let tail = &rest[open..];
-        let record = tail.find("](").and_then(|middle| {
-            let close = tail[middle + 2..].find(')')?;
-            Some((middle, middle + 2 + close))
-        });
-        match record {
-            Some((middle, close)) if !tail[1..middle].contains('[') => {
+    for line in text.split_inclusive('\n') {
+        let mut rest = line;
+        while let Some(open) = rest.find('[') {
+            let tail = &rest[open..];
+            // Следующая '[' уже начинает другое слово: не ищем '](' заново
+            // по всему остатку письма для каждой незакрытой скобки.
+            let end = tail[1..].find('[').map_or(tail.len(), |at| at + 1);
+            if let Some(middle) = tail[..end].find("](") {
+                let Some(close) = tail[middle + 2..].find(')') else {
+                    out.push_str(rest);
+                    rest = "";
+                    break;
+                };
                 out.push_str(&rest[..open]);
                 out.push_str(&tail[1..middle]);
-                rest = &tail[close + 1..];
-            }
-            _ => {
-                out.push_str(&rest[..=open]);
-                rest = &rest[open + 1..];
+                rest = &tail[middle + 3 + close..];
+            } else {
+                out.push_str(&rest[..open + end]);
+                rest = &tail[end..];
             }
         }
+        out.push_str(rest);
     }
-    out.push_str(rest);
     out
 }
 
@@ -1841,7 +1914,11 @@ fn decode_entities(raw: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
-        let decoded = tail.find(';').filter(|&end| end <= 10).and_then(|end| {
+        let mut limit = tail.len().min(11);
+        while !tail.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        let decoded = tail[..limit].find(';').and_then(|end| {
             let name = &tail[1..end];
             let ch = match name {
                 "nbsp" => Some(Some(' ')),
@@ -1892,7 +1969,6 @@ pub fn clean_preview(raw: &str) -> Option<String> {
 }
 
 /// Очищает полный текст письма:
-/// - вырезает теги `<style>`, `<script>`, `<head>`, если они ещё есть в тексте;
 /// - выбрасывает строки, состоящие из одних разделителей (`-`, `=`, `_`, `*`, `|`, пробелы);
 /// - схлопывает две и больше подряд идущих пустых строк в одну;
 /// - схлопывает подряд идущие одинаковые строки в одну;
@@ -1902,22 +1978,18 @@ pub fn clean_preview(raw: &str) -> Option<String> {
 /// - ограничивает длину 10 000 знаками по границе символа.
 ///
 /// Пустой текст даёт `None`.
+#[cfg(test)]
 pub fn clean_body(raw: &str) -> Option<String> {
     clean_body_full(raw).map(|text| text.chars().take(BODY_MAX_CHARS).collect())
 }
 
 fn clean_body_full(raw: &str) -> Option<String> {
-    let raw = &decode_entities(raw);
-    // 1. Вырезаем style, script, head, если они присутствуют
-    let stripped = if raw.contains('<') {
-        strip_html_sections(raw)
-    } else {
-        raw.to_string()
-    };
+    // HTML уже очищен до html_to_text; здесь теги могут быть частью текста.
+    let raw = decode_entities(raw);
 
-    // 2. Обрабатываем строки: фильтруем строки-разделители
+    // Обрабатываем строки: фильтруем строки-разделители
     let mut initial_lines = Vec::new();
-    for line in stripped.lines() {
+    for line in raw.lines() {
         let trimmed = line.trim();
         if is_delimiter_line(trimmed) {
             continue;
@@ -1992,6 +2064,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn literal_html_tags_in_plain_text_preserve_the_tail() {
+        for tag in ["head", "script", "style"] {
+            let text = format!("add this to your <{tag}> tag. More text");
+            assert_eq!(clean_body(&text).as_deref(), Some(text.as_str()));
+            assert_eq!(strip_html_sections(&text), text);
+            let raw = format!("Content-Type: text/plain; charset=utf-8\r\n\r\n{text}");
+            let msg = mail_parser::MessageParser::default().parse(raw.as_bytes()).unwrap();
+            assert_eq!(parse_letter_body(&msg).text.as_deref(), Some(text.as_str()));
+        }
+        assert_eq!(clean_body("use &lt;head&gt;. More text").as_deref(), Some("use <head>. More text"));
+        assert_eq!(strip_html_sections("before <head incomplete"), "before <head incomplete");
+        assert_eq!(strip_html_sections("before <head>text</head"), "before <head>text</head");
+    }
+
+    #[test]
+    fn entity_and_link_scans_handle_long_malformed_text_quickly() {
+        let start = std::time::Instant::now();
+        let ampersands = "&".repeat(200 * 1024);
+        assert_eq!(decode_entities(&ampersands), ampersands);
+        let brackets = "[".repeat(200 * 1024);
+        assert_eq!(link_words(&brackets), brackets);
+        let broken_links = "[label](".repeat(25 * 1024);
+        assert_eq!(link_words(&broken_links), broken_links);
+        assert!(start.elapsed() < Duration::from_secs(2), "разбор не должен быть квадратичным");
+        assert_eq!(decode_entities("&12345678🦀;&amp; &#x10FFFF;"), "&12345678🦀;& \u{10ffff}");
+        assert_eq!(link_words("[outer [word](https://example.org) [next](https://example.org/x)"), "[outer word next");
+        assert_eq!(link_words("[broken\n[word](https://example.org)"), "[broken\nword");
+    }
+
+    #[test]
+    fn trash_fallback_uses_the_list_delimiter_and_keeps_priorities() {
+        let folder = |name: &str, delimiter: Option<&str>, has_trash_attr| FolderInfo {
+            name: name.to_owned(), delimiter: delimiter.map(str::to_owned), has_trash_attr,
+        };
+        for name in ["Trash", "deleted items", "DELETED MESSAGES", "Deleted", "КОРЗИНА", "КорЗиНа"] {
+            let full = format!("INBOX.{name}");
+            assert_eq!(find_trash_folder(&[folder(&full, Some("."), false)]), Some(full));
+        }
+        assert!(find_trash_folder(&[folder("INBOX.Trash", None, false)]).is_none());
+        assert!(find_trash_folder(&[folder("INBOX.NotTrash", Some("."), false)]).is_none());
+        assert_eq!(find_trash_folder(&[folder("INBOX.Trash", Some("."), false), folder("[Gmail]/Trash", Some("/"), false)]), Some("[Gmail]/Trash".into()));
+        assert_eq!(find_trash_folder(&[folder("[Gmail]/Trash", Some("/"), false), folder("Trash", None, false)]), Some("Trash".into()));
+        assert_eq!(find_trash_folder(&[folder("Trash", None, false), folder("special", None, true)]), Some("special".into()));
+        for encoded in ["&BBoEPgRABDcEOAQ9BDA-", "&BBoEHgQgBBcEGAQdBBA-"] {
+            let full = format!("INBOX/{encoded}");
+            assert_eq!(find_trash_folder(&[folder(&full, Some("/"), false)]), Some(full));
+        }
+        assert_eq!(decode_mailbox_name("A&-B"), Some("A&B".into()));
+    }
+
+    #[tokio::test]
+    async fn a_missing_body_is_stale_only_after_tagged_ok() {
+        let command = format!("UID FETCH 42 (RFC822.SIZE BODY.PEEK[]<0.{BODY_LIMIT}>)");
+        for status in [Some("OK"), Some("NO"), Some("BAD"), None] {
+            let (mut session, server) = fetch_session(&command, "", status).await;
+            let result = tokio::time::timeout(Duration::from_secs(2), fetch_body_from_session(&mut session, 42)).await.unwrap();
+            if status == Some("OK") {
+                assert_eq!(result, Err(MailError::Stale));
+            } else {
+                assert!(matches!(result, Err(MailError::Network(_))));
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[test]
     fn href_is_a_whole_attribute_outside_other_values() {
         for tag in [
             r#"<a hreflang="en" href="https://example.org/right""#,
@@ -2028,12 +2166,15 @@ mod tests {
         data: &str,
         status: Option<&str>,
     ) -> (async_imap::Session<tokio::io::DuplexStream>, tokio::task::JoinHandle<()>) {
+        fetch_sessions(vec![(command.to_owned(), data.to_owned(), status.map(str::to_owned))]).await
+    }
+
+    async fn fetch_sessions(
+        steps: Vec<(String, String, Option<String>)>,
+    ) -> (async_imap::Session<tokio::io::DuplexStream>, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         let (client_io, server_io) = tokio::io::duplex(4096);
-        let command = command.to_owned();
-        let data = data.to_owned();
-        let status = status.map(str::to_owned);
         let server = tokio::spawn(async move {
             let (reader, mut writer) = tokio::io::split(server_io);
             let mut reader = BufReader::new(reader);
@@ -2042,13 +2183,15 @@ mod tests {
             reader.read_line(&mut line).await.unwrap();
             let tag = line.split_whitespace().next().unwrap();
             writer.write_all(format!("{tag} OK logged in\r\n").as_bytes()).await.unwrap();
-            line.clear();
-            reader.read_line(&mut line).await.unwrap();
-            let (tag, sent) = line.trim_end().split_once(' ').unwrap();
-            assert_eq!(sent, command);
-            writer.write_all(data.as_bytes()).await.unwrap();
-            if let Some(status) = status {
-                writer.write_all(format!("{tag} {status} [UNAVAILABLE] finished\r\n").as_bytes()).await.unwrap();
+            for (command, data, status) in steps {
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                let (tag, sent) = line.trim_end().split_once(' ').unwrap();
+                assert_eq!(sent, command);
+                writer.write_all(data.as_bytes()).await.unwrap();
+                if let Some(status) = status {
+                    writer.write_all(format!("{tag} {status} [UNAVAILABLE] finished\r\n").as_bytes()).await.unwrap();
+                }
             }
         });
         let mut client = async_imap::Client::new(client_io);
@@ -2167,9 +2310,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn last_uids_fill_from_older_ranges_without_deleted_messages() {
+        let step = |start: u32, end: u32, deleted_through: u32| {
+            let data = (start..=end).map(|seq| {
+                let flags = if seq <= deleted_through { "\\Deleted" } else { "" };
+                format!("* {seq} FETCH (UID {} FLAGS ({flags}))\r\n", seq + 100)
+            }).collect::<String>();
+            (format!("FETCH {start}:{end} (UID FLAGS)"), data, Some("OK".into()))
+        };
+        let (mut session, server) = fetch_sessions(vec![step(21, 30, 30), step(11, 20, 15), step(1, 10, 0)]).await;
+        let uids = get_last_uids(&mut session, 30).await.unwrap();
+        assert_eq!(uids, vec![106, 107, 108, 109, 110, 116, 117, 118, 119, 120]);
+        server.await.unwrap();
+
+        let steps = (0..5).map(|at| step(91 - at * 10, 100 - at * 10, 100)).collect();
+        let (mut session, server) = fetch_sessions(steps).await;
+        assert!(get_last_uids(&mut session, 100).await.unwrap().is_empty());
+        server.await.unwrap();
+
+        let (mut session, server) = fetch_sessions(vec![step(1, 3, 2)]).await;
+        assert_eq!(get_last_uids(&mut session, 3).await.unwrap(), vec![103]);
+        server.await.unwrap();
+
+        let (mut session, server) = fetch_session("FETCH 1:10 (UID FLAGS)", "", Some("OK")).await;
+        assert!(matches!(get_last_uids(&mut session, 10).await, Err(MailError::Network(_))));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn last_uids_reject_a_partial_failed_fetch() {
         for status in [Some("OK"), Some("NO"), Some("BAD"), None] {
-            let (mut session, server) = fetch_session("FETCH 1:* UID", "* 1 FETCH (UID 42)\r\n", status).await;
+            let (mut session, server) = fetch_session("FETCH 1:10 (UID FLAGS)", "* 1 FETCH (UID 42 FLAGS ())\r\n", status).await;
             let result = tokio::time::timeout(Duration::from_secs(2), get_last_uids(&mut session, 10))
                 .await.expect("FETCH UID должен завершиться");
             assert_eq!(result.is_ok(), status == Some("OK"));
@@ -2522,9 +2693,11 @@ Content-Type: text/html; charset=utf-8
     }
 
     #[test]
-    fn clean_body_strips_style_script_and_head_tags() {
+    fn html_body_strips_style_script_and_head_before_text_conversion() {
         let input = "<head><title>Тест</title></head><style>body { color: red; }</style><script>alert(1);</script>Основной текст письма";
-        let cleaned = clean_body(input).expect("текст получен");
+        let raw = format!("Content-Type: text/html; charset=utf-8\r\n\r\n{input}");
+        let msg = mail_parser::MessageParser::default().parse(raw.as_bytes()).unwrap();
+        let cleaned = parse_letter_body(&msg).text.expect("текст получен");
         assert_eq!(cleaned, "Основной текст письма");
         assert!(!cleaned.contains("color: red"));
         assert!(!cleaned.contains("alert"));

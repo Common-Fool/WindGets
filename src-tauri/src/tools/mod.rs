@@ -382,7 +382,7 @@ async fn install(app: &AppHandle, component: Component) -> Result<(), Failure> {
     publish(app);
 
     let client = client()?;
-    let release = latest(&tools, &client, spec(component).repo).await?;
+    let release = latest(&tools.cancel, &client, spec(component).repo).await?;
     install_release(app, component, &client, &release).await
 }
 
@@ -535,7 +535,7 @@ pub async fn refresh(app: &AppHandle, component: Component, force: bool) -> Resu
     publish(app);
 
     let client = client()?;
-    let release = latest(&tools, &client, spec(component).repo).await?;
+    let release = latest(&tools.cancel, &client, spec(component).repo).await?;
 
     if entry.tag.as_deref() == Some(release.tag_name.as_str()) {
         let root = tools.root.clone();
@@ -563,14 +563,15 @@ pub async fn refresh(app: &AppHandle, component: Component, force: bool) -> Resu
 
 /// Свежий выпуск с GitHub, но с отменой, слышной и на самом вопросе, а не
 /// только на скачивании: без ответа GitHub ждёт до сорока пяти секунд, и
-/// «Cancel» загрузчика или установки ждал бы их целиком.
-async fn latest(tools: &Tools, client: &reqwest::Client, repo: &str) -> Result<github::Release, Failure> {
+/// «Cancel» загрузчика или установки ждал бы их целиком. Общий у программ и
+/// драйвера PawnIO.
+pub(crate) async fn latest(cancel: &AtomicBool, client: &reqwest::Client, repo: &str) -> Result<github::Release, Failure> {
     let mut asked = std::pin::pin!(github::latest(client, repo));
     loop {
         if let Ok(answer) = tokio::time::timeout(Duration::from_millis(100), &mut asked).await {
             return answer;
         }
-        if tools.cancel.load(Ordering::SeqCst) {
+        if cancel.load(Ordering::SeqCst) {
             return Err(Failure::Cancelled);
         }
     }
@@ -755,7 +756,7 @@ pub fn tools_remove(app: AppHandle, components: Vec<Component>) -> Result<(), St
 
     let busy = occupy(&app).ok_or_else(|| "busy".to_owned())?;
 
-    if crate::converter::uses_tools(&app) || crate::downloader::uses_tools(&app) {
+    if crate::converter::uses_tools(&app) || crate::downloader::uses_tools(&app) || crate::fps::uses_tools() {
         app.state::<Tools>().lock().failure = Some(Problem { component: first, code: Failure::InUse });
         // Опустившийся `busy` разошлёт отказ сам
         return Err("inUse".to_owned());

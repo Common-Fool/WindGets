@@ -532,6 +532,27 @@ pub const WIDGETS: &[Widget] = &[
         floor: Some((200.0, 80.0)),
     },
     Widget {
+        id: "fps",
+        // Три вида (слово пользователя): с графиком, без графика и квадрат с
+        // одним числом. Форма окна у каждого своя — свой набор размеров
+        views: &["view.withChart", "view.noChart", "view.fpsOnly"],
+        view_heights: &[],
+        presets: &[],
+        view_presets: &[
+            &[Preset { name: "size.full", width: 300.0, height: Some(158.0), below: None, below_height: None, keeps: None }],
+            &[Preset { name: "size.full", width: 300.0, height: Some(88.0), below: None, below_height: None, keeps: None }],
+            &[Preset { name: "size.full", width: 96.0, height: Some(96.0), below: None, below_height: None, keeps: None }],
+        ],
+        covers: &[],
+        covers_hidden: &[],
+        flexible: false,
+        chrome: false,
+        // Нужен не всем и тянет PresentMon — включают в настройках
+        enabled: false,
+        // Квадрат уже общего предела: окно мышью не тянется
+        floor: Some((96.0, MIN_HEIGHT)),
+    },
+    Widget {
         id: "weather",
         // Размер один, и это честно: у свёрнутой карточки порогов по ширине
         // нет вовсе. Между полной шириной и 17em она просто сужается, а имя
@@ -1599,7 +1620,7 @@ mod tests {
         assert!((floor.height - MIN_HEIGHT * 1.3).abs() < 0.001);
     }
 
-    /// Свой предел строже общего. Исключение — утверждённый узкий пульт звука:
+    /// Свой предел строже общего. Исключения — утверждённый узкий пульт звука и квадрат счётчика кадров:
     /// он не растягивается мышью и сохраняет измеренную ширину основы.
     #[test]
     fn an_own_floor_is_never_looser_than_the_common_one() {
@@ -1611,6 +1632,12 @@ mod tests {
             if widget.id == "sound" {
                 assert!(!widget.flexible);
                 assert_eq!((width, height), (118.0, MIN_HEIGHT));
+                continue;
+            }
+            // Квадрат счётчика кадров — та же история: не тянется, одно число
+            if widget.id == "fps" {
+                assert!(!widget.flexible);
+                assert_eq!((width, height), (96.0, MIN_HEIGHT));
                 continue;
             }
 

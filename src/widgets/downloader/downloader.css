@@ -18,6 +18,14 @@
     "status status status status"
     "folder toggle . go"
     "list list list list";
+  /*
+   * ВАЖНО: **строка истории — по содержимому, `max-content`.** Высота сетки
+   * равна окну, а у списка `overflow-y: auto`, то есть нулевой минимум: в
+   * строке `auto` панель сжималась в ноль, мерила себя нулём и окно не
+   * растила — кнопка истории «не делала ничего» (22 октября). Так панель
+   * вылезает за низ, честно меряется, и окно дорастает под неё.
+   */
+  grid-template-rows: auto auto auto auto max-content;
   align-content: start;
   column-gap: var(--space-2);
   row-gap: var(--space-3);
@@ -156,6 +164,7 @@
     "url go go"
     "opts folder toggle"
     "list list list";
+  grid-template-rows: auto auto max-content;
   row-gap: var(--space-2);
 }
 
