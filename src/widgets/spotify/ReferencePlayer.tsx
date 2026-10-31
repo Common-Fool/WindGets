@@ -98,7 +98,7 @@ function layoutOf(format: number, size: number, cover: number): Layout {
   } else if (safeFormat === 1) {
     if (picture) { const side = big ? w : w - 24; artBox = bounds(big ? 0 : 12, big ? 0 : 12, side, side); }
     const my = picture ? big ? w + 12 : w : Math.max(12, h - (extra ? 214 : 138));
-    // Полоса НАД кнопками, как в столбике Claude (11 октября, слово
+    // Полоса НАД кнопками, как в столбике Classic (11 октября, слово
     // пользователя): подписи, полоса со временем, кнопки, громкость.
     // Воздух между строками добавлен с живой проверки, когда у «Большого» и
     // «Среднего» высота стала по содержимому и строки слиплись

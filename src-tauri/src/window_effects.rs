@@ -22,7 +22,7 @@ const APPEARANCE_EVENT: &str = "appearance";
 pub struct Appearance {
     /// Сохранённый общий выбор; настройки показывают его даже до своего редизайна.
     pub design: settings::Design,
-    /// Временный возврат к Claude у ещё не переработанного окна.
+    /// Временный возврат к Classic у ещё не переработанного окна.
     pub effective_design: settings::Design,
     pub card_opacity: f64,
     pub scale: f64,
@@ -72,7 +72,7 @@ fn effective(settings: &settings::Settings, label: &str) -> Appearance {
 }
 
 /// Дизайн, которым окно рисует прямо сейчас: выбранный, а у неготового окна —
-/// Claude. Им же сверяются запросы геометрии, пришедшие от окна.
+/// Classic. Им же сверяются запросы геометрии, пришедшие от окна.
 pub fn effective_design(settings: &settings::Settings, label: &str) -> settings::Design {
     if settings.design == settings::Design::Reference && !new_design_ready(label) {
         settings::Design::App
@@ -272,7 +272,7 @@ pub fn preview_appearance(app: AppHandle, card_opacity: Option<f64>, scale: Opti
 pub fn set_palette(app: AppHandle, design: settings::Design, name: String) {
     let state = app.state::<SettingsState>();
     settings::update(&app, &state, |settings| {
-        settings.appearance_for_mut(design).palette = settings::palette_for_design(name, design);
+        settings.appearance_for_mut(design).palette = settings::sane_palette(name);
     });
 
     broadcast(&app);
@@ -623,12 +623,12 @@ mod tests {
         let settings = settings::Settings::default();
         let widget = super::effective(&settings, "sound");
         let technical = super::effective(&settings, "debug");
-        assert_eq!(widget.palette, "gpt");
-        assert_eq!(widget.glass, "gpt");
+        assert_eq!(widget.palette, settings::default_palette());
+        assert_eq!(widget.glass, "cool");
         assert_eq!(technical.effective_design, settings::Design::App);
         assert_eq!(technical.palette, settings::default_palette());
         assert_eq!(technical.design, settings::Design::Reference);
-        assert_eq!(settings.appearance.reference.palette, "gpt");
+        assert_eq!(settings.appearance.reference.palette, settings::default_palette());
     }
     /// Незнакомые имена и числа не должны раздавать окнам то, под что в токенах
     /// ничего нет.

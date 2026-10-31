@@ -1,4 +1,4 @@
-/* GPT Design: общие поверхности и контролы только у готового окна.
+/* NEW: общие поверхности и контролы только у готового окна.
  * Цвета данных продолжают брать роли общей палитры. */
 :root[data-design="reference"] {
   --surface-card: rgba(var(--surface-base), var(--surface-card-alpha));
@@ -32,7 +32,7 @@
 }
 :root[data-design="reference"] .card { box-shadow: var(--shadow-card); }
 :root[data-design="reference"] .card::before { display: none; }
-/* Геометрия GPT Design; Claude берёт прежнюю шкалу из tokens.css. */
+/* Геометрия NEW; Classic берёт прежнюю шкалу из tokens.css. */
 :root[data-design="reference"] {
   --hardware-padding: calc(10px * var(--scale));
   --hardware-ring: calc(80px * var(--scale));

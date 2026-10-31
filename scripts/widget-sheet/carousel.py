@@ -4,8 +4,8 @@
 сменяют друг друга сами. WebP, а не GIF: у GIF 256 цветов, и стекло с
 градиентами пошло бы полосами; GitHub проигрывает WebP так же.
 
-Берёт снимки, которые сделал `shoot.mjs` (`assets/screenshots/<id>.webp`, GPT
-Design), и пишет `assets/screenshots/widgets.webp`. Нужен Pillow:
+Берёт снимки, которые сделал `shoot.mjs` (`assets/screenshots/<id>.webp`, дизайн
+NEW), и пишет `assets/screenshots/widgets.webp`. Нужен Pillow:
 `python scripts/widget-sheet/carousel.py`.
 """
 

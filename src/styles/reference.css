@@ -12,7 +12,7 @@
 
 /* Фактура внутри существующих полос, без изменения их длины или шкалы. */
 :root[data-palette^="reference-"] .bar__fill {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 82%, #10151c), var(--accent));
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--accent) 82%, #10151c), var(--accent));
 }
 
 :root[data-palette^="reference-"] .arc__value {

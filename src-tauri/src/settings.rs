@@ -48,14 +48,15 @@ pub const PALETTES: &[&str] = &[
     "monochrome",
     "single",
     "custom",
-    "gpt",
 ];
 
 /// Стекло — фон карточек, выбирается независимо от темы: цвет подложки
 /// заимствовать у акцента нельзя, насыщенный акцент на подложке того же
-/// оттенка перестаёт читаться. По умолчанию Claude — obsidian, GPT — gpt;
-/// порядок образцов не задаёт умолчание. Имена — `glass.<id>`.
-pub const GLASSES: &[&str] = &["graphite", "obsidian", "warm", "midnight", "plum", "gpt"];
+/// оттенка перестаёт читаться. По умолчанию у Classic (`app`) — obsidian, у
+/// NEW (`reference`) — cool; порядок образцов не задаёт умолчание. Имена —
+/// `glass.<id>`. Прежние идентификаторы `gpt` и `slate` того же стекла
+/// переносятся в `cool` при чтении (`sane_glass`).
+pub const GLASSES: &[&str] = &["graphite", "obsidian", "warm", "midnight", "plum", "cool"];
 
 /// Цвет режима «Один акцент» по умолчанию — синий акцент темы Polar.
 ///
@@ -88,7 +89,9 @@ pub const DEFAULT_VIVID: f64 = 1.0;
 pub const MIN_VIVID: f64 = 0.7;
 pub const MAX_VIVID: f64 = 1.5;
 
-/// Общий дизайн независимо от раскладки: Claude Design или GPT Design.
+/// Общий дизайн независимо от раскладки: Classic (`app`) или NEW
+/// (`reference`). Идентификаторы прежние — по ним читаются сохранённые
+/// настройки.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Design {
@@ -117,8 +120,8 @@ impl Default for DesignAppearance {
 impl DesignAppearance {
     pub fn for_design(design: Design) -> Self {
         Self {
-            palette: if design == Design::Reference { "gpt".to_owned() } else { default_palette() },
-            glass: if design == Design::Reference { "gpt".to_owned() } else { default_glass() },
+            palette: default_palette(),
+            glass: if design == Design::Reference { "cool".to_owned() } else { default_glass() },
             accent_color: DEFAULT_ACCENT_COLOR.to_owned(),
             custom_colors: default_custom_colors(),
         }
@@ -145,10 +148,10 @@ fn read_appearance(value: serde_json::Value, design: Design) -> DesignAppearance
     let mut appearance = DesignAppearance::for_design(design);
     if let Some(object) = value.as_object() {
         if let Some(name) = object.get("palette").and_then(serde_json::Value::as_str) {
-            appearance.palette = palette_for_design(name.to_owned(), design);
+            appearance.palette = sane_palette(name.to_owned());
         }
         if let Some(name) = object.get("glass").and_then(serde_json::Value::as_str) {
-            if name == "slate" || GLASSES.contains(&name) { appearance.glass = sane_glass(name.to_owned()); }
+            if matches!(name, "slate" | "gpt") || GLASSES.contains(&name) { appearance.glass = sane_glass(name.to_owned()); }
         }
         if let Some(color) = object.get("accent_color").and_then(serde_json::Value::as_str) {
             appearance.accent_color = sane_color(color, DEFAULT_ACCENT_COLOR);
@@ -170,12 +173,6 @@ fn deserialize_reference_appearance<'de, D: serde::Deserializer<'de>>(d: D) -> R
     Ok(read_appearance(serde_json::Value::deserialize(d)?, Design::Reference))
 }
 
-/// GPT-палитра не доступна техническим окнам и Claude.
-pub fn palette_for_design(name: String, design: Design) -> String {
-    let name = sane_palette(name);
-    if design == Design::App && name == "gpt" { default_palette() } else { name }
-}
-
 fn deserialize_design<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Design, D::Error> {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(match value.as_str() {
@@ -194,6 +191,8 @@ pub fn default_palette() -> String {
 ///
 /// Прежние вариации переводятся в ближайшее по смыслу: «Один акцент» и
 /// «Монохром» — в одноимённые режимы, «Многоцвет» — в тему по умолчанию.
+/// Снятая палитра `gpt` (не отличалась от базовой многоцветной) уходит в тему
+/// по умолчанию последней веткой.
 pub fn sane_palette(value: String) -> String {
     match value.as_str() {
         "accent" => "single".to_owned(),
@@ -209,7 +208,9 @@ pub fn default_glass() -> String {
 
 /// Незнакомое стекло — то же, что незнакомая тема: съезжаем на первое.
 pub fn sane_glass(value: String) -> String {
-    if value == "slate" { return "gpt".to_owned(); }
+    // Одно и то же стекло звалось `slate`, потом `gpt` — по старому имени
+    // дизайна; читаем оба, чтобы выбор не сбросился
+    if matches!(value.as_str(), "slate" | "gpt") { return "cool".to_owned(); }
     if GLASSES.contains(&value.as_str()) {
         value
     } else {
@@ -401,7 +402,7 @@ pub struct Settings {
     /// потерянная настройка, а не как несовпадение имён.
     #[serde(alias = "font_scale")]
     pub scale: f64,
-    /// Независимые наборы Claude и GPT; прежние поля переносятся при чтении.
+    /// Независимые наборы Classic и NEW; прежние поля переносятся при чтении.
     pub appearance: DesignAppearances,
     /// Яркость цветов, от [`MIN_VIVID`] до [`MAX_VIVID`].
     pub vivid: f64,
@@ -684,7 +685,7 @@ impl Settings {
         if own.cover >= widget.covers.len() {
             own.cover = 0;
         }
-        // Размеры — те, что видит нынешний дизайн: в Claude новые виды GPT не
+        // Размеры — те, что видит нынешний дизайн: в Classic новые виды NEW не
         // действуют, и их единственный размер не должен обнулять выбранный
         if own.size >= widget.presets_in(self.design, own.view).len() {
             own.size = 0;
@@ -1851,8 +1852,8 @@ mod tests {
         assert_eq!(settings.appearance.app.glass, "plum");
         assert_eq!(settings.appearance.app.accent_color, "#123456");
         assert_eq!(settings.appearance.app.custom_colors["positive"], "#ABCDEF");
-        assert_eq!(settings.appearance.reference.palette, "gpt");
-        assert_eq!(settings.appearance.reference.glass, "gpt");
+        assert_eq!(settings.appearance.reference.palette, "reference-classic");
+        assert_eq!(settings.appearance.reference.glass, "cool");
         assert_eq!(settings.vivid, 1.5);
         settings.appearance_for_mut(Design::Reference).glass = "warm".to_owned();
         settings.appearance_for_mut(Design::Reference).palette = "custom".to_owned();
@@ -1888,9 +1889,8 @@ mod tests {
     fn delayed_profile_edit_does_not_touch_the_active_design() {
         let mut settings = Settings { design: Design::Reference, ..Settings::default() };
         let active = settings.appearance.reference.clone();
-        settings.appearance_for_mut(Design::App).palette = palette_for_design("single".to_owned(), Design::App);
+        settings.appearance_for_mut(Design::App).palette = sane_palette("single".to_owned());
         assert_eq!(settings.appearance.reference, active);
-        assert_eq!(palette_for_design("gpt".to_owned(), Design::App), default_palette());
         let malformed = parse_settings(r#"{"scale":1.15,"appearance":{"app":false,"reference":{"glass":42,"palette":false}}}"#);
         assert_eq!(malformed.scale, 1.15);
         assert_eq!(malformed.appearance.reference, DesignAppearance::for_design(Design::Reference));
@@ -1955,12 +1955,25 @@ mod redesign_layout_tests {
     }
 
     #[test]
-    fn removed_slate_uses_the_renamed_gpt_surface() {
+    fn removed_gpt_palette_becomes_the_default_theme_in_both_designs() {
+        assert!(!PALETTES.contains(&"gpt"));
+        assert_eq!(default_palette(), "reference-classic");
+        let settings = parse_settings(r#"{"appearance":{"app":{"palette":"gpt"},"reference":{"palette":"gpt","glass":"gpt"}}}"#);
+        assert_eq!(settings.appearance.app.palette, "reference-classic");
+        assert_eq!(settings.appearance.reference.palette, "reference-classic");
+        assert_eq!(settings.appearance.reference.glass, "cool", "стекло прежнее, под новым именем");
+        assert_eq!(Settings::default().appearance.reference.palette, "reference-classic");
+    }
+
+    #[test]
+    fn old_glass_names_become_cool() {
         assert!(!GLASSES.contains(&"slate"));
-        assert_eq!(sane_glass("slate".to_owned()), "gpt");
+        assert!(!GLASSES.contains(&"gpt"));
+        assert_eq!(sane_glass("slate".to_owned()), "cool");
+        assert_eq!(sane_glass("gpt".to_owned()), "cool");
         let settings = parse_settings(r#"{"glass":"slate","appearance":{"reference":{"glass":"slate"}}}"#);
-        assert_eq!(settings.appearance.app.glass, "gpt");
-        assert_eq!(settings.appearance.reference.glass, "gpt");
+        assert_eq!(settings.appearance.app.glass, "cool");
+        assert_eq!(settings.appearance.reference.glass, "cool");
         let saved = serde_json::to_string(&settings).unwrap();
         assert!(!saved.contains("slate"));
     }

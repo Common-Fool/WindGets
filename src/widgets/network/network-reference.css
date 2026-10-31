@@ -1,5 +1,5 @@
-/* Утверждённые R04 A/B. Все селекторы принадлежат только новой JSX GPT;
- * исходный network.css и классы .net Claude не переопределяются. */
+/* Утверждённые R04 A/B. Все селекторы принадлежат только новой JSX NEW;
+ * исходный network.css и классы .net Classic не переопределяются. */
 .net-ref {
   --net-ref-pad: calc(10px * var(--scale));
   --net-ref-label: calc(12px * var(--scale));

@@ -56,7 +56,7 @@ function lookOf(id: string, state: PreviewState): Look {
 
 /**
  * Без рамки (проверка в браузере): одна строка виджета. Дизайн — из адреса
- * (`&design=app` — Claude, иначе GPT), вид — `&view=1`.
+ * (`&design=app` — Classic, иначе NEW), вид — `&view=1`.
  */
 export function defaultState(id: string): PreviewState {
   const query = new URLSearchParams(window.location.search);
@@ -66,8 +66,8 @@ export function defaultState(id: string): PreviewState {
     effectiveDesign: design,
     cardOpacity: EMPTY_SETTINGS.cardOpacity,
     scale: 1,
-    palette: design === "reference" ? "gpt" : "reference-classic",
-    glass: design === "reference" ? "gpt" : "obsidian",
+    palette: "reference-classic",
+    glass: design === "reference" ? "cool" : "obsidian",
     accentColor: DEFAULT_ACCENT_COLOR,
     customColors: DEFAULT_CUSTOM_COLORS,
     vivid: 1,

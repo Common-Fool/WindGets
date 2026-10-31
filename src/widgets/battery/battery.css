@@ -1,4 +1,4 @@
-/* Claude: компактная строка, нейтральные подписи и статусный цвет данных. */
+/* Classic: компактная строка, нейтральные подписи и статусный цвет данных. */
 .card:has(.battery) .card__body {
   --card-pad-block: var(--space-4);
   padding: var(--card-pad-block) var(--space-4);
@@ -59,7 +59,7 @@
 }
 
 .battery__level { grid-column: 2 / -1; min-width: 0; }
-.battery__level .bar--thin { height: calc(var(--space-1) / 2); }
+.battery__level .bar--thin { --bar-size: calc(var(--space-1) / 2); }
 
 .battery__empty {
   min-width: 0;

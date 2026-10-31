@@ -119,7 +119,7 @@ pub struct Shown {
     pub id: u64,
     /// Одна строка для показа: пробелы сжаты, длина обрезана.
     pub preview: String,
-    /// Ограниченный предпросмотр GPT с исходными переводами строк.
+    /// Ограниченный предпросмотр NEW с исходными переводами строк.
     pub formatted_preview: String,
     /// Строки исходной записи, в том числе пустые; CRLF — один перевод.
     pub lines: usize,
@@ -444,8 +444,8 @@ fn preview(text: &str) -> String {
     shown
 }
 
-/// GPT сохраняет переносы и отступы только в ограниченной проекции.
-/// Полный текст по-прежнему остаётся в History, а Claude читает прежний preview.
+/// NEW сохраняет переносы и отступы только в ограниченной проекции.
+/// Полный текст по-прежнему остаётся в History, а Classic читает прежний preview.
 fn formatted_preview(text: &str) -> String {
     let mut source = text.chars().peekable();
     let mut shown = String::new();

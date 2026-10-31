@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export type MediaGlyphName = "play" | "pause" | "previous" | "next" | "up" | "down" | "note" | "check";
 
-// Контуры GPT локальны; общие глифы Transport и исходный Claude не меняются.
+// Контуры NEW локальны; общие глифы Transport и исходный Classic не меняются.
 export function MediaGlyph({ name }: { name: MediaGlyphName }) {
   let glyph: ReactNode;
   switch (name) {

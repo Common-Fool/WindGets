@@ -25,7 +25,7 @@ import "./media-reference.css";
 /*
  * Медиа: что играет в Windows прямо сейчас — любой плеер, любая вкладка.
  *
- * Раскладка Claude одна: это горизонтальный пульт Спотифая с
+ * Раскладка Classic одна: это горизонтальный пульт Спотифая с
  * обложкой обычного размера. Фоновой и крупной обложек тут нет, как и других
  * раскладок, — виджет делается для полного комплекта, а образцом того, что
  * он умеет, служит всплывающее окно медиа самой Windows: источник, название,
@@ -68,7 +68,7 @@ export function MediaWidget() {
     if (view.sessions.length === 0) setSourcesOpen(false);
   }, [view.sessions.length]);
 
-  // Один владелец геометрии GPT: основа не зависит от высоты окна,
+  // Один владелец геометрии NEW: основа не зависит от высоты окна,
   // список меряется вместе с ней. При смене дизайна отложенный fit отменяется.
   useContentHeight(content, reference,
     [layout, size, panelOpen, Math.min(view.sessions.length, 3), scale, t.language].join("|"), true);
@@ -77,8 +77,8 @@ export function MediaWidget() {
     <div className={reference ? "widget media media-reference-widget" : "widget media"}
       data-size={size} data-layout={reference ? layout : undefined}>
       <GlassCard accent="media" flush={reference}>
-        {/* Постоянный узел сохраняет экземпляр Player при GPT/Claude.
-            В Claude display:contents оставляет исходную геометрию ряда. */}
+        {/* Постоянный узел сохраняет экземпляр Player при NEW/Classic.
+            В Classic display:contents оставляет исходную геометрию ряда. */}
         <div className={reference ? "media-content media-reference" : "media-content"} ref={content}>
         {track === null ? (
           <Idle reference={reference} />

@@ -1,18 +1,33 @@
+/* Полоса — рамкой, а не высотой. Строки стоят на дробных пикселях (размер ×
+   масштаб × масштаб экрана), и высоту Chromium округлял у одних строк до двух
+   пикселей экрана, у других до трёх: соседние полосы выходили разной толщины.
+   Ширина рамки сводится к целым пикселям экрана одинаково где угодно. Толщину
+   виджеты меняют переменной `--bar-size`, не `height`. */
 .bar {
+  --bar-size: var(--bar-thick);
+  position: relative;
   width: 100%;
-  height: var(--bar-thick);
+  height: 0;
+  border-top: var(--bar-size) solid var(--surface-track);
   border-radius: var(--radius-bar);
-  background: var(--surface-track);
-  overflow: hidden;
 }
 
 .bar--thin {
-  height: var(--bar-thin);
+  --bar-size: var(--bar-thin);
 }
 
+/* Заливка — та же рамка, прозрачная: фон рисуется и под рамкой, а дно у неё
+   общее с дорожкой, поэтому края совпадают до пикселя. `background-origin`
+   обязателен: градиент тем иначе меряется от внутренней области высотой ноль
+   и не рисуется вовсе. */
 .bar__fill {
-  height: 100%;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 0;
+  border-top: var(--bar-size) solid transparent;
   border-radius: inherit;
   background: var(--accent);
+  background-origin: border-box;
   transition: width var(--duration-slow) var(--ease);
 }

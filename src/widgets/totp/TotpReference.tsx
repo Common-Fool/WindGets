@@ -3,7 +3,7 @@ import { GlassCard } from "../../components/GlassCard";
 import { DoneIcon, FailedIcon } from "../../components/Icons";
 import type { Key, Text } from "../../lib/i18n";
 import { openWidgetSettings } from "../../lib/settings";
-import { useHeight } from "../../lib/size";
+import { useFittedTotpHeight } from "./fit";
 import { grouped, titleOf, type Code, type Codes, type Row } from "../../lib/totp";
 
 /** Ответ именно записи в буфер; раскрытие само по себе успехом не считается. */
@@ -43,7 +43,7 @@ function Feedback({ feedback, t, compact = false }: {
   );
 }
 
-/** Числа/точки не уступают место подтверждению, в отличие от исходного Claude. */
+/** Числа/точки не уступают место подтверждению, в отличие от исходного Classic. */
 function codeText(t: Text, code: Code | undefined, row: Row, open: boolean): string {
   if (code === undefined) return "·".repeat(row.digits);
   if (code.code === null) return t("totp.unavailable");
@@ -55,11 +55,7 @@ export function TotpReference({ t, accounts, empty, answer, current, feedback, h
   const stacked = layout === 1;
   const space = useRef<HTMLDivElement>(null);
   const sample = useRef<HTMLLIElement>(null);
-  const room = useHeight(space);
-  const pitch = useHeight(sample);
-  // useHeight меряет contentRect: у li нет полей и рамки, шаг целиком внутри.
-  // Полпикселя компенсируют только округление рамки при масштабе 90%.
-  const fitted = pitch > 0 ? Math.max(1, Math.floor((room + 0.5) / pitch)) * pitch : undefined;
+  const fitted = useFittedTotpHeight(space, sample, accounts.length);
 
   return (
     <div className="widget totp-widget--reference">

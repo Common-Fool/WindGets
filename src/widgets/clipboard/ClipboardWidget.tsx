@@ -11,7 +11,7 @@ import { Button } from "../../components/Button";
 import "./clipboard.css";
 import "./clipboard-design.css";
 
-/** Claude кратко опережает снимок Rust при возврате текста в буфер. */
+/** Classic кратко опережает снимок Rust при возврате текста в буфер. */
 const HOLD_MS = 400;
 const NO_IMAGES: ImageEntry[] = [];
 
@@ -253,7 +253,7 @@ function AppClipboard() {
   );
 }
 
-/** GPT сохраняет многострочный предпросмотр; справа число знаков и действия. */
+/** NEW сохраняет многострочный предпросмотр; справа число знаков и действия. */
 function ReferenceRow({ entry, current, pending, failed, onCopy, onDrop, onPin }: RowProps & {
   pending: boolean;
   failed: boolean;

@@ -1,4 +1,4 @@
-/* Утверждён только GPT A. Claude продолжает использовать converter.css без правок. */
+/* Утверждён только NEW A. Classic продолжает использовать converter.css без правок. */
 .widget--converter-reference .card { border-radius: var(--radius-card); }
 .widget--converter-reference .card__body { padding: calc(10px * var(--scale)); container: converter-size / size; }
 .conv--reference { gap: calc(6px * var(--scale)); }
@@ -24,7 +24,9 @@
   column-gap: calc(10px * var(--scale)); row-gap: calc(4px * var(--scale));
   padding: 0 calc(8px * var(--scale)) calc(6px * var(--scale)) 0;
   border-top: 0; border-bottom: 1px solid var(--border-hairline);
-  max-height: calc(100% - 98px * var(--scale)); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+  /* Шапка 24, низ 30, строка файла 34 и три зазора по 6. Прокрутка
+     нужна, только когда настройки не помещаются в оставшуюся высоту. */
+  max-height: calc(100% - 106px * var(--scale)); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
 }
 .conv--reference .conv__choice { flex: none; flex-wrap: nowrap; gap: calc(4px * var(--scale)); max-width: 100%; }
 .conv--reference .conv__label {
@@ -121,7 +123,6 @@
 }
 /* Плотность следует реальной высоте свободно растягиваемого окна. */
 @container converter-size (height < 18.5em) {
-  .conv--reference .conv__options { max-height: calc(64px * var(--scale)); }
   .conv--reference .conv__item { padding-block: calc(2px * var(--scale)); row-gap: calc(1px * var(--scale)); }
   .conv--reference .conv__name { font-size: calc(12px * var(--scale)); line-height: calc(15px * var(--scale)); }
   .conv--reference .conv__state { line-height: calc(12px * var(--scale)); }

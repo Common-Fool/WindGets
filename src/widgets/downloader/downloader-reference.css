@@ -1,4 +1,4 @@
-/* GPT A. Исходный downloader.css остаётся визуалом Claude. */
+/* NEW A. Исходный downloader.css остаётся визуалом Classic. */
 .downloader-reference-widget .card { border-radius: var(--radius-card); }
 .dl-a {
   height: auto;
@@ -9,6 +9,11 @@
   grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale)) minmax(calc(38px * var(--scale)), auto);
   grid-template-areas: "url go" "options options" "status status";
   gap: calc(7px * var(--scale)) calc(6px * var(--scale));
+}
+/* В простое нет ни подсказки, ни пустого ряда под неё. */
+.dl-a[data-layout="full"][data-ready="true"]:not(:has(> .dl-a__status)) {
+  grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale));
+  grid-template-areas: "url go" "options options";
 }
 .dl-a__url { grid-area: url; min-width: 0; height: calc(32px * var(--scale)); }
 .dl-a .input {
@@ -135,7 +140,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dl-a__status[data-phase="idle"] .dl-a__status-title { color: var(--text-secondary); }
 .dl-a__status[data-phase="done"] .dl-a__status-title { color: var(--status-ok); }
 .dl-a__status[data-phase="cancelled"] .dl-a__status-title { color: var(--status-warn); }
 .dl-a__status-bar { position: absolute; inset: auto 0 0; }
@@ -255,7 +259,7 @@
   .dl-a__quality-buttons { display: none; }
   .dl-a__quality-select { display: block; }
 
-  /* Новый узкий пресет Claude сохраняет прежние Toggle и все обработчики.
+  /* Новый узкий пресет Classic сохраняет прежние Toggle и все обработчики.
      Полное название остаётся в aria-label, короткое видно только здесь. */
   .downloader-app-widget .dl__options { flex-wrap: nowrap; gap: calc(4px * var(--scale)); }
   .downloader-app-widget .dl__chips { flex-wrap: nowrap; gap: calc(2px * var(--scale)); }

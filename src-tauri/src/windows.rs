@@ -1201,7 +1201,7 @@ fn hardware_width(settings: &settings::Settings, label: &str) -> Option<f64> {
 /// ВАЖНО: **замер помечен дизайном, которым его сняли.** Смена дизайна ставит
 /// окну новую основу, и от этого `ResizeObserver` прежней карточки успевает
 /// прислать ещё один замер — уже не той раскладки. Принятый, он поставил бы
-/// карточке Claude высоту GPT, а своей подгонки у неё (сеть, погода, медиа)
+/// карточке Classic высоту NEW, а своей подгонки у неё (сеть, погода, медиа)
 /// нет, и исправить было бы нечем. Сверка идёт здесь, в главном потоке:
 /// выбор дизайна к этому моменту уже записан.
 #[tauri::command]
@@ -1275,7 +1275,7 @@ fn panel_height(widget: &Widget, own: WidgetSettings, request: &PresetPanel, sca
         || !request.extra.is_finite() {
         return None;
     }
-    // Отрицательная прибавка бывает только у пульта: вертикальный GPT встаёт
+    // Отрицательная прибавка бывает только у пульта: вертикальный NEW встаёт
     // высотой по содержимому, когда у устройства нет громкости
     // (`referenceSlack` во фронте). Ужать окно больше чем вдвое она не может —
     // такое число пришло бы только по ошибке
@@ -1572,7 +1572,7 @@ mod hardware_width_tests {
         assert!(hardware_width(&settings::Settings::default(), "drives").is_none());
     }
 
-    /// Готовый размер и подгонка ставят окну одну и ту же ширину: прежде GPT
+    /// Готовый размер и подгонка ставят окну одну и ту же ширину: прежде NEW
     /// вставал по реестровым 264 и сужался до 244 уже после — скачком.
     #[test]
     fn a_preset_and_the_fit_agree_on_the_pair_width() {
@@ -1605,7 +1605,7 @@ mod hardware_width_tests {
                 assert!(!fit_is_stale(&settings, label, None), "{label}: замер без метки — как прежде");
             }
         }
-        // Неготовое окно рисует Claude даже при выбранном GPT — с ним и сверка
+        // Неготовое окно рисует Classic даже при выбранном NEW — с ним и сверка
         let settings = settings::Settings { design: settings::Design::Reference, ..settings::Settings::default() };
         assert!(!fit_is_stale(&settings, "debug", Some(settings::Design::App)));
         assert!(fit_is_stale(&settings, "debug", Some(settings::Design::Reference)));

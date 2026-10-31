@@ -1,4 +1,4 @@
-/* Компоновка GPT Design. Claude сохраняет исходную разметку и sections.css. */
+/* Компоновка NEW. Classic сохраняет исходную разметку и sections.css. */
 :root[data-design="reference"] .card:has(.hardware-body) > .card__body { --card-pad-block: var(--hardware-padding); padding: var(--hardware-padding); }
 .hardware-body { min-width: 0; }
 .hardware-loads { display: flex; flex-direction: column; gap: calc(10px * var(--scale)); }
@@ -19,7 +19,7 @@
 .hardware-load__unit { font-size: calc(12px * var(--scale)); font-weight: 400; color: var(--text-secondary); }
 .hardware-load .columns { --columns-height: calc(42px * var(--scale)); margin-top: calc(6px * var(--scale)); padding: 0; background: transparent; }
 .hardware-loads[data-view="bars"] .columns { --columns-height: calc(26px * var(--scale)); }
-.hardware-load .bar { height: calc(3px * var(--scale)); margin-top: calc(6px * var(--scale)); }
+.hardware-load .bar { --bar-size: calc(3px * var(--scale)); margin-top: calc(6px * var(--scale)); }
 .hardware-body:has(.hardware-loads) .pairs { display: flex; flex-direction: column; gap: 0; margin-top: calc(8px * var(--scale)); border-top: 1px solid var(--border-card); }
 .hardware-body:has(.hardware-loads) .pairs:empty { display: none; }
 .hardware-body:has(.hardware-loads) .pair { grid-template-columns: calc(50px * var(--scale)) repeat(2, calc(80px * var(--scale))); justify-content: start; gap: calc(8px * var(--scale)); align-items: center; min-height: var(--hardware-row); }
@@ -31,7 +31,7 @@
 :root[data-design="reference"] .hardware-load .columns__fill { background: var(--accent); }
 :root[data-design="reference"] .hardware-load .bar__fill { background: var(--accent); }
 :root[data-design="reference"] .hardware-load .arc__value { filter: none; }
-/* Компоновку GPT определяет выбранный размер: узкий полный не становится
+/* Компоновку NEW определяет выбранный размер: узкий полный не становится
  * компактным из-за прежнего порога, а компактный сохраняет подписи. */
 .hardware-body:has(.hardware-loads) .pair {
   grid-template-columns: calc(50px * var(--scale)) calc(80px * var(--scale)) calc(76px * var(--scale));

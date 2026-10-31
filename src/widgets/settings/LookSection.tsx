@@ -40,11 +40,10 @@ const MODE_DESCRIPTIONS: Record<string, Key> = {
  * по умолчанию, и перестановка ради списка сменила бы её молча. Дальше идут
  * прочие темы в порядке Rust, последними — три режима.
  */
-const FIRST_THEMES = ["reference-a", "reference-b", "reference-c"];
+const FIRST_THEMES = ["reference-classic", "reference-a", "reference-b", "reference-c"];
 
-/** Место темы в списке: первые три, прочие темы, режимы. */
+/** Место темы в списке: первые четыре, прочие темы, режимы. */
 function rank(id: string): number {
-  if (id === "gpt") return -1;
   const first = FIRST_THEMES.indexOf(id);
   if (first >= 0) return first;
   return isReferenceTheme(id) ? FIRST_THEMES.length : FIRST_THEMES.length + 1;
@@ -148,7 +147,7 @@ export function AppearanceSection() {
   const opacity = Math.round(look.cardOpacity * 100);
   const vivid = Math.round(look.vivid * 100);
 
-  /* Один набор полей с постоянными ключами. При перестановке GPT/Claude
+  /* Один набор полей с постоянными ключами. При перестановке NEW/Classic
    * React сохраняет формы и черновики, а Tab следует видимому порядку. */
   const fields: { id: string; content: ReactNode }[] = [
     { id: "design", content: (
@@ -157,7 +156,7 @@ export function AppearanceSection() {
         <div className="choices" role="group" aria-label={t("look.design")}>
           {(["reference", "app"] as const).map((design) => (
             <button key={design} type="button" className="choice" aria-pressed={look.design === design}
-              disabled={designPending} onClick={() => void chooseDesign(design)}>{t(design === "reference" ? "design.gpt" : "design.claude")}</button>
+              disabled={designPending} onClick={() => void chooseDesign(design)}>{t(design === "reference" ? "design.new" : "design.classic")}</button>
           ))}
         </div>
       </div>
@@ -275,7 +274,7 @@ function Palette() {
   const look = useLook();
   const t = useText();
   // Сортировка устойчивая: внутри своей ступени темы идут в порядке Rust
-  const palettes = [...settings.palettes].filter((item) => item.id !== "gpt" || look.effectiveDesign === "reference").sort((a, b) => rank(a.id) - rank(b.id));
+  const palettes = [...settings.palettes].sort((a, b) => rank(a.id) - rank(b.id));
 
   return (
     <div className="field" data-look-field="palette">

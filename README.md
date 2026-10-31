@@ -11,12 +11,12 @@ no background work.
 
 <table>
   <tr>
-    <th>GPT Design</th>
-    <th>Claude Design</th>
+    <th>NEW</th>
+    <th>Classic</th>
   </tr>
   <tr>
-    <td><a href="assets/screenshots/overview-gpt.webp"><img src="assets/screenshots/overview-gpt.webp" alt="Every widget in GPT Design"></a></td>
-    <td><a href="assets/screenshots/overview-claude.webp"><img src="assets/screenshots/overview-claude.webp" alt="Every widget in Claude Design"></a></td>
+    <td><a href="assets/screenshots/overview-new.webp"><img src="assets/screenshots/overview-new.webp" alt="Every widget in the NEW design"></a></td>
+    <td><a href="assets/screenshots/overview-classic.webp"><img src="assets/screenshots/overview-classic.webp" alt="Every widget in the Classic design"></a></td>
   </tr>
 </table>
 
@@ -44,7 +44,7 @@ no background work.
 The interface is available in English, Russian, Ukrainian, Spanish and Chinese.
 
 <p align="center">
-  <img src="assets/screenshots/widgets.webp" alt="Every widget one by one, GPT Design" width="560">
+  <img src="assets/screenshots/widgets.webp" alt="Every widget one by one, NEW design" width="560">
 </p>
 
 <details>

@@ -18,7 +18,7 @@ function ReadingPair({ label, value }: { label: string; value: string }) {
   return <span className="disks-ref__pair" data-field={label} title={value}><span>{label}</span><strong>{value}</strong></span>;
 }
 
-/** GPT: имя и свободно/всего в заголовке; параметры в одном ряду. */
+/** NEW: имя и свободно/всего в заголовке; параметры в одном ряду. */
 export function DisksReference({ disks, ring, size }: { disks: Disk[]; ring: boolean; size: number }) {
   const narrow = ring || size !== 0;
   return <div className={`disks-ref${ring ? " disks-ref--ring" : ""}${narrow ? " disks-ref--narrow" : ""}`}>

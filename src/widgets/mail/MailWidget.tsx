@@ -47,7 +47,7 @@ import "./mail-reference.css";
 const STALE_LIST_KEY: Key = "mail.error.stale";
 
 export type LetterRowProps = {
-  /** Компоновка GPT: 0 — таблица, 1 — дайджест. */
+  /** Компоновка NEW: 0 — таблица, 1 — дайджест. */
   layout?: number;
   letter: Letter;
   onSelect: (letter: Letter) => void;

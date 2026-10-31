@@ -1,4 +1,4 @@
-/* R09: утверждённые читаемые строки A только для GPT Design.
+/* R09: утверждённые читаемые строки A только для NEW.
  * Окно остаётся растягиваемым; размер списка определяет окно, а не история. */
 .clip-ref {
   display: flex;
@@ -279,7 +279,7 @@
 }
 
 /* Общая .widget > .card уже является container: card / size.
- * Legacy floor 140×64 остаётся: здесь сжимается только GPT, не окно. */
+ * Legacy floor 140×64 остаётся: здесь сжимается только NEW, не окно. */
 @container card (height < 5.5em) {
   .clip-ref {
     padding-top: calc(3px * var(--scale));

@@ -150,7 +150,7 @@ function WholeWidgetPage({ id }: { id: string }) {
           {look.effectiveDesign === "reference" && (
             <div className="settings__card-caption" data-hint={t("look.designNote")}>
               <h3>{t("settings.card.parameters")}</h3>
-              <span>{t(look.design === "reference" ? "design.gpt" : "design.claude")}</span>
+              <span>{t(look.design === "reference" ? "design.new" : "design.classic")}</span>
             </div>
           )}
           {Look !== undefined && <Look />}

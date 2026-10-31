@@ -1,4 +1,4 @@
-/* R17: единственный утверждённый A. Исходный settings.css остаётся Claude.
+/* R17: единственный утверждённый A. Исходный settings.css остаётся Classic.
  * Формы и команды общие; порядок полей A задаёт список с постоянными ключами.
  * Масштаб/плотность виджетов не меняют геометрию и фон этого окна. */
 .settings--reference {
@@ -200,7 +200,7 @@
 
 .settings--reference [data-look-field="design-error"] { padding: 10px; border: 1px solid var(--border-card); border-left: 2px solid var(--status-danger); border-radius: 5px; background: var(--surface-inset); color: var(--status-danger); }
 
-/* Галерея виджетов: те же правила, что у Claude, на плотных размерах GPT */
+/* Галерея виджетов: те же правила, что у Classic, на плотных размерах NEW */
 .settings--reference .widget-card { background: var(--surface-inset); }
 .settings--reference .widget-card:hover { background: var(--surface-control); }
 .settings--reference .widget-card[data-selected] { background: var(--surface-control); }

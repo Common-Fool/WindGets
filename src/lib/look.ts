@@ -131,7 +131,7 @@ function sameColors(next: Record<string, string>, now: Record<string, string>): 
 
 function adopt(received: Look) {
   appearanceVersion += 1;
-  // Старый backend не знает дизайн: показываем Claude, а не ложный выбор GPT.
+  // Старый backend не знает дизайн: показываем Classic, а не ложный выбор NEW.
   const next: Look = { ...received,
     design: received.design ?? "app", effectiveDesign: received.effectiveDesign ?? "app",
     customColors: received.customColors ?? DEFAULT_CUSTOM_COLORS };
@@ -200,7 +200,7 @@ export function initLook(): void {
 
   // emit_to рассылает разные снимки каждому окну. Глобальный listen с
   // target Any ловит также чужие снимки (у настроек effectiveDesign=app)
-  // и отменяет только что выбранный GPT. Слушаем лишь свою метку окна.
+  // и отменяет только что выбранный NEW. Слушаем лишь свою метку окна.
   try {
     getCurrentWebviewWindow().listen<Look>("appearance", (event) => {
       heard = true;

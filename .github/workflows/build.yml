@@ -1,6 +1,5 @@
-# Сборка установщика в публичной CI: SignPath подписывает только собранное
-# здесь, из этого репозитория. Тег v* дополнительно заводит черновик релиза
-# с установщиком — публикует его человек, посмотрев.
+# Сборка установщика в публичной CI. Тег v* дополнительно заводит черновик
+# релиза с установщиком — публикует его человек, посмотрев.
 name: Build
 
 on:
@@ -59,6 +58,8 @@ jobs:
           node scripts/check-clipboard.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-wave.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/check-totp-rows.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/check-widget-panels.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

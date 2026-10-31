@@ -26,8 +26,8 @@ const sizes = JSON.parse(readFileSync(new URL("./sizes.json", import.meta.url), 
 const widgets = Object.keys(sizes.reference);
 
 const shots = [
-  { file: "overview-gpt.webp", query: "design=reference&columns=4" },
-  { file: "overview-claude.webp", query: "design=app&columns=4" },
+  { file: "overview-new.webp", query: "design=reference&columns=4" },
+  { file: "overview-classic.webp", query: "design=app&columns=4" },
   ...widgets.map((id) => ({ file: `${id}.webp`, query: `design=reference&only=${id}` })),
 ];
 

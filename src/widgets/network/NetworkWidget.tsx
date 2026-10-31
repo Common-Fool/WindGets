@@ -141,7 +141,7 @@ function Target({ probe }: { probe: Probe }) {
 }
 
 
-/** Скорость и счётчик GPT; прежний Flow выше остаётся только у Claude. */
+/** Скорость и счётчик NEW; прежний Flow выше остаётся только у Classic. */
 function ReferenceFlow({ direction, speed, total, live }: {
   direction: "down" | "up";
   speed: Sensor | undefined;
@@ -277,7 +277,7 @@ export function NetworkWidget() {
   const size = useWidgetSize();
   const reference = design === "reference";
   const content = useRef<HTMLDivElement>(null);
-  // Claude высоту не меняет; GPT измеряет всю новую карточку, включая поля.
+  // Classic высоту не меняет; NEW измеряет всю новую карточку, включая поля.
   useContentHeight(content, reference && probes.length > 0, [design, view, size].join("|"));
 
   // Адаптер выбирается по трафику: имена локализованы, виртуальных несколько

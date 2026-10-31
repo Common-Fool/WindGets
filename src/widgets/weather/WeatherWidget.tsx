@@ -52,19 +52,15 @@ const PANEL_GAP = 8;
 const REFRESH_TIMEOUT = 15000;
 
 /**
- * Имя дня в ряду.
- *
- * Первый называется словом: «Завтра» понятнее дня недели ровно для ближайшего
- * дня — дальше слов не хватает, и начинаются «Ср» и «Чт».
+ * Имя дня в ряду — день недели у всех пяти, и у завтрашнего тоже (слово
+ * пользователя: «Завтра» ничего не сообщало, ряд и так начинается с завтра).
  *
  * ВАЖНО: **полночь тут местная, а не по Гринвичу.** Голую дату «2026-09-03»
  * браузер читает как UTC, и западнее Гринвича день недели съезжал бы на
  * предыдущий. Часовой пояс города при этом ни при чём: день недели — свойство
  * самой даты.
  */
-function dayName(t: Text, day: Ahead, at: number): string {
-  if (at === 0) return t("weather.tomorrow");
-
+function dayName(t: Text, day: Ahead): string {
   // Дата пришла от чужого сервиса: не тот формат — дата невалидна, и её
   // показываем как есть
   const parsed = new Date(`${day.date}T00:00`);
@@ -113,7 +109,7 @@ function HourRow({ hour }: { hour: Hour }) {
  * что угодно, кроме органов управления. Нажатие ловит `useCardClick` и узнаёт
  * клетку по `data-pick`.
  */
-function DayCell({ day, at, open }: { day: Ahead; at: number; open: boolean }) {
+function DayCell({ day, open }: { day: Ahead; open: boolean }) {
   const t = useText();
   return (
     <div className="weather__cell" data-pick={day.date} data-open={open}>
@@ -122,7 +118,7 @@ function DayCell({ day, at, open }: { day: Ahead; at: number; open: boolean }) {
             прогнозом на вечер */}
         <WeatherIcon sky={day.sky} day />
       </span>
-      <span className="weather__cell-name">{dayName(t, day, at)}</span>
+      <span className="weather__cell-name">{dayName(t, day)}</span>
       <span className="weather__cell-max tabular">{degrees(day.day.max) ?? NO_VALUE}</span>
       <span className="weather__cell-min tabular">{degrees(day.day.min) ?? NO_VALUE}</span>
     </div>
@@ -133,8 +129,8 @@ function DayCell({ day, at, open }: { day: Ahead; at: number; open: boolean }) {
  * Строка над основным блоком: обычно город, а при беде — то, что мешает.
  *
  * Место одно и то же в любом состоянии: карточка не должна прыгать оттого, что
- * ответ не пришёл. Слова о погоде («Пасмурно») тут больше нет — значок в
- * основном блоке говорит то же самое и крупнее.
+ * ответ не пришёл. Слово о погоде («Пасмурно») стоит не тут, а в основном
+ * блоке, рядом с показателями.
  */
 function caption(t: Text, state: WeatherState): string {
   switch (state.status) {
@@ -162,8 +158,8 @@ type WeatherRenderProps = {
   refresh: () => void;
 };
 
-/** Исходная разметка Claude и его рост живут вместе; состояние остаётся у родителя. */
-function ClaudeWeather({ state, report, sky, open, hours, spinning, refresh, leavingForSetup }:
+/** Исходная разметка Classic и его рост живут вместе; состояние остаётся у родителя. */
+function ClassicWeather({ state, report, sky, open, hours, spinning, refresh, leavingForSetup }:
   WeatherRenderProps & { leavingForSetup: RefObject<boolean> }) {
   const t = useText();
   const growth = useWindowGrowth();
@@ -224,6 +220,11 @@ function ClaudeWeather({ state, report, sky, open, hours, spinning, refresh, lea
               </span>
 
               <div className="weather__figures">
+                {/* Погода словом — первой строкой столбика: три строки
+                    укладываются в высоту крупного значка, блок не растёт */}
+                {report !== null && (
+                  <span className="weather__sky" title={t(`weather.sky.${sky}`)}>{t(`weather.sky.${sky}`)}</span>
+                )}
                 <span className="weather__extra">
                   {t("weather.precipitation")} <span className="tabular">{rain(report?.precipitation)}</span>
                 </span>
@@ -234,8 +235,8 @@ function ClaudeWeather({ state, report, sky, open, hours, spinning, refresh, lea
             </div>
 
             <div className="weather__row">
-              {(report?.days ?? []).map((day, at) => (
-                <DayCell key={day.date} day={day} at={at} open={open === day.date} />
+              {(report?.days ?? []).map((day) => (
+                <DayCell key={day.date} day={day} open={open === day.date} />
               ))}
             </div>
 
@@ -255,7 +256,14 @@ function ReferenceNow({ report, sky, open }: Pick<WeatherRenderProps, "report" |
   const t = useText();
   return (
     <div className="weather-reference__now" data-pick={TODAY} data-open={open === TODAY}>
-      <span className="weather-reference__now-label">{t("weather.current")}</span>
+      {/* Погода словом — на месте подписи «Сейчас», а не своей строкой: высоты
+          блоков сняты замером, лишняя строка сдвинула бы ряд дней, а рядом с
+          «Сейчас» слово в узком столбце обрезалось. Что блок — нынешний, и так
+          говорит крупная цифра; «Сейчас» остаётся, пока погоды нет */}
+      <span className="weather-reference__now-label" data-sky={report !== null}
+        title={report === null ? undefined : `${t("weather.current")} · ${t(`weather.sky.${sky}`)}`}>
+        {report === null ? t("weather.current") : t(`weather.sky.${sky}`)}
+      </span>
       <div className="weather-reference__current">
         <span className="weather-reference__icon"><WeatherIcon sky={sky} day={report?.day ?? true} /></span>
         <span className="weather-reference__degrees tabular">{degrees(report?.temperature ?? null) ?? NO_VALUE}</span>
@@ -274,18 +282,24 @@ function ReferenceNow({ report, sky, open }: Pick<WeatherRenderProps, "report" |
   );
 }
 
-/** Пять будущих дней: те же данные и тот же data-pick в обоих видах GPT. */
+/** Пять будущих дней: те же данные и тот же data-pick в обоих видах NEW. */
 function ReferenceDays({ report, open }: Pick<WeatherRenderProps, "report" | "open">) {
   const t = useText();
   if (report === null) return null;
   return (
     <div className="weather-reference__days">
-      {report.days.map((day, at) => (
+      {/* Подписи столбцов, по-английски на всех языках, как у показаний
+          железа. В ленте (вид 1) места под них нет — там они в title */}
+      <div className="weather-reference__days-head" aria-hidden="true">
+        <span className="weather-reference__day-max">max</span>
+        <span className="weather-reference__day-min">min</span>
+      </div>
+      {report.days.map((day) => (
         <div className="weather-reference__day" data-pick={day.date} data-open={open === day.date} key={day.date}>
-          <span className="weather-reference__day-name" title={dayName(t, day, at)}>{dayName(t, day, at)}</span>
+          <span className="weather-reference__day-name" title={dayName(t, day)}>{dayName(t, day)}</span>
           <span className="weather-reference__day-icon"><WeatherIcon sky={day.sky} day /></span>
-          <span className="weather-reference__day-max tabular">{degrees(day.day.max) ?? NO_VALUE}</span>
-          <span className="weather-reference__day-min tabular">{degrees(day.day.min) ?? NO_VALUE}</span>
+          <span className="weather-reference__day-max tabular" title="max">{degrees(day.day.max) ?? NO_VALUE}</span>
+          <span className="weather-reference__day-min tabular" title="min">{degrees(day.day.min) ?? NO_VALUE}</span>
         </div>
       ))}
     </div>
@@ -387,13 +401,13 @@ export function WeatherWidget() {
   /*
    * PlacePanel остаётся на общем месте дерева React: при смене дизайна поле,
    * дебаунс и результаты не монтируются заново. Меряем уже существующий узел,
-   * высота которого в GPT фиксирована по выбранной основе, а находки прокручиваются.
+   * высота которого в NEW фиксирована по выбранной основе, а находки прокручиваются.
    */
   useEffect(() => {
     if (reference && setup) content.current = widget.current?.querySelector<HTMLDivElement>(".place") ?? null;
   }, [reference, setup, view, size]);
 
-  // У GPT одна подгонка всей карточки. ClaudeWeather один владеет старым growth.
+  // У NEW одна подгонка всей карточки. ClassicWeather один владеет старым growth.
   useContentHeight(content, reference, `${view}|${size}|${setup}|${open}|${state.status}|${hours.length}|${scale}|${t.locale}`);
 
   const rendering: WeatherRenderProps = { state, report, sky, open, hours, spinning, refresh };
@@ -403,7 +417,7 @@ export function WeatherWidget() {
       <GlassCard accent={report === null ? "neutral" : accentOf(sky)}>
         {setup ? <PlacePanel /> : reference
           ? <ReferenceWeather {...rendering} view={view} content={content} />
-          : <ClaudeWeather {...rendering} leavingForSetup={leavingForSetup} />}
+          : <ClassicWeather {...rendering} leavingForSetup={leavingForSetup} />}
       </GlassCard>
     </div>
   );

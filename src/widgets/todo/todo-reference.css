@@ -1,4 +1,4 @@
-/* Прозрачная обёртка не меняет прежнее поле Claude. */
+/* Прозрачная обёртка не меняет прежнее поле Classic. */
 .todo__edit-plain { display: contents; }
 
 .widget--todo-reference .card { border-radius: var(--radius-card); }

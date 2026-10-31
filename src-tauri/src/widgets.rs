@@ -270,17 +270,17 @@ impl Widget {
         else { self.layouts() }
     }
 
-    /// Новые компоновки не меняют исходные карточки Claude.
+    /// Новые компоновки не меняют исходные карточки Classic.
     pub fn has_reference_views(&self) -> bool {
         matches!(self.id, "disks" | "network" | "weather")
     }
 
     /// Номер вида, по которому этот дизайн берёт размеры.
     ///
-    /// ВАЖНО: **новые виды GPT в Claude не действуют** — Claude рисует
+    /// ВАЖНО: **новые виды NEW в Classic не действуют** — Classic рисует
     /// исходную карточку, то есть вид 0, какой бы номер ни лежал в настройках.
-    /// Бери размеры по сохранённому номеру — и у накопителей после GPT-вида
-    /// «Кольцо» (в нём один размер) Claude терял выбор размера, а сохранённый
+    /// Бери размеры по сохранённому номеру — и у накопителей после NEW-вида
+    /// «Кольцо» (в нём один размер) Classic терял выбор размера, а сохранённый
     /// размер сбрасывался в ноль при каждом чтении.
     pub fn design_view(&self, design: crate::settings::Design, view: usize) -> usize {
         if design != crate::settings::Design::Reference && self.has_reference_views() { 0 } else { view }
@@ -293,7 +293,7 @@ impl Widget {
 
     /// Ключ имени размера так, как его называет этот дизайн.
     ///
-    /// У сети в GPT разброс не уходит ни на какой ширине, и «Без разброса»
+    /// У сети в NEW разброс не уходит ни на какой ширине, и «Без разброса»
     /// соврал бы: там это просто узкий размер. Одно место на меню и настройки.
     pub fn size_name(&self, design: crate::settings::Design, preset: &Preset) -> &'static str {
         if self.id == "network" && design == crate::settings::Design::Reference && preset.name == "size.noJitter" {
@@ -304,9 +304,9 @@ impl Widget {
     }
 
     /// Общая доступность размеров для меню, настроек и команд.
-    /// Номера сохраняются: GPT A сети не отменяет полный размер Claude.
+    /// Номера сохраняются: NEW A сети не отменяет полный размер Classic.
     ///
-    /// У паролей GPT B только компактный размер (11 октября, слово
+    /// У паролей NEW B только компактный размер (11 октября, слово
     /// пользователя): полный B растягивал те же строки на пустое место.
     pub fn size_choices(&self, design: crate::settings::Design, view: usize, layout: usize) -> Vec<(usize, &Preset)> {
         self.presets_in(design, view).iter().enumerate().filter(|(index, _)| {
@@ -492,8 +492,8 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        // GPT кольцо уплотнено до 204; предел не должен запрещать его
-        // собственный размер. Пресеты исходного Claude остаются шире.
+        // NEW кольцо уплотнено до 204; предел не должен запрещать его
+        // собственный размер. Пресеты исходного Classic остаются шире.
         //
         // Высота — карточка с одним диском: 68,8 точки при 100 % (поля
         // ужимаются порогом 9em). Окно встаёт высотой по числу показанных
@@ -1243,7 +1243,7 @@ mod tests {
                 for preset in *set {
                     assert!(
                         // У накопителей обе компоновки измеряются по числу дисков.
-                        // None сохраняет прежнюю подгонку Claude, а не высоту чужого вида.
+                        // None сохраняет прежнюю подгонку Classic, а не высоту чужого вида.
                         preset.height.is_some() || widget.id == "disks",
                         "у «{}» размер «{}» без высоты, а вид меняет форму окна",
                         widget.id,
@@ -1540,10 +1540,10 @@ mod tests {
 
     /// Полный и компактный размеры пары обязаны удержать историю столбиками.
     ///
-    /// ВАЖНО: **это сторож на невидимую поломку.** У Claude история в «кольцах»
+    /// ВАЖНО: **это сторож на невидимую поломку.** У Classic история в «кольцах»
     /// уходит ниже 14em (`sections.css`, `.gauge > .columns`), и уходить она
     /// должна только у «Только цифры». Окно встанет нужной ширины и просто не
-    /// покажет того, ради чего размер держат, — глазами это не поймать. У GPT
+    /// покажет того, ради чего размер держат, — глазами это не поймать. У NEW
     /// порогов по ширине нет вовсе: раскладку выбирает размер (`data-size`).
     ///
     /// Поля под такое обещание в реестре нет: `keeps` меряет высоту, а тут
@@ -1906,20 +1906,20 @@ mod correction_tests {
         assert_eq!(find("password").unwrap().presets[1].name, "size.passwordCompact");
     }
 
-    /// Вид GPT «Кольцо» у накопителей несёт один размер. В Claude он не
+    /// Вид NEW «Кольцо» у накопителей несёт один размер. В Classic он не
     /// действует: выбор размеров, проверка при чтении и геометрия берут вид 0.
     #[test]
     fn a_gpt_only_view_does_not_rob_claude_of_its_sizes() {
         use crate::settings::{Settings, WidgetSettings};
         let disks = find("disks").unwrap();
-        assert_eq!(disks.presets_for(1).len(), 1, "у GPT-кольца один размер");
-        assert_eq!(disks.size_choices(Design::App, 1, 0).len(), 3, "в Claude три размера, как у вида 0");
+        assert_eq!(disks.presets_for(1).len(), 1, "у NEW-кольца один размер");
+        assert_eq!(disks.size_choices(Design::App, 1, 0).len(), 3, "в Classic три размера, как у вида 0");
         assert_eq!(disks.size_choices(Design::Reference, 1, 0).len(), 1);
         for size in 0..3 {
             let mut settings = Settings { design: Design::App, ..Settings::default() };
             settings.set_widget("disks", WidgetSettings { view: 1, size, ..WidgetSettings::default() });
             let own = settings.widget(disks);
-            assert_eq!((own.view, own.size), (1, size), "Claude не обнуляет размер и не трогает GPT-вид");
+            assert_eq!((own.view, own.size), (1, size), "Classic не обнуляет размер и не трогает NEW-вид");
             assert_eq!(disks.design_size(Design::App, own.view, own.size, 0), disks.preset_size(0, size));
         }
         for id in ["network", "weather"] {

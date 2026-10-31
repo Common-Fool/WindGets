@@ -106,7 +106,7 @@ export function DisksSection() {
   const t = useText();
   const { hiddenDisks } = useSettings();
   const list = useRef<HTMLDivElement>(null);
-  const gpt = useLook().effectiveDesign === "reference";
+  const modern = useLook().effectiveDesign === "reference";
   const view = useWidgetView();
   const size = useWidgetSize();
 
@@ -116,7 +116,7 @@ export function DisksSection() {
   // Подгоняем, только когда есть что показать: строка ожидания или «дисков
   // нет» сжала бы окно в полоску, и при первых же данных его пришлось бы
   // растягивать обратно
-  useContentHeight(list, shown.length > 0, `${gpt}:${view}:${size}:${shown.map((disk) => disk.name).join("\n")}`, true);
+  useContentHeight(list, shown.length > 0, `${modern}:${view}:${size}:${shown.map((disk) => disk.name).join("\n")}`, true);
 
   return (
     <GlassCard accent="storage">
@@ -127,7 +127,7 @@ export function DisksSection() {
         <span className="disk__rates">{t("hardware.drivesHidden")}</span>
       ) : (
         <div ref={list}>
-          {gpt ? <DisksReference disks={shown} ring={view === 1} size={size} /> : shown.map((disk) => <DiskRow key={disk.name} disk={disk} />)}
+          {modern ? <DisksReference disks={shown} ring={view === 1} size={size} /> : shown.map((disk) => <DiskRow key={disk.name} disk={disk} />)}
         </div>
       )}
     </GlassCard>

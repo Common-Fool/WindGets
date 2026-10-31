@@ -20,7 +20,7 @@ type PlayerProps = {
   seek: SeekDrag;
 };
 
-/** Только разметка GPT: команды и рабочее состояние принадлежат общему Player. */
+/** Только разметка NEW: команды и рабочее состояние принадлежат общему Player. */
 export function ReferencePlayer({
   track, size, layout, cover, playing, position, others, canSwitch, opened,
   onSwitch, onOpen, onToggle, seek,

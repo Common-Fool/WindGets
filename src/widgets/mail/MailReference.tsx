@@ -7,7 +7,7 @@ import { Linked } from "../../components/Linked";
 import { BoxCheckedIcon, BoxIcon, CheckIcon, ClipIcon, CloseIcon, EraseIcon, RefreshIcon } from "../../components/Icons";
 import type { LetterPopupProps, LetterRowProps } from "./MailWidget";
 
-/** A — колонки; B — тема и метаданные. Команды и ключи те же, что у Claude. */
+/** A — колонки; B — тема и метаданные. Команды и ключи те же, что у Classic. */
 export function ReferenceLetterRow({ letter, onSelect, act, busy, picked, anyPicked, onPick, layout = 0 }: LetterRowProps) {
   const t = useText();
   const from = <span className="mail-ref__from" title={letter.from}>{letter.from}</span>;

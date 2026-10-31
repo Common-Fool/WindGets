@@ -9,7 +9,7 @@ import "./hardware-design.css";
 type Load = { label: string; value: number | null | undefined; fill: number | null; history: readonly number[]; accent: Accent };
 type Memory = { label: string; used: number | null | undefined; total: number | null | undefined; fill: number | null; history: readonly number[] };
 
-/** Верхняя компоновка GPT Design у пары CPU/GPU. Данные остаются у секций. */
+/** Верхняя компоновка NEW у пары CPU/GPU. Данные остаются у секций. */
 export function HardwareLoads({ view, load, memory }: { view: number; load: Load; memory: Memory }) {
   const t = useText();
   const used = gigabytes(memory.used) ?? NO_VALUE;

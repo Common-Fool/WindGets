@@ -1,4 +1,4 @@
-/* GPT A/B: Claude продолжает брать исходный mail.css. Все размеры едут за --scale. */
+/* NEW A/B: Classic продолжает брать исходный mail.css. Все размеры едут за --scale. */
 .widget--mail-reference .card { border-radius: var(--radius-card); }
 .widget--mail-reference .card__body { padding: calc(10px * var(--scale)); container: mail-size / size; }
 .mail--reference { gap: calc(6px * var(--scale)); min-height: 0; }
@@ -63,7 +63,7 @@
 .mail-ref__trouble { flex: none; font-size: calc(11px * var(--scale)); line-height: calc(16px * var(--scale)); color: var(--status-danger); }
 .mail-ref__trouble { overflow-wrap: anywhere; }
 .mail-ref__row {
-  display: grid; grid-template-columns: calc(20px * var(--scale)) minmax(0, 1fr) calc(74px * var(--scale)) calc(38px * var(--scale)) calc(44px * var(--scale));
+  display: grid; grid-template-columns: calc(20px * var(--scale)) minmax(0, 1fr) calc(74px * var(--scale)) calc(38px * var(--scale)) max-content;
   grid-template-rows: auto; gap: calc(2px * var(--scale)) calc(6px * var(--scale)); padding: calc(5px * var(--scale)) 0;
   min-width: 0; border-bottom: 1px solid var(--border-hairline); cursor: pointer;
 }
@@ -84,7 +84,7 @@
 .mail-ref__from { grid-area: 1 / 3; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: calc(12px * var(--scale)); line-height: calc(20px * var(--scale)); }
 .mail-ref__time { grid-area: 1 / 4; text-align: right; white-space: nowrap; color: var(--text-muted); font-size: calc(11px * var(--scale)); line-height: calc(20px * var(--scale)); }
 .mail-ref__row[data-seen="true"] .mail-ref__subject { color: var(--text-secondary); }
-.mail-ref__actions { grid-area: 1 / 5; display: flex; align-items: center; justify-content: flex-end; gap: calc(2px * var(--scale)); width: calc(44px * var(--scale)); height: calc(20px * var(--scale)); visibility: hidden; }
+.mail-ref__actions { grid-area: 1 / 5; display: flex; align-items: center; justify-content: flex-end; justify-self: end; align-self: center; gap: calc(2px * var(--scale)); height: calc(20px * var(--scale)); visibility: hidden; }
 .mail-ref__actions .mail-ref__button { width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); padding: calc(2px * var(--scale)); }
 .mail-ref__row:hover .mail-ref__actions,
 .mail-ref__actions:focus-within,
@@ -138,3 +138,9 @@
 }
 
 .mail--reference :is(.mail__list, .mail__head, .mail-ref__reader)::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+/* Без пустого места под отсутствующую отметку «прочитано»; корзина остаётся
+   справа, а при видимом превью центрируется по всей ячейке письма. */
+@container mail-size (width >= 22em) and (height >= 9em) {
+  .mail-ref__row[data-layout="0"]:has(> .mail-ref__preview) .mail-ref__actions { grid-row: 1 / 3; }
+}

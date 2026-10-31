@@ -60,7 +60,7 @@ const COPIED_MS = 1200;
  * кнопкой скачивания сверху, выбор и кнопки папки и истории снизу, без строки
  * состояния. Раскрытая история растит окно, и порог по высоте перебрасывал бы
  * раскрытую маленькую карточку в полную раскладку — вид от высоты не зависит.
- * У Claude раскладку решает прежняя сетка (`downloader.css`), у GPT —
+ * У Classic раскладку решает прежняя сетка (`downloader.css`), у NEW —
  * утверждённый A. Ввод и история общие, смена оформления их не сбрасывает.
  * Вид меняют пунктом меню и в настройках виджета.
  */
@@ -76,7 +76,7 @@ export function DownloaderWidget() {
   const content = useRef<HTMLDivElement>(null);
   const ready = missingFor(tools, "downloader").length === 0 && !tools.probing;
 
-  // У GPT один владелец высоты: основа, согласие и раскрытый список меряются
+  // У NEW один владелец высоты: основа, согласие и раскрытый список меряются
   // вместе. Очередь прошлого дизайна отменяется существующим хуком.
   useContentHeight(content, reference,
     [effectiveDesign, widgetView, size, ready, scale, t.language].join("|"), true);
@@ -273,7 +273,7 @@ function History({ history, onClose, reference }: {
   useWindowResized(onClose);
 
   useEffect(() => {
-    // GPT меряет всё содержимое в DownloaderWidget. Старый долг на смене
+    // NEW меряет всё содержимое в DownloaderWidget. Старый долг на смене
     // дизайна забывает общий useWindowGrowth, без вычитания из новой основы.
     if (reference) return;
     if (!open) {

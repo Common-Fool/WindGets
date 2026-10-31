@@ -66,7 +66,7 @@ let growth = render();
 growth.open(188);
 growth = render(0, 0, 'app', 0);
 await tick();
-assert.equal(calls.length, 0, 'Старая очередь GPT не правит уже выбранный Claude');
+assert.equal(calls.length, 0, 'Старая очередь NEW не правит уже выбранный Classic');
 growth.open(244);
 await tick();
 assert.equal(calls.at(-1).args.preset.design, 'app');
@@ -107,7 +107,7 @@ slots.forEach((slot) => slot?.cleanup?.());
 await tick();
 assert.equal(calls.length, 6, 'Разобранное окно больше не меняет геометрию');
 
-// Долг истории Claude не вычитается после смены дизайна загрузчика.
+// Долг истории Classic не вычитается после смены дизайна загрузчика.
 slots.length = 0;
 look.scale = 1;
 const legacyStart = calls.length;
@@ -124,12 +124,12 @@ look.effectiveDesign = 'reference';
 historyGrowth = renderLegacy();
 historyGrowth.close();
 await tick();
-assert.equal(calls.length, legacyStart, 'Старая прибавка и её закрытие не меняют новую основу GPT');
+assert.equal(calls.length, legacyStart, 'Старая прибавка и её закрытие не меняют новую основу NEW');
 look.effectiveDesign = 'app';
 historyGrowth = renderLegacy();
 historyGrowth.open(80);
 await tick();
-assert.equal(calls.at(-1).args.by, 80, 'Claude измеряет открытую историю от своей основы');
+assert.equal(calls.at(-1).args.by, 80, 'Classic измеряет открытую историю от своей основы');
 historyGrowth.close();
 await tick();
 assert.equal(calls.at(-1).args.by, -80, 'Закрытие возвращает точную основу');

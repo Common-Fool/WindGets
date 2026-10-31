@@ -91,7 +91,7 @@ await profiles.api.setDesign('reference');
 const captured = profiles.api.useLook().effectiveDesign;
 await profiles.api.setDesign('app');
 profiles.api.setPalette('reference-a', captured);
-profiles.api.setGlass('gpt', captured);
+profiles.api.setGlass('cool', captured);
 profiles.api.setAccentColor('#123456', captured);
 profiles.api.setCustomColor('positive', '#ABCDEF', captured);
 profiles.api.resetCustomColors(captured);

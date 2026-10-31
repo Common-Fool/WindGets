@@ -150,14 +150,15 @@ function ReferenceStatus({
   const failed = failure !== null && !dismissed;
   const phase = failed ? "failed" : busy ? "busy"
     : view.status === "done" ? "done" : view.status === "cancelled" ? "cancelled" : "idle";
+  if (phase === "idle") return null;
   const title = failed ? failure : phase === "done" ? view.output ?? view.title ?? t("downloader.saved")
     : busy ? view.title ?? t("downloader.getting")
-    : phase === "cancelled" ? t("tools.failure.cancelled") : t("downloader.idle");
+    : t("tools.failure.cancelled");
   // У отказа подсказка — только наш текст: сырой вывод yt-dlp и строка «убрать
   // отказ» растягивали её на три строки (22 октября, слово пользователя)
   const hint = failed ? failure ?? undefined
     : busy ? [view.title, detailText, busyText].filter(Boolean).join("\n")
-    : phase === "done" ? view.output ?? undefined : view.outDir ?? undefined;
+    : phase === "done" ? view.output ?? undefined : undefined;
   const fill = view.status === "downloading" ? view.percent : null;
 
   if (layout === "rows") {
@@ -206,11 +207,7 @@ function ReferenceStatus({
             <button type="button" className="dl-a__show" onClick={() => void revealDownload()}>
               {t("downloader.showInFolder")}
             </button>
-          ) : busy ? (
-            <DownloadMetrics view={view} busyText={busyText} />
-          ) : (
-            <span className="dl-a__status-hint">{view.outDir ?? t("tools.noDesktop")}</span>
-          )}
+          ) : busy ? <DownloadMetrics view={view} busyText={busyText} /> : null}
         </>
       )}
       {busy && <div className="busy-bar dl-a__status-bar"><Bar fill={fill} thickness="thin" /></div>}

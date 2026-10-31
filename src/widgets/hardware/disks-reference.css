@@ -1,4 +1,4 @@
-/* Только GPT. Размеры едут за масштабом, пары R/W/life не растягиваются внутри. */
+/* Только NEW. Размеры едут за масштабом, пары R/W/life не растягиваются внутри. */
 :root[data-design="reference"] .card:has(.disks-ref) .card__body {
   padding: calc(12px * var(--scale));
 }
@@ -45,7 +45,7 @@
 .disks-ref__ring-values .disks-ref__pair { gap: calc(5px * var(--scale)); }
 
 :root[data-design="reference"] .card:has(.disks-ref) { border-radius: var(--radius-card); }
-.disks-ref .bar { height: calc(4px * var(--scale)); }
+.disks-ref .bar { --bar-size: calc(4px * var(--scale)); }
 
 /* Строка занимает всю ширину карточки: R/W слева, Temp в свободном
  * участке, life прижат к правому полю и без датчиков температуры. */

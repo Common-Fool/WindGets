@@ -329,27 +329,6 @@
   --sky-water: var(--color-secondary);
 }
 
-:root[data-palette="gpt"],
-[data-theme-preview="gpt"] {
-  --seed-accent: #2de5a3;
-  --seed-positive: #43d995;
-  --seed-caution: #ffaa49;
-  --seed-negative: #f86bb4;
-  --seed-secondary: #1fcce0;
-  --seed-tertiary: #58a1f8;
-  --metric-cpu: var(--color-caution);
-  --metric-gpu: var(--color-secondary);
-  --metric-ram: var(--color-tertiary);
-  --metric-storage: var(--color-caution);
-  --metric-net-down: var(--color-positive);
-  --metric-net-up: var(--color-negative);
-  --metric-media: var(--color-positive);
-  --char-upper: var(--color-positive);
-  --char-digit: var(--color-tertiary);
-  --char-symbol: var(--color-negative);
-  --sky-water: var(--color-secondary);
-}
-
 /* Три оттенка синего для системы; отдачу отделяет зелёный */
 :root[data-palette="reference-polar"],
 [data-theme-preview="reference-polar"] {
@@ -619,4 +598,4 @@
   --accent: var(--sky-water);
 }
 
-:root[data-glass="gpt"], [data-glass-preview="gpt"] { --surface-base: 32, 39, 44; }
+:root[data-glass="cool"], [data-glass-preview="cool"] { --surface-base: 32, 39, 44; }

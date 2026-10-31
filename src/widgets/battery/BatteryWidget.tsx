@@ -22,7 +22,7 @@ export function BatteryWidget() {
   const { ready, devices } = useBattery();
   const { hiddenBatteries } = useSettings();
   const t = useText();
-  const gpt = useLook().effectiveDesign === "reference";
+  const modern = useLook().effectiveDesign === "reference";
   const list = useRef<HTMLDivElement>(null);
   const shown = devices.filter((device) => !hiddenBatteries.includes(device.id));
   const view = VIEWS[useOwnRow()?.view ?? 0] ?? "list";
@@ -30,7 +30,7 @@ export function BatteryWidget() {
   const [hovered, setHovered] = useState<string | null>(null);
 
   // Пустое состояние тоже меряется: окно всегда обнимает одну строку.
-  useContentHeight(list, true, `${gpt}:${view}:${ready ? shown.length : 0}`, true);
+  useContentHeight(list, true, `${modern}:${view}:${ready ? shown.length : 0}`, true);
 
   // ВАЖНО: **без обёртки `.widget` карточка высотой с содержимое, а не с окно:**
   // замер сравнивал бы её саму с собой и окна не ужимал, а в зазоре под ней
@@ -38,7 +38,7 @@ export function BatteryWidget() {
   return (
     <div className="widget">
       <GlassCard>
-        <div ref={list} className={gpt ? "battery battery--reference" : "battery"} data-view={view}>
+        <div ref={list} className={modern ? "battery battery--reference" : "battery"} data-view={view}>
           {view !== "list" && ready && shown.length > 0 ? shown.map((device) => (
             // Столбик значков: заряд — кольцо вокруг значка, процент — в `title`
             <div key={device.id} className="battery__tile" data-step={batteryStep(device.level)}

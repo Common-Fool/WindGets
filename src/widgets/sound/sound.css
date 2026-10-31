@@ -1,4 +1,4 @@
-/* Оформление независимо от компоновки; GPT использует общие токены. */
+/* Оформление независимо от компоновки; NEW использует общие токены. */
 .sound-widget {
   --sound-fill: var(--ui-accent); --sound-thumb: var(--text-primary);
   --sound-control: calc(32px * var(--scale));

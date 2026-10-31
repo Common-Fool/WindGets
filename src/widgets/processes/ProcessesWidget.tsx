@@ -70,7 +70,7 @@ function Row({
   );
 }
 
-/** Исходный Claude Design: разметка и расчёт видимых строк сохранены. */
+/** Исходный Classic: разметка и расчёт видимых строк сохранены. */
 function AppProcesses({ rows, mode, peak, setMode }: {
   rows: Group[];
   mode: Mode;
@@ -147,7 +147,7 @@ function AppProcesses({ rows, mode, peak, setMode }: {
   );
 }
 
-/** Вариант A: обе метрики и прокрутка восьмёрки только в GPT Design. */
+/** Вариант A: обе метрики и прокрутка восьмёрки только в NEW. */
 function ReferenceProcesses({ rows, mode, peak, setMode }: {
   rows: Group[];
   mode: Mode;

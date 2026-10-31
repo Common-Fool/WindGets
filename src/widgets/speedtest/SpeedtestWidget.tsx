@@ -198,7 +198,7 @@ type ReferenceProps = {
 };
 
 /**
- * Две утверждённые компоновки GPT. Вид истории остаётся прежней независимой
+ * Две утверждённые компоновки NEW. Вид истории остаётся прежней независимой
  * осью: 0 — график, 1 — пары, 2 — только замер, 3 — два ряда; layout 0/1 — A/B.
  */
 function ReferenceSpeedtest({ view, t, measured, columns, separateColumns, gaugeOnly, running, reason,
@@ -211,7 +211,7 @@ function ReferenceSpeedtest({ view, t, measured, columns, separateColumns, gauge
 
   // Меряем весь блок, включая кнопку, город и многострочный отказ. Ширину
   // задаёт выбранный размер, высота не зависит от нынешней высоты окна. Во
-  // время замера — высота покоя, как у Claude выше.
+  // время замера — высота покоя, как у Classic выше.
   useContentHeight(content, !running,
     `reference|${layout}|${size}|${separateColumns ? 3 : columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${reason ?? ""}|${t.language}`);
 

@@ -264,7 +264,7 @@ fn view(app: &AppHandle) -> SettingsView {
         widgets,
         card_opacity: settings.card_opacity,
         scale: settings.scale,
-        palettes: choices("palette", &settings::PALETTES.iter().copied().filter(|id| *id != "gpt" || settings.design == settings::Design::Reference).collect::<Vec<_>>()),
+        palettes: choices("palette", settings::PALETTES),
         glasses: choices("glass", settings::GLASSES),
         vivid: settings.vivid,
         autostart: settings.autostart,

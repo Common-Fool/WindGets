@@ -1,4 +1,4 @@
-/* Вариант A только для GPT Design. Исходный processes.css не меняется. */
+/* Вариант A только для NEW. Исходный processes.css не меняется. */
 :root[data-design="reference"] .proc-ref {
   --proc-name: calc(14px * var(--scale));
   --proc-small: calc(11px * var(--scale));
@@ -154,9 +154,9 @@
 }
 
 :root[data-design="reference"] .proc-ref__bar .bar {
-  height: calc(2px * var(--scale));
+  --bar-size: calc(2px * var(--scale));
+  border-top-color: var(--border-hairline);
   border-radius: calc(1px * var(--scale));
-  background: var(--border-hairline);
 }
 
 :root[data-design="reference"] .proc-ref__foot {

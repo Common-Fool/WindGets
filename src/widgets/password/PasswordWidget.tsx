@@ -72,8 +72,8 @@ export function PasswordWidget() {
     const revision = resultRevision.current;
     const request = ++copyRequest.current;
     void copySecret(value).then((done) => {
-      // В GPT старый ответ копии не подтверждает уже созданный новый пароль.
-      // Claude сохраняет прежнюю обработку ответа.
+      // В NEW старый ответ копии не подтверждает уже созданный новый пароль.
+      // Classic сохраняет прежнюю обработку ответа.
       if (referenceNow.current && (revision !== resultRevision.current || request !== copyRequest.current)) return;
       setCopied(done);
       window.clearTimeout(timer.current);

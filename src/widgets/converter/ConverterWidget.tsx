@@ -115,7 +115,7 @@ function Empty({ reference }: { reference: boolean }) {
     <div className="conv__empty">
       <p className="conv__lead">{t("converter.dropHere")}</p>
       <Button onClick={() => void pickFiles()}>{t("converter.choose")}</Button>
-      {/* Названия видов — из каталога, как у GPT: это не подписи показаний,
+      {/* Названия видов — из каталога, как у NEW: это не подписи показаний,
           и английскими на любом языке им стоять незачем. Форматы — имена */}
       <p className="conv__hint">
         {t("converter.state.video")} → MP4, GIF, MP3 · {t("converter.state.audio")} → MP3 · {t("converter.state.image")} → PNG, JPG

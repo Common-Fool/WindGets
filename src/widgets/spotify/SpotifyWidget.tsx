@@ -180,7 +180,7 @@ export function SpotifyWidget() {
   const preset = sizes[Math.min(3, Math.max(0, size))] ?? sizes[0];
   const setup = view.status === "needsClientId" || view.status === "needsAuth";
   const setupExtra = reference && setup ? Math.max(0, (preset[0] < 280 ? 178 : 140) - preset[1]) * geometry : 0;
-  // Вертикальный GPT встаёт высотой по содержимому: без громкости и без
+  // Вертикальный NEW встаёт высотой по содержимому: без громкости и без
   // запаса под ней (`referenceSlack`). Прибавка тогда отрицательная
   const cover = useWidgetCover();
   const shownPlayer = view.status === "active" ? view.player : view.status === "idle" ? view.last : null;

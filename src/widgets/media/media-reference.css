@@ -1,7 +1,7 @@
-/* Постоянная обёртка не создаёт дополнительной коробки в исходном Claude. */
+/* Постоянная обёртка не создаёт дополнительной коробки в исходном Classic. */
 .media-content { display: contents; }
 
-/* R07: правила GPT не меняют исходные media.css и Transport. */
+/* R07: правила NEW не меняют исходные media.css и Transport. */
 .media-reference-widget {
   --media-ref-base: calc(116px * var(--scale));
   --media-ref-padding: calc(11px * var(--scale));

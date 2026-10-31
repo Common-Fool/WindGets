@@ -5,12 +5,12 @@ import { useText, type Text } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
 import { useCardClick } from "../../lib/gestures";
 import { openWidgetSettings } from "../../lib/settings";
-import { useHeight } from "../../lib/size";
 import { useWidgetLayout, useWidgetView } from "../../lib/view";
 import { codesFor, emptyText, grouped, useAccounts, type Code, type Codes, type Row } from "../../lib/totp";
 import "./totp.css";
 import { TotpReference, type TotpCopyFeedback } from "./TotpReference";
 import "./totp-reference.css";
+import { useFittedTotpHeight } from "./fit";
 
 /*
  * Коды 2FA.
@@ -66,15 +66,12 @@ export function TotpWidget() {
   const [second, setSecond] = useState(() => Math.floor(Date.now() / 1000));
 
   /*
-   * Строки показываем целыми: обрезанная пополам читается как поломка. Место
-   * меряем у обёртки — она `flex: 1`, и её высота от числа строк не зависит,
-   * поэтому замер не гоняет сам себя по кругу. Тот же приём, что у процессов.
+   * Место меряем у обёртки фиксированной высоты. Нижняя строка уходит при
+   * перекрытии 30 %, возвращается при открытии 50 %; направление помнит хук.
    */
   const space = useRef<HTMLDivElement>(null);
   const sample = useRef<HTMLLIElement>(null);
-  const room = useHeight(space);
-  const pitch = useHeight(sample);
-  const fitted = pitch > 0 ? Math.max(Math.floor(room / pitch), 1) * pitch : undefined;
+  const fitted = useFittedTotpHeight(space, sample, accounts.length);
 
   const ids = accounts.map((row) => row.id).join(",");
 
@@ -182,7 +179,7 @@ export function TotpWidget() {
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  // GPT получает отдельный ответ с тем же сроком, что и Copied у Claude.
+  // NEW получает отдельный ответ с тем же сроком, что и Copied у Classic.
   useEffect(() => {
     if (copyFeedback === null) return;
     const timer = window.setTimeout(() => setCopyFeedback(null), COPIED_FOR);

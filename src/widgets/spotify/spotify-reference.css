@@ -1,4 +1,4 @@
-/* R08. Только новый GPT-узел; исходный spotify.css и Claude не переопределяются. */
+/* R08. Только новый NEW-узел; исходный spotify.css и Classic не переопределяются. */
 .spotify-reference-widget .card__body { padding: 0; }
 .spotify-reference-widget .spotify__body { gap: calc(8px * var(--scale)); }
 .spotify-reference__player {

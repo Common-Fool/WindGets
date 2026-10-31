@@ -1,14 +1,13 @@
 import type { Key } from "./i18n";
 
 /*
- * Подписи общих тем и GPT для карточек выбора в окне настроек.
+ * Подписи общих тем для карточек выбора в окне настроек.
  *
  * Список, порядок и имена приходят из Rust (`settings::PALETTES`), цвета — из
  * tokens.css. Здесь только то, что читает человек: строка о том, как цвета
  * разложены по показателям, — ключом каталога строк.
  */
 export const REFERENCE_THEMES: Record<string, { description: Key }> = {
-  gpt: { description: "theme.gpt" },
   "reference-classic": { description: "theme.classic" },
   "reference-polar": { description: "theme.polar" },
   "reference-indigo": { description: "theme.indigo" },

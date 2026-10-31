@@ -1,4 +1,4 @@
-/* R14 GPT Design A/B. Исходный totp.css и все его селекторы остаются Claude. */
+/* R14 NEW A/B. Исходный totp.css и все его селекторы остаются Classic. */
 .totp-widget--reference .card__body {
   display: flex;
 }
@@ -12,6 +12,7 @@
   min-height: 0;
   min-width: 0;
   padding: var(--space-3);
+  padding-bottom: 0;
 }
 
 .totp-ref[data-layout="b"] {

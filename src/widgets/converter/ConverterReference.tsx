@@ -14,7 +14,7 @@ import {
 import { useText } from "../../lib/i18n";
 import { openOutputDir } from "../../lib/output";
 
-/** GPT A: существующие действия и показания. Состояние пачки остаётся у Rust. */
+/** NEW A: существующие действия и показания. Состояние пачки остаётся у Rust. */
 export function ConverterReferenceHeader({ view }: { view: ConverterView }) {
   const t = useText();
   const ready = view.items.filter((item) => item.status === "ready").length;
@@ -57,7 +57,7 @@ export function ConverterReferenceFooter({ view, canStart }: { view: ConverterVi
   );
 }
 
-/** Строка GPT не скрывает причину отказа; состояние и команды переданы общим Row. */
+/** Строка NEW не скрывает причину отказа; состояние и команды переданы общим Row. */
 export function ConverterReferenceRow({ item, running, state }: { item: Item; running: boolean; state: string }) {
   const t = useText();
   const actionLabel = item.status === "done"

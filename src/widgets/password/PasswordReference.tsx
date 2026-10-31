@@ -28,7 +28,7 @@ type Props = {
   onGenerate: () => void;
 };
 
-/** GPT меняет только компоновку; параметры и пароль принадлежат PasswordWidget. */
+/** NEW меняет только компоновку; параметры и пароль принадлежат PasswordWidget. */
 export function PasswordReference({ layout, options, value, strength, counts, copied, onChange, onCopy, onGenerate }: Props) {
   const t = useText();
   const variant = layout === 1 ? 1 : 0;

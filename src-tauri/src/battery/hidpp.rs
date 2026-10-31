@@ -73,13 +73,22 @@ pub fn devices() -> Vec<Device> {
     let mut found = Vec::new();
     for receiver in receivers() {
         let Some(channel) = Channel::open(&receiver) else { continue };
-        for index in std::iter::once(DIRECT).chain(SLOTS) {
-            if let Some(device) = ask_device(&channel, index, receiver.product, &receiver.key) {
-                found.push(device);
-            }
-        }
+        found.extend(walk(|index| ask_device(&channel, index, receiver.product, &receiver.key)));
     }
     found
+}
+
+/// Обходит индексы одного USB-устройства.
+///
+/// ВАЖНО: **ответило устройство за `DIRECT` — слотов не спрашиваем.** Это само
+/// устройство (провод или донгл гарнитуры), а не приёмник, и донгл гарнитуры
+/// индекс не смотрит: отвечает той же гарнитурой за каждый слот, и она вставала
+/// семью строками с разными ключами.
+fn walk(mut ask: impl FnMut(u8) -> Option<Device>) -> Vec<Device> {
+    if let Some(device) = ask(DIRECT) {
+        return vec![device];
+    }
+    SLOTS.filter_map(ask).collect()
 }
 
 /// Вендорские коллекции одного USB-устройства Logitech.
@@ -599,6 +608,34 @@ mod tests {
         report.extend_from_slice(data);
         report.resize(LONG_LEN, 0);
         report
+    }
+
+    fn headset(index: u8) -> Device {
+        Device {
+            id: format!("lg:0af7:00000000:{index:02x}"),
+            name: "PRO X 2".to_owned(),
+            kind: Kind::Headset,
+            level: 80,
+            charging: Some(false),
+            source: Source::Logitech,
+            usb: Some((LOGITECH, 0x0af7)),
+        }
+    }
+
+    #[test]
+    fn a_device_behind_direct_has_no_slots() {
+        // Донгл гарнитуры отвечает ею же за любой индекс
+        let mut asked = Vec::new();
+        let found = walk(|index| {
+            asked.push(index);
+            Some(headset(index))
+        });
+        assert_eq!(found, [headset(DIRECT)]);
+        assert_eq!(asked, [DIRECT], "слоты не спрашиваются");
+
+        // Приёмник за своим индексом отказывает — слоты обходятся
+        let found = walk(|index| (index == 2).then(|| headset(index)));
+        assert_eq!(found, [headset(2)]);
     }
 
     #[test]

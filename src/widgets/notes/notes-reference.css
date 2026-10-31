@@ -1,4 +1,4 @@
-/* GPT: те же поле, ссылки и откат; перестраиваются только органы управления. */
+/* NEW: те же поле, ссылки и откат; перестраиваются только органы управления. */
 .widget--notes-reference .card { border-radius: var(--radius-card); }
 .widget--notes-reference .card__body {
   padding: calc(10px * var(--scale));
