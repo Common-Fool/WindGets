@@ -55,3 +55,8 @@
 .disks-ref__rates > [data-field="Temp"] > span { flex: none; }
 .disks-ref__rates > [data-field="Temp"] > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .disks-ref__rates > [data-field="life"] { flex: none; margin-left: auto; justify-content: flex-end; }
+
+/* Подписей R/W/Temp/life у строки нет (1 ноября 2026, слово пользователя):
+ * что за число, видно по нему самому — скорости, градусы, процент ресурса.
+ * Подпись остаётся в подсказке пары. У кольца подписи на месте. */
+.disks-ref__rates .disks-ref__pair > span { display: none; }

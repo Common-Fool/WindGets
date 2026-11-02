@@ -49,8 +49,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, IsWindowVisible, KillTimer, RegisterClassW,
     SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, WindowFromPoint, GA_ROOT,
-    GUITHREADINFO, GUI_INMENUMODE, GUI_INMOVESIZE, GWLP_HINSTANCE, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST,
-    LWA_ALPHA, MSGFLT_ALLOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_COPYDATA, WM_DESTROY,
+    GUITHREADINFO, GUI_INMENUMODE, GUI_INMOVESIZE, GWLP_HINSTANCE, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST,
+    LWA_ALPHA, MSGFLT_ALLOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, WM_COPYDATA, WM_DESTROY,
     WM_DROPFILES, WM_TIMER, WNDCLASSW, WS_EX_ACCEPTFILES, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -70,6 +70,15 @@ const TICK_MS: u32 = 60;
 /// Непрозрачность подложки: 1 из 255 не видна, а мышь ловит.
 const ALPHA: u8 = 1;
 
+/// Сколько подложка стоит после отпускания кнопки, если бросок ещё не пришёл.
+///
+/// ВАЖНО: **прятать её на отпускании нельзя.** Кнопку опрос видит отпущенной
+/// раньше, чем Проводник доведёт бросок: он ищет окно под курсором и
+/// упаковывает список файлов уже после отпускания. Подложка, спрятанная
+/// своим же тактом, отдавала это окно WebView2 — рамка «Drop to add» стояла,
+/// а файл не приходил. `WM_DROPFILES` прячет её сразу.
+const LINGER: std::time::Duration = std::time::Duration::from_millis(600);
+
 struct Catcher {
     converter: HWND,
     overlay: HWND,
@@ -83,6 +92,8 @@ struct Catcher {
     /// Кнопку зажали над самим конвертером: это нажатие по нему или перенос
     /// его окна, а не бросок.
     pressed_here: Cell<bool>,
+    /// Когда отпустили кнопку над показанной подложкой — бросок ещё в пути.
+    released: Cell<Option<std::time::Instant>>,
 }
 
 thread_local! {
@@ -125,6 +136,7 @@ pub fn attach(
             shown: Cell::new(false),
             was_down: Cell::new(false),
             pressed_here: Cell::new(false),
+            released: Cell::new(None),
         }));
     });
 
@@ -252,9 +264,21 @@ unsafe fn tick(catcher: &Catcher) {
     let down = held(VK_LBUTTON) || held(VK_RBUTTON);
     if !down {
         catcher.was_down.set(false);
+        if catcher.shown.get() {
+            let released = catcher.released.get().unwrap_or_else(|| {
+                let now = std::time::Instant::now();
+                catcher.released.set(Some(now));
+                now
+            });
+            if released.elapsed() < LINGER {
+                return;
+            }
+        }
+        catcher.released.set(None);
         show(catcher, false);
         return;
     }
+    catcher.released.set(None);
 
     let mut cursor = POINT::default();
     if GetCursorPos(&mut cursor).is_err() {
@@ -283,9 +307,18 @@ unsafe fn show(catcher: &Catcher, visible: bool) {
         // Владельца нет, и над конвертером подложку держит место в очереди:
         // над окном «поверх всех» — тоже поверх всех, иначе встала бы под ним
         let topmost = GetWindowLongPtrW(catcher.converter, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0;
+        // ВАЖНО: **`HWND_NOTOPMOST` не поднимает окно, которое и так не «поверх
+        // всех»** — так написано в документации, и так оно и было: подложка
+        // оставалась под конвертером, рамка «Drop to add» вставала, а под
+        // курсором был WebView2 с запрещающим курсором (1 ноября 2026).
+        // Поэтому сперва снимаем «поверх всех», если оно осталось с прошлого
+        // показа, и поднимаем подложку наверх отдельно
+        if !topmost {
+            let _ = SetWindowPos(catcher.overlay, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         let placed = SetWindowPos(
             catcher.overlay,
-            Some(if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST }),
+            Some(if topmost { HWND_TOPMOST } else { HWND_TOP }),
             rect.left,
             rect.top,
             rect.right - rect.left,
@@ -369,6 +402,7 @@ mod tests {
             shown: Cell::new(false),
             was_down: Cell::new(false),
             pressed_here: Cell::new(false),
+            released: Cell::new(None),
         })
     }
 
@@ -435,6 +469,36 @@ mod tests {
             pump_messages();
             assert!(catcher.shown.get());
             assert_eq!(GetWindowLongPtrW(overlay, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0, 0);
+            let _ = DestroyWindow(overlay);
+            let _ = DestroyWindow(owner);
+        }
+    }
+
+    /// Над обычным, не «поверх всех», конвертером подложка встаёт выше него.
+    /// С одним `HWND_NOTOPMOST` она оставалась под ним: рамка «Drop to add»
+    /// показывалась, а курсор над карточкой был запрещающим.
+    #[test]
+    fn the_overlay_rises_above_a_plain_converter() {
+        use windows::Win32::UI::WindowsAndMessaging::GW_HWNDNEXT;
+        let _turn = WINDOW_TEST_TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            let owner = test_window();
+            let overlay = create(owner).expect("подложка");
+            let catcher = test_catcher(owner, overlay);
+            // Конвертер поднят над уже созданной подложкой — как после щелчка по нему
+            SetWindowPos(owner, Some(HWND_TOP), 0, 0, 320, 240, SWP_NOACTIVATE | SWP_SHOWWINDOW).unwrap();
+            show(&catcher, true);
+            let mut below = GetWindow(overlay, GW_HWNDNEXT).ok();
+            let mut found = false;
+            while let Some(window) = below {
+                if window == owner {
+                    found = true;
+                    break;
+                }
+                below = GetWindow(window, GW_HWNDNEXT).ok();
+            }
+            assert!(found, "подложка осталась под конвертером");
+            show(&catcher, false);
             let _ = DestroyWindow(overlay);
             let _ = DestroyWindow(owner);
         }

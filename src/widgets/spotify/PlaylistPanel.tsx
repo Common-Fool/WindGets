@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchPlaylists, type Playlist } from "../../lib/spotify";
-import { SpotifyMark } from "./icons";
+import { MusicIcon } from "../../components/Icons";
 import { useText } from "../../lib/i18n";
 
 type Props = {
@@ -76,7 +76,7 @@ export function PlaylistPanel({ onPlay, height }: Props) {
           >
             {playlist.coverUrl === null ? (
               <span className="playlists__cover playlists__cover--empty">
-                <SpotifyMark />
+                <MusicIcon />
               </span>
             ) : (
               <img

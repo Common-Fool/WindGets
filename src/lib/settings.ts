@@ -94,8 +94,6 @@ export type SettingsView = {
   pollSeconds: number;
   /** `null` — город не выбран, и виджет погоды в сеть не ходит вовсе. */
   weatherPlace: Place | null;
-  /** Явное сворачивание приложений в мини-микшере звука. */
-  soundMixerCollapsed: boolean;
   /** Общий дизайн не меняет раскладки виджетов. */
   design: Design;
   /** Выбранный язык. `null` — «как в Windows». */
@@ -155,7 +153,6 @@ export const EMPTY_SETTINGS: SettingsView = {
   snapping: true,
   pollSeconds: 1,
   weatherPlace: null,
-  soundMixerCollapsed: false,
   design: "reference",
   language: null,
   languages: [],
@@ -253,15 +250,6 @@ export function setModule(id: string, on: boolean): Promise<void> {
 /** Вид виджета: чем карточка себя рисует. Номер — место в `views`. */
 export function setWidgetView(id: string, index: number): void {
   void invoke("set_widget_view", { id, index });
-}
-
-// Быстрые повторные нажатия должны записываться в том же порядке.
-let mixerWrites: Promise<void> = Promise.resolve();
-
-export function setSoundMixerCollapsed(collapsed: boolean): Promise<void> {
-  const write = mixerWrites.then(() => invoke<void>("set_sound_mixer_collapsed", { collapsed }));
-  mixerWrites = write.catch(() => {});
-  return write;
 }
 
 /** Компоновка независимо от вида графика. */

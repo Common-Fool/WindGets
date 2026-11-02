@@ -8,6 +8,7 @@ import { initLook } from "./lib/look";
 import { initText, useText, useTextFailed, useTextReady, type Key } from "./lib/i18n";
 import { useWidgetMenu } from "./lib/gestures";
 import { useWindowDrag } from "./lib/drag";
+import { useCorners } from "./lib/corners";
 import { Guard, TextFailed } from "./components/Guard";
 import "./styles/tokens.css";
 import "./styles/base.css";
@@ -61,6 +62,7 @@ const TITLE_KEY = OWN_TITLES[requestedId] ?? (`widget.${requestedId}` as Key);
 function Shell({ children }: { children: ReactNode }) {
   useWidgetMenu();
   useWindowDrag(requestedId === "settings");
+  useCorners(requestedId !== "settings");
   const t = useText();
   const ready = useTextReady();
   const failed = useTextFailed();

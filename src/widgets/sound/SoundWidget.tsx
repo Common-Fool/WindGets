@@ -4,7 +4,7 @@ import { useText } from "../../lib/i18n";
 import { usePresetWindowGrowth, useSoundSidePanel } from "../../lib/grow";
 import { useHeight, useWidth } from "../../lib/size";
 import { useLook } from "../../lib/look";
-import { setSoundMixerCollapsed, useOwnRow, useSettings } from "../../lib/settings";
+import { useOwnRow } from "../../lib/settings";
 import { GlassCard } from "../../components/GlassCard";
 import { Slider } from "../../components/Slider";
 import {
@@ -81,6 +81,22 @@ function SoundButton({ icon, title, children, className = "", quiet = false,
       onMouseLeave={() => setPressed(false)}>
       <span className="sound__glyph">{icon}</span>
       {children}
+    </button>
+  );
+}
+
+/**
+ * Подпись клетки горизонтального вида: название со стрелкой, раскрывает
+ * список. Без рамки — рамка у значка рядом, а у подписи на неё нет места.
+ */
+function CellLink({ label, title, disabled = false, expanded, onClick }: {
+  label: string; title: string; disabled?: boolean; expanded: boolean; onClick: () => void;
+}) {
+  return (
+    <button type="button" className="sound__cell-link" title={title} aria-expanded={expanded}
+      disabled={disabled} onClick={onClick}>
+      <span className="sound__caption">{label}</span>
+      <span className="sound__cell-chevron"><ChevronIcon up={expanded} /></span>
     </button>
   );
 }
@@ -174,7 +190,6 @@ export function SoundWidget() {
   const t = useText();
   const state = useSound();
   const own = useOwnRow();
-  const settings = useSettings();
   const { scale } = useLook();
   const view = own?.view ?? 0;
   const size = own?.size ?? 0;
@@ -182,26 +197,21 @@ export function SoundWidget() {
   const [output, showOutput] = useAhead(state.output);
   const [microphone, showMicrophone] = useAhead(state.microphone);
   const [overlay, setOverlay] = useState<{ layout: string; panel: Panel }>({ layout, panel: "none" });
-  const [pendingCollapsed, setPendingCollapsed] = useState<boolean | null>(null);
-  const collapsed = pendingCollapsed ?? settings.soundMixerCollapsed;
   const [resized, setResized] = useState(0);
   const growth = usePresetWindowGrowth(view, size);
 
   useEffect(() => { setOverlay({ layout, panel: "none" }); }, [layout]);
 
-  useEffect(() => {
-    if (pendingCollapsed === settings.soundMixerCollapsed) setPendingCollapsed(null);
-  }, [pendingCollapsed, settings.soundMixerCollapsed]);
-
-  // Смена вида убирает временную панель, мини-микшер восстанавливает предпочтение.
+  // Смена вида убирает панель: у всех трёх видов она временная
   useWindowResized(() => {
     setOverlay({ layout, panel: "none" });
     setResized((value) => value + 1);
   });
 
   const temporary = overlay.layout === layout ? overlay.panel : "none";
-  const panel: Panel = own === undefined ? "none"
-    : temporary === "none" && view === 0 && !collapsed ? "mixer" : temporary;
+  // Постоянного мини-микшера больше нет (2 ноября 2026, слово пользователя):
+  // вид «С мини-микшером» заменён горизонтальным, панель у всех временная
+  const panel: Panel = own === undefined ? "none" : temporary;
   useEffect(() => {
     // До своих настроек неизвестны ни вид, ни сохранённое раскрытие.
     if (own === undefined) return;
@@ -248,14 +258,7 @@ export function SoundWidget() {
     setOverlay({ layout, panel: panel === next ? "none" : next });
   }
   function toggleMixer() {
-    if (view !== 0) {
-      setOverlay({ layout, panel: panel === "mixer" ? "none" : "mixer" });
-      return;
-    }
-    const next = panel === "mixer";
-    setPendingCollapsed(next);
-    closePanel();
-    void setSoundMixerCollapsed(next).catch(() => { setPendingCollapsed(null); });
+    setOverlay({ layout, panel: panel === "mixer" ? "none" : "mixer" });
   }
   function pick(device: Device) {
     control({ kind: panel === "inputs" ? "input" : "device", id: device.id });
@@ -305,20 +308,13 @@ export function SoundWidget() {
   const micButton = (
     <SoundButton className="sound__mic-toggle" icon={<Flip now={microphone?.muted ? <MicrophoneMutedIcon /> : <MicrophoneIcon />}
       next={microphone?.muted ? <MicrophoneIcon /> : <MicrophoneMutedIcon />} />}
-      quiet={microphone?.muted} disabled={microphone === null} title={micHint} onClick={toggleMicrophone}>
-      {view === 0 && <span className="sound__mic-copy">
-        <span className="sound__mic-label">{t("sound.mic")}</span>
-        <span className="sound__mic-status">{micStatus}</span>
-      </span>}
-    </SoundButton>
+      quiet={microphone?.muted} disabled={microphone === null} title={micHint} onClick={toggleMicrophone} />
   );
   const mic = (
     <div className="sound__microphone">
       {micButton}
       <SoundButton className="sound__input-picker" icon={<ChevronIcon />} disabled={!state.canSwitch}
-        expanded={panel === "inputs"} title={t("sound.showInputs")} onClick={() => toggleDevices("inputs")}>
-        {view === 0 && <span className="sound__caption">{t("sound.input")}</span>}
-      </SoundButton>
+        expanded={panel === "inputs"} title={t("sound.showInputs")} onClick={() => toggleDevices("inputs")} />
     </div>
   );
   const mixer = (
@@ -359,10 +355,39 @@ export function SoundWidget() {
     // Своего правого щелчка у звука нет нигде, поэтому меню виджета — по всей карточке
     <div className="widget sound-widget" data-sound-style={design} data-menu-anywhere>
       <GlassCard accent="media" flush>
-        <div className="sound" data-view={view === 1 ? "compact" : view === 2 ? "vertical" : "mixer"} data-side={side}>
+        <div className="sound" data-view={view === 1 ? "compact" : view === 2 ? "vertical" : "horizontal"} data-side={side}>
           <div className="sound__base">
             <div className="sound__controls">
-              {view === 0 ? <>{outputControl}{master}{mic}</> : view === 1 ? <>
+              {/* Горизонтальный (2 ноября 2026, слово пользователя): как
+                  столбик, только лёжа — громкость строкой сверху, под ней в
+                  ряд выход, микрофон и микшер; кнопки — как у компактного */}
+              {view === 0 ? <>
+                <div className="sound__compact-top">{master}</div>
+                <div className="sound__compact-bottom sound__row">
+                  {/* Клетка — значок со своим действием и подпись со стрелкой,
+                      раскрывающая список (2 ноября 2026, слово пользователя:
+                      места хватает на названия) */}
+                  <div className="sound__cell">
+                    <SoundButton className="sound__speaker" icon={<DeviceIcon kind={current?.kind ?? "other"} />}
+                      disabled={!state.canSwitch || current === null} title={state.canSwitch
+                        ? t("sound.outputCycle", { name: current?.name ?? t("sound.output") })
+                        : current?.name ?? t("sound.noOutput")} onClick={() => control({ kind: "nextDevice" })} />
+                    <CellLink label={current?.short ?? t("sound.noOutput")} title={current?.name ?? t("sound.showOutputs")}
+                      disabled={!state.canSwitch} expanded={panel === "outputs"} onClick={() => toggleDevices("outputs")} />
+                  </div>
+                  <div className="sound__cell">
+                    {micButton}
+                    <CellLink label={t("sound.mic")} title={t("sound.showInputs")}
+                      disabled={!state.canSwitch} expanded={panel === "inputs"} onClick={() => toggleDevices("inputs")} />
+                  </div>
+                  <div className="sound__cell">
+                    <SoundButton className="sound__mixer-icon" icon={<MixerIcon />} expanded={panel === "mixer"}
+                      title={t(panel === "mixer" ? "sound.hideApps" : "sound.showApps")} onClick={toggleMixer} />
+                    <CellLink label={t("sound.mixer")} title={t(panel === "mixer" ? "sound.hideApps" : "sound.showApps")}
+                      expanded={panel === "mixer"} onClick={toggleMixer} />
+                  </div>
+                </div>
+              </> : view === 1 ? <>
                 <div className="sound__compact-top">{master}{mic}</div>
                 <div className="sound__compact-bottom">{outputControl}{mixer}</div>
               </> : <>
@@ -412,7 +437,6 @@ export function SoundWidget() {
                 </div>
               </>}
             </div>
-            {view === 0 && <div className="sound__apps-heading">{panelHeading(true)}</div>}
           </div>
           {panel !== "none" && <div className="sound__panel" ref={panelBox}>
             <div className="sound__panel-body">
@@ -421,7 +445,7 @@ export function SoundWidget() {
                   expanded={panel === tab.id} disabled={tab.id !== "mixer" && !state.canSwitch}
                   onClick={() => setOverlay({ layout, panel: tab.id })} />)}
               </div>}
-              {view === 1 && panelHeading()}
+              {view !== 2 && panelHeading()}
               {view === 2 && <div className="sound__side-title">
                 <span>{panel === "mixer" ? t("sound.apps") : tabs.find((tab) => tab.id === panel)?.label}</span>
                 <SoundButton className="sound__side-close" icon={<span aria-hidden="true">×</span>}

@@ -28,12 +28,23 @@ pub const MIN_WIDTH: f64 = 140.0;
 /// мышью; к тому же пульт мышью и не тянут — у него `flexible: false`.
 pub const MIN_HEIGHT: f64 = 64.0;
 
+/// Шаг сетки ширин при кегле 100 %.
+///
+/// Окна прилипают вплотную, и ровные столбцы складываются, только если
+/// ширины кратны общему шагу: две по 180 — одна 360, три по 360 — второй
+/// монитор шириной 1080. Основной столбец — 90 (180/270/360/450), полушаг 45
+/// (225/315/405) — там, где кратная 90 резала бы содержимое или узкий размер
+/// сравнялся бы с полным. Касается только окон с готовыми размерами
+/// ([`Widget::on_grid`]); высота от сетки не зависит.
+pub const GRID_STEP: f64 = 45.0;
+
 /// Порог правдоподобия самих записей реестра.
 ///
 /// Отдельно от предела перетаскивания: тот опустился под живую раскладку, а
 /// этот стережёт опечатку в реестре и слабеть вместе с ним не должен.
 #[cfg(test)]
-const SANE_WIDTH: f64 = 200.0;
+// Самый узкий столбец сетки ширин — 180
+const SANE_WIDTH: f64 = 180.0;
 // Опустился вслед за плотностью карточек: уплотнённой сети хватает 87 точек,
 // и прежняя сотня стала бы запретом на честный размер, а не защитой от опечатки
 #[cfg(test)]
@@ -254,11 +265,9 @@ impl Widget {
     pub fn layouts(&self) -> &'static [&'static str] {
         match self.id {
             "speedtest" => &["layout.resultsAbove", "layout.historyBeside"],
-            "media" => &["layout.mediaA", "layout.mediaB"],
             "notes" => &["layout.notesA", "layout.notesB"],
             "todo" => &["layout.todoA", "layout.todoB"],
             "mail" => &["layout.mailA", "layout.mailB"],
-            "password" => &["layout.passwordA", "layout.passwordB"],
             "totp" => &["layout.totpA", "layout.totpB"],
             _ => &[],
         }
@@ -306,50 +315,90 @@ impl Widget {
     /// Общая доступность размеров для меню, настроек и команд.
     /// Номера сохраняются: NEW A сети не отменяет полный размер Classic.
     ///
-    /// У паролей NEW B только компактный размер (11 октября, слово
-    /// пользователя): полный B растягивал те же строки на пустое место.
-    pub fn size_choices(&self, design: crate::settings::Design, view: usize, layout: usize) -> Vec<(usize, &Preset)> {
+    /// Компоновка сейчас размеры не отсекает ни у кого: у паролей B была
+    /// только компактной, и B снята (1 ноября 2026). Параметр оставлен — его
+    /// передают меню, снимок настроек и команда.
+    pub fn size_choices(&self, design: crate::settings::Design, view: usize, _layout: usize, cover: usize) -> Vec<(usize, &Preset)> {
+        let forced = self.forced_size(view, cover);
         self.presets_in(design, view).iter().enumerate().filter(|(index, _)| {
-            !(design == crate::settings::Design::Reference && *index == 0
-                && ((self.id == "network" && view == 0) || (self.id == "speedtest" && view == 2)
-                    || (self.id == "password" && layout == 1)))
+            forced.is_none_or(|only| *index == only) && !(*index == 0 && self.square(design, view))
         }).collect()
+    }
+
+    /// Пульт: Спотифай или его копия по виду — медиа.
+    pub fn is_player(&self) -> bool {
+        matches!(self.id, "spotify" | "media")
+    }
+
+    /// Квадрат 180×180 в обоих дизайнах (1–2 ноября 2026, слово пользователя):
+    /// «Потоки и строки» сети и «Только замер» спидтеста встают рядом с
+    /// конвертером того же размера. Размер у них один — узкий, полный в меню
+    /// не показывается, а сохранённый номер даёт тот же квадрат.
+    pub fn square(&self, design: crate::settings::Design, view: usize) -> bool {
+        match self.id {
+            "network" => self.design_view(design, view) == 0,
+            "speedtest" => view == 2,
+            _ => false,
+        }
+    }
+
+    /// Вид и размер нового человека — раскладка первого запуска (2 ноября
+    /// 2026, слово пользователя: его собственная, без Spotify и почты). Набор
+    /// включённых — `enabled` в реестре, места — `windows::FIRST_RUN_LAYOUT`.
+    pub fn default_choice(&self) -> (usize, usize) {
+        match self.id {
+            "cpu" | "gpu" => (1, 2),
+            "disks" => (0, 2),
+            "downloader" | "network" => (0, 1),
+            "fps" => (1, 0),
+            "media" => (0, 2),
+            "speedtest" => (2, 0),
+            _ => (0, 0),
+        }
+    }
+
+    /// Единственный размер, который этот вид допускает при этой обложке.
+    ///
+    /// Столбик пульта с обложкой фоном — только «Минимальный» (1 ноября 2026,
+    /// слово пользователя): подписи вверху, управление внизу, картинка между.
+    pub fn forced_size(&self, view: usize, cover: usize) -> Option<usize> {
+        (self.is_player() && view == 1 && cover == 1).then_some(2)
     }
 
     /// Стартовая геометрия; у карточек с подгонкой окончательную высоту измеряет содержимое.
     pub fn design_size(&self, design: crate::settings::Design, view: usize, index: usize, layout: usize) -> (f64, Option<f64>) {
+        if self.square(design, view) {
+            return (180.0, Some(180.0));
+        }
         if design != crate::settings::Design::Reference {
             return self.preset_size(self.design_view(design, view), index);
         }
         let narrow = index > 0;
         match self.id {
             // Плотная ширина пары: колонки, зазоры и два поля — 50+8+80+8+76+22
-            // у полного, 80+8+70+22 у узких. Тут, а не подгонкой после: окно
+            // у полного, 80+8+70+22 у узких; полный поднят с 244 до ближней
+            // точки сетки, 270, узкий на ней и стоял. Тут, а не подгонкой после: окно
             // вставало по реестровым 264 и только потом сужалось — скачком на
             // каждом открытии, смене размера, масштаба и дизайна. Высоту
             // по-прежнему ставит замер содержимого.
-            "cpu" | "gpu" => (if narrow { 180.0 } else { 244.0 }, self.preset_size(view, index).1),
-            "disks" if view == 1 => (204.0, Some(236.0)),
-            "disks" => (match index { 0 => 430.0, 1 => 320.0, _ => 250.0 }, Some(if narrow { 192.0 } else { 236.0 })),
-            "network" if view == 1 => (if narrow { 230.0 } else { 352.0 }, Some(if narrow { 212.0 } else { 156.0 })),
-            "network" => (230.0, Some(182.0)),
-            "weather" => (if narrow { 232.0 } else { 360.0 }, Some(match (view, narrow) { (1, true) => 245.0, (1, false) => 227.0, (_, true) => 326.0, _ => 218.0 })),
-            "speedtest" if view == 2 => (262.0, Some(196.0)),
-            "speedtest" => (if narrow { 262.0 } else { 392.0 }, Some(match (layout, narrow) { (1, true) => 190.0, (1, false) => 205.0, (_, true) => 216.0, _ => 194.0 })),
-            "media" => {
-                let sizes = if layout == 1 {
-                    [(420.0, 128.0), (300.0, 128.0), (300.0, 122.0), (300.0, 104.0)]
-                } else {
-                    [(420.0, 116.0), (300.0, 124.0), (300.0, 104.0), (300.0, 82.0)]
-                };
-                let (width, height) = sizes.get(index).copied().unwrap_or(sizes[0]);
-                (width, Some(height))
-            },
-            "spotify" => {
-                let sizes = match view {
-                    1 => [(280.0, 494.0), (240.0, 454.0), (204.0, 342.0), (180.0, 318.0)],
-                    2 => [(320.0, 320.0), (280.0, 280.0), (240.0, 240.0), (210.0, 210.0)],
-                    _ => [(464.0, 152.0), (420.0, 140.0), (320.0, 88.0), (300.0, 66.0)],
+            "cpu" | "gpu" => (if narrow { 180.0 } else { 225.0 }, self.preset_size(view, index).1),
+            "disks" if view == 1 => (225.0, Some(236.0)),
+            "disks" => (match index { 0 => 360.0, 1 => 225.0, _ => 180.0 }, Some(if narrow { 192.0 } else { 236.0 })),
+            "network" if view == 1 => (if narrow { 180.0 } else { 360.0 }, Some(if narrow { 212.0 } else { 156.0 })),
+
+            "weather" => (if narrow { 225.0 } else { 360.0 }, Some(match (view, narrow) { (1, true) => 245.0, (1, false) => 227.0, (_, true) => 326.0, _ => 218.0 })),
+
+            "speedtest" => (if narrow { 270.0 } else { 360.0 }, Some(match (layout, narrow) { (1, true) => 170.0, (1, false) => 205.0, (_, true) => 188.0, _ => 194.0 })),
+            // Два размера по 360 (1 ноября 2026, слово пользователя):
+            // «Средний» — «Большой» без полосы. Высоту окончательно ставит
+            // замер содержимого
+            "spotify" | "media" => {
+                let sizes: &[(f64, f64)] = match view {
+                    1 => &[(280.0, 494.0), (270.0, 484.0), (180.0, 318.0)],
+                    2 => &[(180.0, 180.0)],
+                    // Полоса: «Средний» — раскладка прежнего «Маленького»,
+                    // «Маленький» — «Минимальный» на 360
+                    _ => &[(360.0, 152.0), (360.0, 88.0), (360.0, 66.0), (270.0, 66.0)],
                 };
                 let (width, height) = sizes.get(index).copied().unwrap_or(sizes[0]);
                 (width, Some(height))
@@ -357,9 +406,12 @@ impl Widget {
             "clipboard" => (360.0, Some(286.0)),
             "notes" => (360.0, Some(236.0)),
             "todo" => (360.0, Some(236.0)),
-            "downloader" => (if narrow { 313.0 } else { 392.0 }, Some(if view == 1 { 84.0 } else { 132.0 })),
+            // NEW: потолок списком, три строки по замеру — 116; дальше высоту ведёт содержимое
+            "downloader" => if narrow { (180.0, Some(116.0)) } else { (360.0, Some(82.0)) },
             // B бывает только компактным: сохранённый полный номер остаётся для A
-            "password" => (if narrow || layout == 1 { 280.0 } else { 344.0 }, Some(if layout == 1 { 160.0 } else { 144.0 })),
+            // Кубик 180: 32+16+20+26, три зазора по 8, поля и рамка. Компоновки B
+            // больше нет (1 ноября 2026), сохранённый номер её ничего не значит
+            "password" => (if narrow { 180.0 } else { 360.0 }, Some(if narrow { 140.0 } else { 144.0 })),
             // Узкий пресет текстового списка меняет ширину, сохраняя ручную высоту.
             "mail" => self.preset_size(view, index),
             "totp" => (match index { 0 => 330.0, 1 => 280.0, _ => 220.0 }, if index == 0 { Some(if layout == 1 { 210.0 } else { 178.0 }) } else { None }),
@@ -397,6 +449,61 @@ impl Widget {
         let (width, height) = self.floor.unwrap_or((MIN_WIDTH, MIN_HEIGHT));
         LogicalSize::new(width * scale, height * scale)
     }
+
+    /// Ширина «от и до» при 100 %, если этот размер тянется мышью вбок.
+    ///
+    /// Только «Только полоса» у накопителей (1 ноября 2026, слово
+    /// пользователя): полоса читается на любой ширине, и столбец 180 — лишь
+    /// нижний предел, а не единственный ответ. Высота у неё по содержимому,
+    /// поэтому тянется окно только за боковые грани. Ширина мимо сетки и на
+    /// диск не пишется отдельно: её хранит место окна, как у гибких.
+    pub fn stretch(&self, view: usize, size: usize) -> Option<(f64, f64)> {
+        (self.id == "disks" && view == 0 && size == 2).then_some((180.0, 360.0))
+    }
+
+    /// Есть ли у виджета хоть один размер, который тянется вбок.
+    pub fn stretches_somewhere(&self) -> bool {
+        !self.flexible && (0..self.views.len().max(1))
+            .any(|view| (0..self.presets_for(view).len()).any(|size| self.stretch(view, size).is_some()))
+    }
+
+    /// Стоит ли ширина этого вида на сетке [`GRID_STEP`].
+    ///
+    /// Нет: пульты Spotify и медиа (слово пользователя: их ширины выведены
+    /// из обложки), тянущиеся мышью и служебные окна, а ещё виды-столбики и
+    /// квадраты — вертикальный звук, значки заряда, одно число FPS: они
+    /// встают рядом со столбцом, а не в него.
+    pub fn on_grid(&self, view: usize) -> bool {
+        match self.id {
+            "spotify" | "media" => false,
+            "sound" | "fps" => view != 2,
+            "battery" => view == 0,
+            _ => !self.flexible && !self.chrome,
+        }
+    }
+
+    /// Ширина окна в логических точках так, чтобы в физических она была
+    /// целым числом шагов.
+    ///
+    /// ВАЖНО: **до точки округляется столбец 90, а не вся ширина и не
+    /// полушаг.** Окно — целое число одинаковых столбцов плюс, у нечётных
+    /// (225, 315, 405), один полушаг. Округляй ширину целиком — 180 + 180 не
+    /// сходились бы с 360. Округляй полушаг — при кегле 90 % он 40,5 → 41, и
+    /// пара железа по 180 вставала 328 против 324 у заметок и почты рядом:
+    /// гибкие окна сетке не подчиняются и стоят ровно 360 × 0,9. Столбец же
+    /// при 90 % — ровно 81, и чётные ширины совпадают с ними до точки; у
+    /// нечётных расхождение не больше точки. Своё масштабирование у виджета
+    /// сетку законно ломает: соседи с другим кеглем в неё и не обязаны
+    /// попадать.
+    pub fn window_width(&self, view: usize, width: f64, scale: f64, factor: f64) -> f64 {
+        if !self.on_grid(view) || factor <= 0.0 {
+            return width * scale;
+        }
+        let halves = (width / GRID_STEP).round();
+        let column = (2.0 * GRID_STEP * scale * factor).round();
+        let half = if halves % 2.0 == 1.0 { (GRID_STEP * scale * factor).round() } else { 0.0 };
+        ((halves / 2.0).floor() * column + half) / factor
+    }
 }
 
 /// Размеры подобраны под содержимое карточки при кегле 100 %: окно и есть
@@ -412,14 +519,81 @@ impl Widget {
 // Три размера CPU/GPU после уточнений нативной приёмки. «Без истории» убран.
 // Высоты — стартовые основы; фактическую высоту устанавливает useContentHeight.
 const HARDWARE_RINGS: &[Preset] = &[
-    Preset { name: "size.full", width: 264.0, height: Some(350.0), below: None, below_height: None, keeps: None },
-    Preset { name: "size.compact", width: 224.0, height: Some(346.0), below: Some(17.0), below_height: None, keeps: None },
-    Preset { name: "size.numbersOnly", width: 194.0, height: Some(288.0), below: Some(14.0), below_height: None, keeps: None },
+    Preset { name: "size.full", width: 225.0, height: Some(350.0), below: None, below_height: None, keeps: None },
+    Preset { name: "size.compact", width: 180.0, height: Some(346.0), below: Some(17.0), below_height: None, keeps: None },
+    Preset { name: "size.numbersOnly", width: 180.0, height: Some(288.0), below: Some(14.0), below_height: None, keeps: None },
 ];
 const HARDWARE_BARS: &[Preset] = &[
-    Preset { name: "size.full", width: 264.0, height: Some(310.0), below: None, below_height: None, keeps: None },
-    Preset { name: "size.compact", width: 224.0, height: Some(372.0), below: Some(17.0), below_height: None, keeps: None },
-    Preset { name: "size.numbersOnly", width: 194.0, height: Some(314.0), below: Some(14.0), below_height: None, keeps: None },
+    Preset { name: "size.full", width: 225.0, height: Some(310.0), below: None, below_height: None, keeps: None },
+    Preset { name: "size.compact", width: 180.0, height: Some(372.0), below: Some(17.0), below_height: None, keeps: None },
+    Preset { name: "size.numbersOnly", width: 180.0, height: Some(314.0), below: Some(14.0), below_height: None, keeps: None },
+];
+
+/// Размеры пульта по раскладкам (полоса, столбик, квадрат) — общие у
+/// Спотифая и медиа (1 ноября 2026, слово пользователя: медиа — копия пульта
+/// по виду, раскладкам и размерам).
+const PLAYER_VIEWS: &[&[Preset]] = &[
+        /*
+         * Горизонтальный: обложка слева квадратом во всю высоту ряда,
+         * подписи с полосой посередине, кнопки справа.
+         *
+         * Большой и средний шире и выше остальных не для красоты: на них
+         * стоит полный ряд из пяти кнопок (176 точек против 108) и нижний
+         * ряд с плейлистами и устройством (36 точек высоты). Без этой
+         * прибавки подписям оставалось бы полсотни точек, то есть полоса
+         * перестала бы говорить, что играет.
+         */
+        //
+        // 1 ноября 2026 (слово пользователя): «Большой», «Средний» и
+        // «Маленький» — 360, «Минимальный» — 270. «Средний» — раскладка
+        // прежнего «Маленького», «Маленький» — «Минимальный» пошире
+        &[
+            // Большой: кнопки в середине, под исполнителем
+            Preset { name: "size.large", width: 360.0, height: Some(184.0), below: None, below_height: None, keeps: None },
+            // Кнопки под подписями, полоса без времени: подписи 43, кнопки
+            // 40, полоса 14, два зазора по 4, поля по 6 и рамка
+            Preset { name: "size.medium", width: 360.0, height: Some(120.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.small", width: 360.0, height: Some(66.0), below: None, below_height: None, keeps: None },
+            // Минимальный: полосы перемотки нет, и окно на строку ниже
+            Preset { name: "size.minimal", width: 270.0, height: Some(66.0), below: None, below_height: None, keeps: None },
+        ],
+        /*
+         * Вертикальный: обложка сверху во всю ширину окна, остальное
+         * столбиком под ней.
+         *
+         * Высоты — замер под крупную обложку, а она тут от края до края:
+         * сторона равна ширине окна, дальше 134 точки содержимого, 32
+         * зазоров, 24 полей и 36 на нижний ряд там, где он есть. Отсюда и
+         * рост: столбик с обложкой во всю ширину не бывает низким.
+         */
+        //
+        // 1 ноября 2026 (слово пользователя): 280 / 270 / 180, «Маленький»
+        // снят; высота растёт вместе с шириной обложки. С обложкой фоном
+        // только «Минимальный» (`Widget::forced_size`)
+        &[
+            Preset { name: "size.large", width: 280.0, height: Some(506.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.medium", width: 270.0, height: Some(496.0), below: None, below_height: None, keeps: None },
+            // На 25 точек ниже: громкости нет, а строка с ползунком со
+            // всеми зазорами стоит ровно столько (замер 17 на строку и 8 на
+            // зазор столбца при кегле 100 %)
+            Preset { name: "size.minimal", width: 180.0, height: Some(345.0), below: None, below_height: None, keeps: None },
+        ],
+        /*
+         * Квадрат: сторона к стороне, обложка фоном во всю карточку, а
+         * подписи с управлением столбиком поверх неё, прижатым к низу.
+         *
+         * Размер тут отнимает не ширину у обложки, а строки у пульта:
+         * «Большой» держит громкость и нижний ряд, «Средний» теряет
+         * громкость, «Маленький» — ещё и нижний ряд с перемешиванием и
+         * повтором, «Минимальный» отдаёт середину картинке, а полосу
+         * перемотки кладёт ниткой по нижнему краю.
+         */
+        //
+        // 1 ноября 2026 (слово пользователя): один размер, 180, —
+        // композиция «Минимального»
+        &[
+            Preset { name: "size.minimal", width: 180.0, height: Some(180.0), below: None, below_height: None, keeps: None },
+        ],
 ];
 
 pub const WIDGETS: &[Widget] = &[
@@ -465,7 +639,7 @@ pub const WIDGETS: &[Widget] = &[
         // переживает любую ширину и высоту, и отнимать у неё мышь незачем
         flexible: true,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Виджет нажимают: переключатель ЦПУ/ОЗУ
         floor: None,
     },
@@ -476,15 +650,15 @@ pub const WIDGETS: &[Widget] = &[
         presets: &[],
         view_presets: &[
             &[
-            Preset { name: "size.full", width: 392.0, height: Some(150.0), below: None, below_height: None, keeps: None },
-            // 25em: уходят температуры
-            Preset { name: "size.noTemperatures", width: 373.0, height: None, below: Some(25.0), below_height: None, keeps: None },
-            // 17em: модель уступает объёму, «занято из всего» — свободному
+            Preset { name: "size.full", width: 360.0, height: Some(150.0), below: None, below_height: None, keeps: None },
+            // 20em: уходят температуры
+            Preset { name: "size.noTemperatures", width: 225.0, height: None, below: Some(20.0), below_height: None, keeps: None },
+            // 13em: модель уступает объёму, «занято из всего» — свободному
             // месту, уходит слово «ресурс»
-            Preset { name: "size.barOnly", width: 253.0, height: None, below: Some(17.0), below_height: None, keeps: None },
+            Preset { name: "size.barOnly", width: 180.0, height: None, below: Some(13.0), below_height: None, keeps: None },
             ],
             &[
-                Preset { name: "size.narrow", width: 214.0, height: Some(236.0), below: None, below_height: None, keeps: None },
+                Preset { name: "size.narrow", width: 225.0, height: Some(236.0), below: None, below_height: None, keeps: None },
             ],
         ],
         covers: &[],
@@ -492,14 +666,13 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         enabled: true,
-        // NEW кольцо уплотнено до 204; предел не должен запрещать его
-        // собственный размер. Пресеты исходного Classic остаются шире.
+        // «Только полоса» — столбец сетки 180; предел не уже его.
         //
         // Высота — карточка с одним диском: 68,8 точки при 100 % (поля
         // ужимаются порогом 9em). Окно встаёт высотой по числу показанных
         // дисков само (`useContentHeight`), и прежние 150 — это два диска —
         // не пустили бы его ниже
-        floor: Some((204.0, 68.0)),
+        floor: Some((180.0, 68.0)),
     },
     Widget {
         id: "battery",
@@ -513,7 +686,8 @@ pub const WIDGETS: &[Widget] = &[
         // (`useContentHeight`), а не реестр. Реестровая высота — два устройства
         view_presets: &[
             &[
-                Preset { name: "size.full", width: 280.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+                Preset { name: "size.full", width: 360.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+                Preset { name: "size.narrow", width: 180.0, height: Some(112.0), below: None, below_height: None, keeps: None },
             ],
             &[
                 Preset { name: "size.full", width: 64.0, height: Some(114.0), below: None, below_height: None, keeps: None },
@@ -528,7 +702,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Столбик значков уже общего предела, как вертикальный пульт звука;
         // окно не тянется, и предел ловит только промах
         floor: Some((64.0, MIN_HEIGHT)),
@@ -538,16 +712,16 @@ pub const WIDGETS: &[Widget] = &[
         views: &["network.view.rows", "network.view.matrix"],
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 314.0, height: Some(98.0), below: None, below_height: None, keeps: Some(5.0) },
+            Preset { name: "size.full", width: 360.0, height: Some(98.0), below: None, below_height: None, keeps: Some(5.0) },
             // 19em: уходит разброс, остаётся отклик со своей точкой.
             //
-            // ВАЖНО: **ширина 231, а не 381.** Прежние 381 отличались от
+            // ВАЖНО: **ширина узкая, а не 381** (231, на сетке — 225). Прежние 381 отличались от
             // полного размера на одиннадцать точек и «уменьшением» не были
             // вовсе. Замер объяснил, откуда бралась пустота: ячейка ряда
             // занимает 163 точки при содержимом в 36 — колонки равной ширины
             // центрируют короткое значение, и никакая правка полей этого не
             // трогает. Лечится только шириной окна
-            Preset { name: "size.noJitter", width: 231.0, height: Some(96.0), below: Some(19.0), below_height: None, keeps: Some(5.0) },
+            Preset { name: "size.noJitter", width: 180.0, height: Some(96.0), below: Some(19.0), below_height: None, keeps: Some(5.0) },
         ],
         view_presets: &[],
         covers: &[],
@@ -561,7 +735,7 @@ pub const WIDGETS: &[Widget] = &[
         //
         // По высоте то же: содержимому уплотнённой карточки хватает 68 точек,
         // и прежняя сотня запрещала бы её собственный полный размер
-        floor: Some((200.0, 80.0)),
+        floor: Some((180.0, 80.0)),
     },
     Widget {
         id: "fps",
@@ -571,8 +745,10 @@ pub const WIDGETS: &[Widget] = &[
         view_heights: &[],
         presets: &[],
         view_presets: &[
-            &[Preset { name: "size.full", width: 300.0, height: Some(158.0), below: None, below_height: None, keeps: None }],
-            &[Preset { name: "size.full", width: 300.0, height: Some(88.0), below: None, below_height: None, keeps: None }],
+            &[Preset { name: "size.full", width: 360.0, height: Some(158.0), below: None, below_height: None, keeps: None },
+              Preset { name: "size.narrow", width: 180.0, height: Some(200.0), below: None, below_height: None, keeps: None }],
+            &[Preset { name: "size.full", width: 360.0, height: Some(88.0), below: None, below_height: None, keeps: None },
+              Preset { name: "size.narrow", width: 180.0, height: Some(138.0), below: None, below_height: None, keeps: None }],
             &[Preset { name: "size.full", width: 96.0, height: Some(96.0), below: None, below_height: None, keeps: None }],
         ],
         covers: &[],
@@ -580,7 +756,7 @@ pub const WIDGETS: &[Widget] = &[
         flexible: false,
         chrome: false,
         // Нужен не всем и тянет PresentMon — включают в настройках
-        enabled: false,
+        enabled: true,
         // Квадрат уже общего предела: окно мышью не тянется
         floor: Some((96.0, MIN_HEIGHT)),
     },
@@ -603,15 +779,15 @@ pub const WIDGETS: &[Widget] = &[
         views: &["view.weatherTable", "view.weatherRibbon"],
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 340.0, height: Some(217.0), below: None, below_height: None, keeps: None },
-            Preset { name: "size.narrow", width: 232.0, height: Some(217.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.full", width: 360.0, height: Some(217.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.narrow", width: 225.0, height: Some(217.0), below: None, below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Левая кнопка раскрывает почасовой прогноз, правая — меню виджета:
         // с прозрачностью для мыши окно перестало бы ловить обе
         floor: None,
@@ -625,36 +801,40 @@ pub const WIDGETS: &[Widget] = &[
         // подгоняются по содержимому в обоих дизайнах.
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 392.0, height: Some(229.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.full", width: 360.0, height: Some(229.0), below: None, below_height: None, keeps: None },
             // 17em: тесная раскладка итогов
             // Своя высота обязательна: без неё размер оставляет ту, что была,
             // и приход из «Только замера» оставлял бы старую основу
-            Preset { name: "size.narrow", width: 262.0, height: Some(229.0), below: None, below_height: None, keeps: None },
+            Preset { name: "size.narrow", width: 270.0, height: Some(229.0), below: None, below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Замер запускается кнопкой: прозрачность для мыши сделала бы виджет
         // вечным «замера не было»
         // Предел по высоте опустился со ста шестидесяти: те мерились под
         // карточку с графиком, а теперь у неё есть вид, где графика нет вовсе
-        floor: Some((215.0, 120.0)),
+        floor: Some((180.0, 120.0)),
     },
     Widget {
         id: "sound",
         // Прежние B/A/C переводятся при чтении настроек по версии раскладки.
-        views: &["view.soundMixer", "view.soundCompact", "view.soundVertical"],
+        // Вид 0 — горизонтальный пульт 360 (2 ноября 2026, слово пользователя):
+        // заменил «С мини-микшером», сохранённый номер переходит в него
+        views: &["view.horizontal", "view.soundCompact", "view.soundVertical"],
         view_heights: &[],
         presets: &[],
         view_presets: &[
             &[
-                Preset { name: "size.full", width: 360.0, height: Some(206.0), below: None, below_height: None, keeps: None },
+                // Две полосы по 32 с разделителем 21, поля 12 и рамка — как
+                // у компактного
+                Preset { name: "size.full", width: 360.0, height: Some(112.0), below: None, below_height: None, keeps: None },
             ],
             &[
-                Preset { name: "size.full", width: 392.0, height: Some(112.0), below: None, below_height: None, keeps: None },
+                Preset { name: "size.full", width: 360.0, height: Some(112.0), below: None, below_height: None, keeps: None },
             ],
             &[
                 // Только столбик; ширину и высоту раскрытия сообщает боковая панель.
@@ -665,7 +845,7 @@ pub const WIDGETS: &[Widget] = &[
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Виджет нажимают: и молчание, и полоса, и выбор устройства
         // Вертикальная основа уже общего предела; остальные виджеты его сохраняют.
         floor: Some((118.0, MIN_HEIGHT)),
@@ -773,20 +953,20 @@ pub const WIDGETS: &[Widget] = &[
         views: &[],
         view_heights: &[],
         presets: &[
-            Preset { name: "size.full", width: 344.0, height: Some(152.0), below: None, below_height: None, keeps: Some(9.5) },
+            Preset { name: "size.full", width: 360.0, height: Some(152.0), below: None, below_height: None, keeps: Some(9.5) },
             // 21em: карточка целиком переезжает во вторую раскладку —
             // прятать у неё нечего, бесполезных элементов нет
-            Preset { name: "size.passwordCompact", width: 280.0, height: Some(89.0), below: Some(21.0), below_height: None, keeps: None },
+            Preset { name: "size.passwordCompact", width: 180.0, height: Some(110.0), below: Some(21.0), below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Предел по высоте опустился до общего пола вслед за уплотнением:
         // второй раскладке хватает 74 точек, и прежние 95 запрещали бы её же
-        floor: Some((225.0, 80.0)),
+        floor: Some((180.0, 80.0)),
     },
     Widget {
         id: "totp",
@@ -866,62 +1046,7 @@ pub const WIDGETS: &[Widget] = &[
          * Прежние числа были меньше, и обложка на «маленьком» и «минимальном»
          * ужималась в ничто или исчезала порогом. Порога больше нет вовсе.
          */
-        view_presets: &[
-            /*
-             * Горизонтальный: обложка слева квадратом во всю высоту ряда,
-             * подписи с полосой посередине, кнопки справа.
-             *
-             * Большой и средний шире и выше остальных не для красоты: на них
-             * стоит полный ряд из пяти кнопок (176 точек против 108) и нижний
-             * ряд с плейлистами и устройством (36 точек высоты). Без этой
-             * прибавки подписям оставалось бы полсотни точек, то есть полоса
-             * перестала бы говорить, что играет.
-             */
-            &[
-                // Большой: кнопки в середине, под исполнителем
-                Preset { name: "size.large", width: 520.0, height: Some(184.0), below: None, below_height: None, keeps: None },
-                // Средний: кнопки справа — иначе он отличался от большого одной
-                // шириной, то есть выбор между ними ничего не значил
-                Preset { name: "size.medium", width: 430.0, height: Some(140.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.small", width: 340.0, height: Some(96.0), below: None, below_height: None, keeps: None },
-                // Минимальный: полосы перемотки нет, и окно на строку ниже
-                Preset { name: "size.minimal", width: 300.0, height: Some(66.0), below: None, below_height: None, keeps: None },
-            ],
-            /*
-             * Вертикальный: обложка сверху во всю ширину окна, остальное
-             * столбиком под ней.
-             *
-             * Высоты — замер под крупную обложку, а она тут от края до края:
-             * сторона равна ширине окна, дальше 134 точки содержимого, 32
-             * зазоров, 24 полей и 36 на нижний ряд там, где он есть. Отсюда и
-             * рост: столбик с обложкой во всю ширину не бывает низким.
-             */
-            &[
-                Preset { name: "size.large", width: 300.0, height: Some(526.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.medium", width: 260.0, height: Some(486.0), below: None, below_height: None, keeps: None },
-                // Два нижних на 25 точек ниже: громкости на них нет, а строка
-                // с ползунком со всеми зазорами стоит ровно столько (замер 17 на
-                // строку и 8 на зазор столбца при кегле 100 %)
-                Preset { name: "size.small", width: 220.0, height: Some(385.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.minimal", width: 180.0, height: Some(345.0), below: None, below_height: None, keeps: None },
-            ],
-            /*
-             * Квадрат: сторона к стороне, обложка фоном во всю карточку, а
-             * подписи с управлением столбиком поверх неё, прижатым к низу.
-             *
-             * Размер тут отнимает не ширину у обложки, а строки у пульта:
-             * «Большой» держит громкость и нижний ряд, «Средний» теряет
-             * громкость, «Маленький» — ещё и нижний ряд с перемешиванием и
-             * повтором, «Минимальный» отдаёт середину картинке, а полосу
-             * перемотки кладёт ниткой по нижнему краю.
-             */
-            &[
-                Preset { name: "size.large", width: 360.0, height: Some(360.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.medium", width: 310.0, height: Some(310.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.small", width: 260.0, height: Some(260.0), below: None, below_height: None, keeps: None },
-                Preset { name: "size.minimal", width: 210.0, height: Some(210.0), below: None, below_height: None, keeps: None },
-            ],
-        ],
+        view_presets: PLAYER_VIEWS,
         /*
          * Ось третья — обложка. Размера окна не меняет вовсе: карточка
          * подстраивается под неё сама. Иначе таблица выше стала бы вчетверо
@@ -940,42 +1065,19 @@ pub const WIDGETS: &[Widget] = &[
     },
     Widget {
         id: "media",
-        // Вид один: горизонтальный пульт с обложкой обычного размера. Других
-        // раскладок и обложек у медиа нет по решению пользователя — виджет
-        // делается для полного комплекта, а не вторым пультом Спотифая
-        views: &[],
+        // Копия пульта Спотифая по виду (1 ноября 2026, слово пользователя):
+        // те же раскладки, обложки и размеры — и те же оговорки о них выше
+        views: &["view.horizontal", "view.vertical", "view.square"],
         view_heights: &[],
-        /*
-         * Четыре размера, как у горизонтального пульта, и ширины у них те же:
-         * два пульта на одних обоях встают друг под другом ровно.
-         *
-         * Высоты сняты замером в браузере при 100 % на настоящем треке, и
-         * каждая равна содержимому, без запаса: середина ряда 138,6 точки с
-         * кнопками под подписями, 94,6 со временем у полосы, 74,7 без него и
-         * 56,7 без полосы вовсе; сверху рамка карточки и её поля — 12 точек
-         * на просторном размере и 6 на низких (порог 9em в GlassCard.css).
-         */
-        presets: &[
-            // Кнопки в середине, под подписями: места хватает, а справа они
-            // уводили бы взгляд от названия
-            Preset { name: "size.large", width: 520.0, height: Some(165.0), below: None, below_height: None, keeps: None },
-            // Кнопки справа. Поля уже тесные (ниже 9em), а время у полосы
-            // обязано остаться — отсюда оба порога
-            Preset { name: "size.medium", width: 430.0, height: Some(109.0), below: None, below_height: Some(9.0), keeps: Some(6.5) },
-            // Время у полосы уходит — ради этого окно и ниже «Среднего»
-            Preset { name: "size.small", width: 340.0, height: Some(89.0), below: None, below_height: Some(6.5), keeps: None },
-            // Полосы перемотки нет вовсе: остаются подписи и кнопки
-            Preset { name: "size.minimal", width: 300.0, height: Some(71.0), below: None, below_height: Some(6.5), keeps: None },
-        ],
-        view_presets: &[],
-        covers: &[],
-        covers_hidden: &[],
-        // Размер держат готовые размеры: обложка — квадрат во всю высоту ряда,
-        // и растянутое мышью окно оставило бы её либо крошечной, либо пустоты
-        // вокруг неё
+        presets: &[],
+        view_presets: PLAYER_VIEWS,
+        covers: &["cover.with", "cover.back", "cover.large"],
+        covers_hidden: &[2],
+        // Размер держат готовые размеры: обложка выведена из них, а растянутое
+        // мышью окно оставило бы её либо крошечной, либо пустоты вокруг неё
         flexible: false,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Пульт: прозрачность для мыши отобрала бы у него все кнопки разом
         floor: None,
     },
@@ -997,7 +1099,10 @@ pub const WIDGETS: &[Widget] = &[
         // 230 в списке три строки. Порог стоит там, где полной раскладке
         // перестаёт хватать места на одну строку: окно 280
         presets: &[
-            Preset { name: "size.full", width: 360.0, height: Some(290.0), below: None, below_height: None, keeps: Some(18.5) },
+            // 180×180 (1 ноября 2026, слово пользователя): квадрат рядом с сетью
+            // и «Только замером»; на нём выбор в одну строку (порог 18.5em),
+            // пачку тянут мышью выше
+            Preset { name: "size.full", width: 180.0, height: Some(180.0), below: None, below_height: None, keeps: None },
         ],
         view_presets: &[],
         covers: &[],
@@ -1006,14 +1111,15 @@ pub const WIDGETS: &[Widget] = &[
         // мышью, сохранённая геометрия важнее реестровой; выбора пресетов нет.
         flexible: true,
         chrome: false,
-        enabled: false,
+        enabled: true,
         // Кнопки выбора, чипы, поля обрезки — прозрачность для мыши отобрала бы
         // у карточки всё
         // Почти квадрат (12 октября, слово пользователя): пустому конвертеру
         // хватает двухсот точек. Ниже 340 строки чипов переносятся, и выбор
         // прокручивается сам — это цена узкого окна, а не поломка. По высоте
-        // предел держит тесная раскладка: одна строка списка есть с 191 точки
-        floor: Some((220.0, 190.0)),
+        // 150 (1 ноября 2026, слово пользователя): пустой зоне броска хватает,
+        // а строка списка при пачке ниже 191 точки уходит в прокрутку
+        floor: Some((180.0, 150.0)),
     },
     Widget {
         id: "downloader",
@@ -1025,32 +1131,30 @@ pub const WIDGETS: &[Widget] = &[
          * карточку в полную раскладку. Форма у видов разная целиком, поэтому
          * и размеры свои (`view_presets`).
          */
-        views: &["view.full", "view.twoRows"],
+        // Один вид, два размера (1 ноября 2026, слово пользователя): полный
+        // 360 — ссылка сверху, режим, потолок выпадающим списком и папка
+        // снизу; узкий 180 — то же в три строки. Прежний вид «В две строки»
+        // отличался от полного слишком мало и снят; сохранённый номер вида 1
+        // читается как единственный.
+        views: &[],
         view_heights: &[],
-        presets: &[],
-        view_presets: &[
-            // Замер в браузере при 100 %: чипам режима и потолка нужна 321
-            // точка, и с 360 они встают в одну строку. Строка состояния теперь
-            // всегда одна, с полосой хода в зазоре под ней, и самые высокие
-            // состояния — идущая загрузка и готовое — просят 155 точек вместе с
-            // полем ссылки, чипами и нижним рядом. Прежде идущая загрузка шла в
-            // три строки и держала 188, а под остальными состояниями оставалась
-            // пустота на две строки — её и просили убрать
-            &[Preset { name: "size.full", width: 380.0, height: Some(156.0), below: None, below_height: None, keeps: None },
-              Preset { name: "size.narrow", width: 313.0, height: Some(156.0), below: None, below_height: None, keeps: None }],
-            // Узкие чипы без точки (228 точек) и кнопки папки и истории
-            // встают в нижний ряд, кнопка скачивания — к ссылке; вместе с
-            // ужатыми на низкой карточке полями — 82 точки
-            &[Preset { name: "size.twoRows", width: 380.0, height: Some(82.0), below: None, below_height: None, keeps: None },
-              Preset { name: "size.narrow", width: 313.0, height: Some(82.0), below: None, below_height: None, keeps: None }],
+        presets: &[
+            Preset { name: "size.full", width: 360.0, height: Some(82.0), below: None, below_height: None, keeps: None },
+            // Classic: одна строка — ссылка, скачать, стрелка выбора (2 ноября
+            // 2026, слово пользователя); строка 29, поля по 6 и рамка — 43.
+            // Выбор под стрелкой растит окно, как история
+            // Ширина 360 (2 ноября 2026, слово пользователя): в 180 полю ссылки
+            // оставалось меньше сотни точек
+            Preset { name: "size.compact", width: 360.0, height: Some(43.0), below: None, below_height: None, keeps: None },
         ],
+        view_presets: &[],
         covers: &[],
         covers_hidden: &[],
         flexible: false,
         chrome: false,
-        enabled: false,
-        // Поле ссылки и кнопки — без мыши карточка бесполезна
-        floor: None,
+        enabled: true,
+        // Узкий Classic — одна строка в 43 точки, ниже общего пола в 64
+        floor: Some((MIN_WIDTH, 43.0)),
     },
     Widget {
         id: "debug",
@@ -1484,6 +1588,153 @@ mod tests {
         }
     }
 
+    /// Каждая ширина окна с готовыми размерами — целое число шагов сетки, в
+    /// обоих дизайнах, во всех видах, размерах и компоновках. Иначе соседи по
+    /// столбцу снова разойдутся на несколько точек.
+    /// Вбок мышью тянется только «Только полоса» накопителей: от своего
+    /// столбца сетки до полной ширины, в обоих дизайнах.
+    /// Столбик пульта с обложкой фоном — только «Минимальный», в обоих
+    /// дизайнах; другие обложки и раскладки выбора не теряют.
+    #[test]
+    fn the_spotify_column_with_a_backdrop_is_minimal_only() {
+        let spotify = find("spotify").unwrap();
+        for design in [crate::settings::Design::App, crate::settings::Design::Reference] {
+            let only: Vec<usize> = spotify.size_choices(design, 1, 0, 1).iter().map(|(index, _)| *index).collect();
+            assert_eq!(only, vec![2]);
+            assert_eq!(spotify.presets_in(design, 1)[2].name, "size.minimal");
+            assert_eq!(spotify.size_choices(design, 1, 0, 0).len(), 3);
+            assert_eq!(spotify.size_choices(design, 0, 0, 1).len(), 4, "полоса с фоном — все четыре");
+            assert_eq!(spotify.size_choices(design, 2, 0, 0).len(), 1, "квадрат — один размер");
+        }
+    }
+
+    #[test]
+    fn media_is_the_spotify_remote_in_every_size() {
+        // Медиа — копия пульта по виду (1 ноября 2026, слово пользователя):
+        // раскладки, обложки и размеры обязаны совпадать во всём
+        let spotify = find("spotify").unwrap();
+        let media = find("media").unwrap();
+        assert_eq!(media.views, spotify.views);
+        assert_eq!(media.covers, spotify.covers);
+        assert_eq!(media.covers_hidden, spotify.covers_hidden);
+        assert!(media.layouts().is_empty(), "A/B у медиа сняты");
+        for design in [crate::settings::Design::App, crate::settings::Design::Reference] {
+            for view in 0..spotify.views.len() {
+                for cover in 0..spotify.covers.len() {
+                    let ours: Vec<usize> = media.size_choices(design, view, 0, cover).iter().map(|(index, _)| *index).collect();
+                    let theirs: Vec<usize> = spotify.size_choices(design, view, 0, cover).iter().map(|(index, _)| *index).collect();
+                    assert_eq!(ours, theirs, "{design:?} вид {view} обложка {cover}");
+                    for size in theirs {
+                        assert_eq!(media.design_size(design, view, size, 0), spotify.design_size(design, view, size, 0));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_bar_of_the_drives_stretches_sideways() {
+        let disks = find("disks").unwrap();
+        for design in [crate::settings::Design::App, crate::settings::Design::Reference] {
+            let (least, most) = disks.stretch(0, 2).expect("«Только полоса» тянется");
+            assert_eq!(least, disks.design_size(design, 0, 2, 0).0, "нижний предел — сам размер");
+            assert_eq!(most, disks.design_size(design, 0, 0, 0).0, "верхний — полная ширина");
+        }
+        for widget in WIDGETS {
+            for view in 0..widget.views.len().max(1) {
+                for size in 0..widget.presets_for(view).len() {
+                    if (widget.id, view, size) != ("disks", 0, 2) {
+                        assert!(widget.stretch(view, size).is_none(), "«{}» {view}/{size} вбок не тянется", widget.id);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strict_widths_sit_on_the_grid() {
+        for widget in WIDGETS {
+            let views = widget.views.len().max(1);
+            for design in [settings::Design::App, settings::Design::Reference] {
+                for view in 0..views {
+                    if !widget.on_grid(view) {
+                        continue;
+                    }
+                    let sizes = widget.presets_in(design, view).len();
+                    for size in 0..sizes {
+                        for layout in 0..widget.layouts().len().max(1) {
+                            let width = widget.design_size(design, view, size, layout).0;
+                            assert!(
+                                width % GRID_STEP == 0.0,
+                                "у «{}» ({design:?}, вид {view}, размер {size}) ширина {width} не на сетке {GRID_STEP}",
+                                widget.id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Окно сетки — целое число одинаковых столбцов в физических точках: две
+    /// по 180 точно равны одному в 360 на любом кегле и масштабе экрана, а
+    /// при кегле 90 % — ещё и гибким окнам в 360 × 0,9 рядом.
+    #[test]
+    fn grid_windows_add_up_in_physical_pixels() {
+        let speedtest = find("speedtest").unwrap();
+        for scale in [settings::MIN_SCALE, 0.9, settings::DEFAULT_SCALE, 1.15, settings::MAX_SCALE] {
+            for factor in [1.0, 1.25, 1.5, 1.75, 2.0] {
+                let px = |width: f64| speedtest.window_width(0, width, scale, factor) * factor;
+                for width in [180.0, 225.0, 315.0, 405.0] {
+                    let value = px(width);
+                    assert!((value - value.round()).abs() < 1e-6, "дробная ширина {value} при {scale}×{factor}");
+                    assert!((value - width * scale * factor).abs() <= 3.0, "сетка увела {width} от {}", width * scale * factor);
+                }
+                assert!((2.0 * px(180.0) - px(360.0)).abs() < 1e-6);
+                assert!((2.0 * px(270.0) - px(540.0)).abs() < 1e-6);
+                assert!((px(180.0) + px(270.0) - px(450.0)).abs() < 1e-6);
+                assert!((2.0 * px(315.0) - px(630.0)).abs() <= 1.0 + 1e-6, "нечётные расходятся не больше точки");
+            }
+        }
+        // Кегль 90 %, экран 100 %: пара железа вровень с заметками
+        assert_eq!(speedtest.window_width(0, 180.0, 0.9, 1.0) * 2.0, 360.0 * 0.9);
+        let spotify = find("spotify").unwrap();
+        assert_eq!(spotify.window_width(0, 520.0, 0.9, 1.0), 520.0 * 0.9, "пульт вне сетки");
+    }
+
+    /// Порог срабатывает и у ширины, которую окно получает на деле.
+    ///
+    /// Окно сетки — целые столбцы в физических точках (`window_width`), и
+    /// его ширина отличается от реестровой × кегль на долю точки на столбец.
+    /// Размер, стоящий вплотную под порогом, на масштабе экрана 125 % или 150 %
+    /// мог бы оказаться над ним — проверка выше смотрит только реестровое
+    /// число (подсмотрено у версии Codex).
+    #[test]
+    fn grid_rounding_keeps_classic_thresholds() {
+        let em = card_em();
+        for widget in WIDGETS {
+            for view in 0..widget.views.len().max(1) {
+                for preset in widget.presets_for(view) {
+                    let Some(below) = preset.below else {
+                        continue;
+                    };
+                    for scale in [settings::MIN_SCALE, settings::DEFAULT_SCALE, 1.15, settings::MAX_SCALE] {
+                        for factor in [1.0, 1.25, 1.5, 1.75, 2.0] {
+                            let container = widget.window_width(view, preset.width, scale, factor) - CARD_BORDER;
+                            let threshold = below * em * scale;
+                            assert!(
+                                container < threshold,
+                                "у «{}» (вид {view}) размер «{}» при кегле {scale} и экране {factor}: контейнер {container:.2} не уже порога {threshold:.2}",
+                                widget.id,
+                                preset.name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Полному размеру порог не назначают: он ни под чем не стоит.
     #[test]
     fn the_full_size_sits_under_no_threshold() {
@@ -1541,7 +1792,7 @@ mod tests {
     /// Полный и компактный размеры пары обязаны удержать историю столбиками.
     ///
     /// ВАЖНО: **это сторож на невидимую поломку.** У Classic история в «кольцах»
-    /// уходит ниже 14em (`sections.css`, `.gauge > .columns`), и уходить она
+    /// уходит ниже 11em (`sections.css`, `.gauge > .columns`), и уходить она
     /// должна только у «Только цифры». Окно встанет нужной ширины и просто не
     /// покажет того, ради чего размер держат, — глазами это не поймать. У NEW
     /// порогов по ширине нет вовсе: раскладку выбирает размер (`data-size`).
@@ -1551,10 +1802,10 @@ mod tests {
     #[test]
     fn the_full_size_of_the_pair_keeps_its_history() {
         // Тот же порог, что в sections.css у `.gauge > .columns`
-        const HISTORY: f64 = 14.0;
+        const HISTORY: f64 = 11.0;
         let css = include_str!("../../src/widgets/hardware/sections.css").replace("\r\n", "\n");
         assert!(
-            css.contains("@container card (width < 14em) {\n  .gauge > .columns {\n    display: none;"),
+            css.contains("@container card (width < 11em) {\n  .gauge > .columns {\n    display: none;"),
             "порог истории колец в sections.css разошёлся с тестом"
         );
 
@@ -1606,8 +1857,8 @@ mod tests {
         let gpu = find("gpu").expect("видеокарта в реестре");
         let size = gpu.layout_size(settings::MAX_SCALE);
 
-        // Кегль 130 %: 264×350 при сотне
-        assert!((size.width - 343.2).abs() < 0.001, "ширина {}", size.width);
+        // Кегль 130 %: 225×350 при сотне
+        assert!((size.width - 292.5).abs() < 0.001, "ширина {}", size.width);
         assert!(
             (size.height - 455.0).abs() < 0.001,
             "высота {}",
@@ -1672,6 +1923,13 @@ mod tests {
                 assert_eq!((width, height), (64.0, MIN_HEIGHT));
                 continue;
             }
+            // Узкий загрузчик Classic — одна строка (2 ноября 2026): не
+            // тянется, высоту держит размер
+            if widget.id == "downloader" {
+                assert!(!widget.flexible);
+                assert_eq!((width, height), (MIN_WIDTH, 43.0));
+                continue;
+            }
             // Квадрат счётчика кадров — та же история: не тянется, одно число
             if widget.id == "fps" {
                 assert!(!widget.flexible);
@@ -1713,7 +1971,7 @@ mod tests {
     #[test]
     fn sound_views_have_one_full_base_each() {
         let sound = find("sound").expect("звук в реестре");
-        assert_eq!(sound.views, ["view.soundMixer", "view.soundCompact", "view.soundVertical"]);
+        assert_eq!(sound.views, ["view.horizontal", "view.soundCompact", "view.soundVertical"]);
         assert!(sound.presets.is_empty());
         assert!(!sound.flexible);
         for view in 0..3 {
@@ -1754,7 +2012,9 @@ mod redesign_tests {
             let widget = find(id).unwrap();
             for view in 0..widget.views.len().max(1) {
                 for size in 0..widget.presets_for(view).len() {
-                    let original = widget.preset_size(if widget.has_reference_views() { 0 } else { view }, size);
+                    // Квадраты 180 — общие у обоих дизайнов (2 ноября 2026)
+                    let original = if widget.square(Design::App, view) { (180.0, Some(180.0)) }
+                        else { widget.preset_size(if widget.has_reference_views() { 0 } else { view }, size) };
                     for layout in 0..2 {
                         assert_eq!(widget.design_size(Design::App, view, size, layout), original);
                         let mut settings = Settings::default();
@@ -1796,7 +2056,7 @@ mod redesign_tests {
         }
         let disks = find("disks").unwrap();
         assert_eq!(disks.presets_for(1).len(), 1);
-        assert_eq!(disks.design_size(Design::Reference, 1, 0, 0).0, 204.0);
+        assert_eq!(disks.design_size(Design::Reference, 1, 0, 0).0, 225.0);
     }
 
     #[test]
@@ -1807,7 +2067,7 @@ mod redesign_tests {
         for size in 0..2 {
             for layout in 0..2 {
                 assert_eq!(widget.design_size(Design::Reference, 1, size, layout), widget.design_size(Design::Reference, 0, size, layout));
-                assert_eq!(widget.design_size(Design::Reference, 2, size, layout), (262.0, Some(196.0)));
+                assert_eq!(widget.design_size(Design::Reference, 2, size, layout), (180.0, Some(180.0)));
                 assert_eq!(widget.design_size(Design::Reference, 2, size, layout), widget.design_size(Design::Reference, 2, size, 0));
             }
         }
@@ -1821,18 +2081,20 @@ mod text_redesign_tests {
     use crate::settings::Design;
 
     #[test]
-    fn password_keeps_length_strength_and_counts_in_both_narrow_layouts() {
+    fn password_has_one_layout_and_two_sizes() {
         let widget = find("password").unwrap();
-        assert_eq!(widget.layouts().len(), 2);
+        assert!(widget.layouts().is_empty());
         for size in 0..2 {
-            let width = if size == 0 { 344.0 } else { 280.0 };
-            assert_eq!(widget.design_size(Design::Reference, 0, size, 0), (width, Some(144.0)));
-            assert_eq!(widget.design_size(Design::Reference, 0, size, 1), (280.0, Some(160.0)), "B только компактный");
+            let width = if size == 0 { 360.0 } else { 180.0 };
+            for layout in 0..2 {
+                assert_eq!(widget.design_size(Design::Reference, 0, size, layout), (width, Some(if size == 0 { 144.0 } else { 140.0 })),
+                    "сохранённая компоновка B размер не меняет");
+            }
         }
-        assert_eq!(widget.size_choices(Design::Reference, 0, 0).len(), 2);
-        assert_eq!(widget.size_choices(Design::Reference, 0, 1).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
-        assert_eq!(widget.size_choices(Design::App, 0, 1).len(), 2);
-        assert_eq!(widget.design_size(Design::App, 0, 1, 1), (280.0, Some(89.0)));
+        assert_eq!(widget.size_choices(Design::Reference, 0, 0, 0).len(), 2);
+        assert_eq!(widget.size_choices(Design::Reference, 0, 1, 0).len(), 2);
+        assert_eq!(widget.size_choices(Design::App, 0, 1, 0).len(), 2);
+        assert_eq!(widget.design_size(Design::App, 0, 1, 1), (180.0, Some(110.0)));
         assert!(!widget.flexible);
     }
 
@@ -1873,35 +2135,40 @@ mod correction_tests {
     #[test]
     fn corrected_geometry_and_size_choices_follow_the_design() {
         let disks = find("disks").unwrap();
-        for (index, width) in [430.0, 320.0, 250.0].into_iter().enumerate() {
+        for (index, width) in [360.0, 225.0, 180.0].into_iter().enumerate() {
             assert_eq!(disks.design_size(Design::Reference, 0, index, 0).0, width);
         }
-        assert_eq!(disks.design_size(Design::App, 0, 0, 0).0, 392.0);
+        assert_eq!(disks.design_size(Design::App, 0, 0, 0).0, 360.0);
         let network = find("network").unwrap();
-        assert_eq!(network.size_choices(Design::Reference, 0, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
-        assert_eq!(network.size_choices(Design::Reference, 1, 0).len(), 2);
-        assert_eq!(network.size_choices(Design::App, 0, 0).len(), 2);
-        for index in 0..2 { assert_eq!(network.design_size(Design::Reference, 0, index, 0).0, 230.0); }
-        assert_eq!(network.design_size(Design::Reference, 1, 0, 0).0, 352.0);
-        assert_eq!(network.design_size(Design::App, 0, 0, 0).0, 314.0);
+        assert_eq!(network.size_choices(Design::Reference, 0, 0, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(network.size_choices(Design::Reference, 1, 0, 0).len(), 2);
+        // Classic — тот же квадрат 180 (2 ноября 2026, слово пользователя)
+        assert_eq!(network.size_choices(Design::App, 0, 0, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
+        for index in 0..2 { assert_eq!(network.design_size(Design::Reference, 0, index, 0).0, 180.0); }
+        assert_eq!(network.design_size(Design::Reference, 1, 0, 0).0, 360.0);
+        assert_eq!(network.design_size(Design::App, 0, 0, 0), (180.0, Some(180.0)));
+        let speedtest = find("speedtest").unwrap();
+        for design in [Design::App, Design::Reference] {
+            assert_eq!(speedtest.size_choices(design, 2, 0, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
+            assert_eq!(speedtest.design_size(design, 2, 0, 0), (180.0, Some(180.0)));
+        }
         for id in ["notes", "clipboard", "todo"] {
             let widget = find(id).unwrap();
             assert!(widget.flexible);
-            for design in [Design::App, Design::Reference] { assert_eq!(widget.size_choices(design, 0, 0).len(), 1); }
+            for design in [Design::App, Design::Reference] { assert_eq!(widget.size_choices(design, 0, 0, 0).len(), 1); }
         }
         let converter = find("converter").unwrap();
         assert!(converter.flexible);
         assert_eq!(converter.presets.len(), 1);
         for design in [Design::App, Design::Reference] {
-            assert_eq!(converter.size_choices(design, 0, 0).len(), 1);
-            assert_eq!(converter.design_size(design, 0, 0, 0), (360.0, Some(290.0)));
+            assert_eq!(converter.size_choices(design, 0, 0, 0).len(), 1);
+            assert_eq!(converter.design_size(design, 0, 0, 0), (180.0, Some(180.0)));
         }
         let speedtest = find("speedtest").unwrap();
         assert_eq!(speedtest.layout_choices(Design::Reference, 2).len(), 0);
         assert_eq!(speedtest.layout_choices(Design::Reference, 0).len(), 2);
-        assert_eq!(speedtest.size_choices(Design::Reference, 2, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
-        assert_eq!(speedtest.size_choices(Design::App, 2, 0).len(), 2);
-        assert_eq!(disks.design_size(Design::Reference, 1, 0, 0).0, 204.0);
+        assert_eq!(speedtest.size_choices(Design::Reference, 2, 0, 0).iter().map(|(index, _)| *index).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(disks.design_size(Design::Reference, 1, 0, 0).0, 225.0);
         assert_eq!(find("spotify").unwrap().layouts().len(), 0);
         assert_eq!(find("password").unwrap().presets[1].name, "size.passwordCompact");
     }
@@ -1913,8 +2180,8 @@ mod correction_tests {
         use crate::settings::{Settings, WidgetSettings};
         let disks = find("disks").unwrap();
         assert_eq!(disks.presets_for(1).len(), 1, "у NEW-кольца один размер");
-        assert_eq!(disks.size_choices(Design::App, 1, 0).len(), 3, "в Classic три размера, как у вида 0");
-        assert_eq!(disks.size_choices(Design::Reference, 1, 0).len(), 1);
+        assert_eq!(disks.size_choices(Design::App, 1, 0, 0).len(), 3, "в Classic три размера, как у вида 0");
+        assert_eq!(disks.size_choices(Design::Reference, 1, 0, 0).len(), 1);
         for size in 0..3 {
             let mut settings = Settings { design: Design::App, ..Settings::default() };
             settings.set_widget("disks", WidgetSettings { view: 1, size, ..WidgetSettings::default() });

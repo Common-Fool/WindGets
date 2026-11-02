@@ -320,7 +320,13 @@ pub fn rescale(app: &AppHandle) {
             // — умножение на отношение даёт ровно то же самое.
             let own = settings.widget(widget);
             let (width, _) = widget.design_size(settings.design, own.view, own.size, own.layout);
-            let _ = window.set_size(LogicalSize::new(width * to, now.height * ratio));
+            // Растянутую мышью ширину множим, как у гибких, а не берём из реестра
+            let width = match widget.stretch(own.view, own.size) {
+                Some((least, most)) => (now.width * ratio).clamp(least * to, most * to),
+                None => widget.window_width(own.view, width, to, factor),
+            };
+            let _ = window.set_size(LogicalSize::new(width, now.height * ratio));
+            limit_stretch(&window, widget, own.view, own.size, to);
         }
 
         // Долг подъёма записан в точках прежнего масштаба: не растянув его,
@@ -373,10 +379,35 @@ pub fn apply_preset(
         None => now.height,
     };
 
-    let requested = LogicalSize::new(width * scale, height);
+    let requested = LogicalSize::new(widget.window_width(view, width, scale, factor), height);
     if let Err(error) = window.set_size(requested) {
         eprintln!("{}: применение пресета: {error}", widget.id);
     }
+
+    // Размер, который тянется вбок, отпирает окно; уход с него запирает снова
+    limit_stretch(window, widget, view, index, scale);
+    if widget.stretches_somewhere() {
+        let own = WidgetSettings { view, size: index, ..own };
+        let _ = window.set_resizable(resizes(widget, &settings, own));
+    }
+}
+
+/// Пределы ширины и боковой захват у размера, который тянется мышью вбок
+/// ([`Widget::stretch`]); у прочих размеров того же виджета верхний предел
+/// снимается.
+///
+/// ВАЖНО: **только у виджета, где такой размер есть.** Стиль и пределы окна
+/// на каждой смене размера и раскладки у всех подряд совпали с возвратом бага
+/// меню — «после смены раскладки пункты не подсвечиваются» (1 ноября 2026).
+fn limit_stretch(window: &WebviewWindow, widget: &Widget, view: usize, size: usize, scale: f64) {
+    if !widget.stretches_somewhere() {
+        return;
+    }
+    let range = widget.stretch(view, size);
+    crate::snap::set_width_only(window, range.is_some());
+    // Высота без предела: её ставит замер содержимого
+    let most = range.map(|(_, most)| LogicalSize::new(most * scale, 100_000.0));
+    let _ = window.set_max_size(most);
 }
 
 /// Компоновка меняет основу без события размера: открытые панели остаются.
@@ -407,12 +438,76 @@ const MOVED_EVENT: &str = "widget-moved";
 /// панели и зеркало основы он переспрашивает у `fit_sound_panel`.
 #[cfg(windows)]
 pub fn moved(app: &AppHandle, hwnd: isize) {
+    regrid(app, hwnd);
     let Some(window) = app.get_webview_window("sound") else {
         return;
     };
     if window.hwnd().is_ok_and(|own| own.0 as isize == hwnd) {
         tell(&window, MOVED_EVENT, ());
     }
+}
+
+/// Возвращает окно сетки на сетку после переезда на монитор с другим DPI.
+///
+/// Windows масштабирует размер переехавшего окна сама, целиком: 392 точки
+/// при 125 % становятся 470 при 150 %, а сетка там требует 7 × 68 = 476 —
+/// окно встало бы мимо столбца соседей. Здесь, по концу перетаскивания, а не
+/// на `WM_DPICHANGED`: посреди жеста прилипание держит якорь по прямоугольнику
+/// Windows. Предохранитель Snap снимается: он запрещает смену размера ещё
+/// секунду после отпускания. На том же мониторе ширина уже точная — вызов
+/// ничего не делает.
+#[cfg(windows)]
+fn regrid(app: &AppHandle, hwnd: isize) {
+    let Some(window) = app.webview_windows().into_values()
+        .find(|window| window.hwnd().is_ok_and(|own| own.0 as isize == hwnd)) else {
+        return;
+    };
+    let Some(widget) = widgets::find(window.label()) else {
+        return;
+    };
+    let settings = app.state::<SettingsState>().get();
+    let own = settings.widget(widget);
+    if !widget.on_grid(own.view) || widget.stretch(own.view, own.size).is_some() {
+        return;
+    }
+    let (Ok(size), Ok(factor)) = (window.inner_size(), window.scale_factor()) else {
+        return;
+    };
+    let (width, _) = widget.design_size(settings.design, own.view, own.size, own.layout);
+    let width = hardware_width(&settings, widget.id, factor)
+        .unwrap_or_else(|| widget.window_width(own.view, width, settings.scale_of(widget), factor));
+    let physical = (width * factor).round() as u32;
+    if size.width == physical {
+        return;
+    }
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    // Окно, прижатое правой гранью к соседу или к краю рабочей области, держит
+    // её: прибавка из левого угла наехала бы на соседа или за край экрана
+    let right = position.x + size.width as i32;
+    let x = if right_edge_is_held(app, &window, right) { right - physical as i32 } else { position.x };
+    crate::snap::release_size_guard(&window);
+    let _ = set_bounds(&window, x, position.y, physical, size.height);
+}
+
+/// Стоит ли правая грань окна вплотную к левой грани другого видимого окна
+/// приложения или к правому краю рабочей области своего монитора.
+#[cfg(windows)]
+fn right_edge_is_held(app: &AppHandle, window: &WebviewWindow, right: i32) -> bool {
+    let at_area = window.current_monitor().ok().flatten()
+        .is_some_and(|monitor| (monitor.work_area().position.x + monitor.work_area().size.width as i32 - right).abs() <= 1);
+    let (Ok(own), Ok(own_size)) = (window.outer_position(), window.outer_size()) else {
+        return at_area;
+    };
+    // Сосед — только тот, кто перекрывается по высоте: окно с той же левой
+    // гранью на другом конце столбца прилипанием не держит
+    at_area || app.webview_windows().values()
+        .filter(|other| other.label() != window.label() && other.is_visible().unwrap_or(false))
+        .filter_map(|other| Some((other.outer_position().ok()?, other.outer_size().ok()?)))
+        .any(|(position, size)| (position.x - right).abs() <= 1
+            && position.y < own.y + own_size.height as i32
+            && own.y < position.y + size.height as i32)
 }
 
 /// Событие одному окну, а не всем.
@@ -550,6 +645,10 @@ pub fn set_bounds(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u3
 /// Поэтому смотрим не на знак шага, а на место: не влезло снизу — поднимаем на
 /// недостающее, освободилось снизу — опускаем, но не ниже того, откуда подняли.
 ///
+/// Пол — не только низ рабочей области, но и верх окна приложения под этим
+/// (1 ноября 2026, слово пользователя): заряд с новым устройством и пульт с
+/// раскрытым списком, стоящие на соседе, растут вверх, а не наезжают на него.
+///
 /// Окно не двигает, а называет верх: место и размер ставятся одним вызовом.
 fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) -> i32 {
     let Ok(Some(monitor)) = window.current_monitor() else {
@@ -558,7 +657,21 @@ fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) -> 
     let area = monitor.work_area();
 
     let top = area.position.y;
-    let bottom = area.position.y + area.size.height as i32;
+    let mut bottom = area.position.y + area.size.height as i32;
+    if let Ok(outer) = window.outer_size() {
+        // Низ сейчас — с прежней высотой: сосед под ним считается от него
+        let now = place.y + outer.height as i32;
+        let others: Vec<(i32, i32, i32)> = window.app_handle().webview_windows().values()
+            .filter(|other| other.label() != window.label() && other.is_visible().unwrap_or(false))
+            .filter_map(|other| {
+                let (position, size) = (other.outer_position().ok()?, other.outer_size().ok()?);
+                Some((position.x, position.x + size.width as i32, position.y))
+            })
+            .collect();
+        if let Some(floor) = floor_below(place.x, place.x + outer.width as i32, now, &others) {
+            bottom = bottom.min(floor);
+        }
+    }
 
     let mut lifted = LIFTED
         .lock()
@@ -588,6 +701,16 @@ fn settle(window: &WebviewWindow, place: PhysicalPosition<i32>, height: u32) -> 
     settled
 }
 
+/// Верх ближайшего окна под этим: перекрывается с ним по ширине и начинается
+/// не выше его нынешнего низа (окно вплотную — на точку внахлёст тоже).
+/// Соседи — `(лево, право, верх)` в физических точках.
+fn floor_below(left: i32, right: i32, bottom: i32, others: &[(i32, i32, i32)]) -> Option<i32> {
+    others.iter()
+        .filter(|(their_left, their_right, their_top)| *their_left < right && left < *their_right && *their_top >= bottom - 1)
+        .map(|(_, _, their_top)| *their_top)
+        .min()
+}
+
 /// Куда подвинуть окно и сколько подъёма за ним останется.
 ///
 /// Отдельной функцией — ради теста: живьём такое проверяется только мышью у
@@ -609,9 +732,23 @@ fn placement(top: i32, bottom: i32, y: i32, height: i32, raised: i32) -> (i32, i
 
 #[cfg(test)]
 mod tests {
-    use super::{initial_layout_scales, placement, resizes};
+    use super::{floor_below, initial_layout_scales, placement, resizes};
     use crate::settings::{Settings, WidgetSettings};
     use crate::widgets;
+
+    /// Пол под окном — верх ближайшего соседа снизу, перекрытого по ширине;
+    /// сосед сбоку или выше не в счёт.
+    #[test]
+    fn the_floor_is_the_nearest_neighbour_below() {
+        let others = [(0, 360, 500), (0, 180, 420), (400, 760, 300), (0, 360, 100)];
+        assert_eq!(floor_below(0, 180, 300, &others), Some(420), "ближний снизу");
+        assert_eq!(floor_below(0, 180, 421, &others), Some(420), "вплотную с нахлёстом в точку");
+        assert_eq!(floor_below(200, 360, 300, &others), Some(500), "узкий сосед не под нами");
+        assert_eq!(floor_below(0, 360, 600, &others), None, "снизу никого");
+        assert_eq!(floor_below(360, 400, 200, &others), None, "касание боком — не перекрытие");
+        // Подъём по такому полу — тот же расчёт, что у края экрана
+        assert_eq!(placement(0, 420, 300, 160, 0), (-40, 40));
+    }
 
     #[test]
     fn startup_remembers_scale_for_disabled_widgets_and_their_overrides() {
@@ -861,7 +998,7 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     // поставленная тут, она ловит и восстановление места, и флаги из настроек,
     // и первый показ
     if !widget.chrome {
-        keep_frameless(window);
+        keep_frameless_flat(window);
     }
     lock_browser(window);
 
@@ -896,7 +1033,18 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     // размеры, — у нерастягиваемой карточки его надо перебить. У текстовых
     // виджетов правило обратное: там сохранённый размер и есть выбор человека.
     if !widget.flexible {
+        // Растянутая мышью ширина живёт в месте окна: готовый размер её не
+        // перебивает, если она в пределах
+        let restored = window.inner_size().ok().zip(window.scale_factor().ok())
+            .map(|(size, factor)| size.to_logical::<f64>(factor).width);
         apply_preset(window, widget, own.size, own.view, scale);
+        if let (Some((least, most)), Some(width)) = (widget.stretch(own.view, own.size), restored) {
+            if width >= least * scale - 1.0 && width <= most * scale + 1.0 {
+                if let Ok(size) = window.inner_size().and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?))) {
+                    let _ = window.set_size(LogicalSize::new(width.clamp(least * scale, most * scale), size.height));
+                }
+            }
+        }
     }
     if widget.id == "sound" { sound_panel::clamp_base(window); }
 
@@ -922,6 +1070,7 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
     if visible && !settings.hidden_all {
         let _ = window.show();
     }
+    crate::corners::refresh(app);
 }
 
 /// Держит окно без системной рамки всю его жизнь — как и почему, написано в
@@ -934,13 +1083,26 @@ pub fn finish(app: &AppHandle, window: &WebviewWindow, widget: &'static Widget, 
 pub fn keep_frameless(window: &WebviewWindow) {
     // Окно при отказе останется рабочим, но с заголовком под полупрозрачной
     // карточкой — молча это проходить не должно
-    if let Err(error) = crate::native_frame::install(window) {
+    if let Err(error) = crate::native_frame::install(window, crate::native_frame::Dwm::Round) {
         eprintln!("окно «{}» осталось с системной рамкой: {error}", window.label());
     }
 }
 
 #[cfg(not(windows))]
 pub fn keep_frameless(_window: &WebviewWindow) {}
+
+/// То же для окон виджетов, но без рамки DWM: ни тени на соседях, ни
+/// скругления всех углов разом — углы скругляет карточка по соседям
+/// (`corners.rs`).
+#[cfg(windows)]
+pub fn keep_frameless_flat(window: &WebviewWindow) {
+    if let Err(error) = crate::native_frame::install(window, crate::native_frame::Dwm::Off) {
+        eprintln!("окно «{}» осталось с системной рамкой: {error}", window.label());
+    }
+}
+
+#[cfg(not(windows))]
+pub fn keep_frameless_flat(_window: &WebviewWindow) {}
 
 /// Прячет окна всех виджетов, не трогая список включённых.
 ///
@@ -959,6 +1121,7 @@ pub fn hide_all(app: &AppHandle) {
             let _ = window.hide();
         }
     }
+    crate::corners::refresh(app);
 }
 
 /// Заголовки окон виджетов — на нынешнем языке. Зовётся после его смены.
@@ -992,6 +1155,7 @@ pub fn show_all(app: &AppHandle) {
             let _ = window.show();
         }
     }
+    crate::corners::refresh(app);
 }
 
 /// Запирает или отпускает размер окон.
@@ -1020,7 +1184,7 @@ pub fn apply_lock(app: &AppHandle) {
     }
 }
 
-fn reset_size(widget: &Widget, settings: &settings::Settings) -> LogicalSize<f64> {
+fn reset_size(widget: &Widget, settings: &settings::Settings, factor: f64) -> LogicalSize<f64> {
     let own = settings.widget(widget);
     let scale = settings.scale_of(widget);
     let (width, height) = widget.design_size(settings.design, own.view, own.size, own.layout);
@@ -1028,7 +1192,9 @@ fn reset_size(widget: &Widget, settings: &settings::Settings) -> LogicalSize<f64
     // этого же вида и компоновки, сохраняя выбранную узкую ширину.
     let height = height.or_else(|| widget.design_size(settings.design, own.view, 0, own.layout).1)
         .unwrap_or_else(|| widget.full().height.expect("у полного размера высота своя"));
-    LogicalSize::new(hardware_width(settings, widget.id).unwrap_or(width * scale), height * scale)
+    let width = hardware_width(settings, widget.id, factor)
+        .unwrap_or_else(|| widget.window_width(own.view, width, scale, factor));
+    LogicalSize::new(width, height * scale)
 }
 
 // Открытая панель повторно нарастит основу после widget-reset. Резервируем
@@ -1090,7 +1256,7 @@ pub fn reset_places(app: &AppHandle) {
 
     for (widget, window) in &open {
         let scale = settings.scale_of(widget);
-        let size = reset_size(widget, &settings);
+        let size = reset_size(widget, &settings, factor);
         if widget.id == "sound" { sound_panel::forget(); }
         // Новый якорь не должен наследовать подъём старой раскрытой панели.
         LIFTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(widget.id);
@@ -1113,6 +1279,12 @@ pub fn reset_places(app: &AppHandle) {
         let _ = window.set_size(size);
         let _ = window.set_min_size(Some(widget.min_size(scale)));
         let _ = window.set_position(PhysicalPosition::new(x, y));
+        // Ширина посчитана под основной монитор, а поставлена ещё на прежнем:
+        // при переезде Windows округлила её второй раз, мимо сетки
+        #[cfg(windows)]
+        if let Ok(hwnd) = window.hwnd() {
+            regrid(app, hwnd.0 as isize);
+        }
         set_layout_scale(widget.id, scale);
         if widget.id == "sound" {
             // Прежний договор звука: сброс закрывает микшер и боковую панель.
@@ -1127,6 +1299,100 @@ pub fn reset_places(app: &AppHandle) {
         column = column.max(width);
     }
 
+    save_places(app);
+}
+
+/// Угол рабочей области, от которого растёт стопка окон первого запуска.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Раскладка первого запуска (2 ноября 2026, слово пользователя): его
+/// собственная, без Spotify и почты, — стопки в четырёх углах основного
+/// монитора. Строки идут от угла внутрь, окна в строке — слева направо;
+/// у правых углов строка прижата к правому краю. Окна вплотную, как их ставит
+/// прилипание. Чего в наборе нет (модуль выключен), то место не занимает.
+/// По высоте влезает и в Full HD.
+const FIRST_RUN_LAYOUT: &[(Corner, &[&[&str]])] = &[
+    (Corner::TopLeft, &[&["fps"], &["cpu", "gpu"], &["disks"], &["processes"]]),
+    (Corner::TopRight, &[&["weather"]]),
+    (Corner::BottomLeft, &[&["media"], &["sound"], &["battery"]]),
+    (Corner::BottomRight, &[&["network", "speedtest", "converter"], &["downloader"], &["password"]]),
+];
+
+/// Места окон по [`FIRST_RUN_LAYOUT`] в физических точках: `area` — лево,
+/// верх, право, низ рабочей области, `size` — размер окна или `None`, если
+/// окна нет. Отдельной функцией — ради теста.
+fn corner_places(area: (i32, i32, i32, i32), size: &dyn Fn(&str) -> Option<(i32, i32)>) -> Vec<(&'static str, i32, i32)> {
+    let (left, top, right, bottom) = area;
+    let mut places = Vec::new();
+    for (corner, rows) in FIRST_RUN_LAYOUT {
+        let mut taken = 0;
+        for row in *rows {
+            let present: Vec<(&'static str, (i32, i32))> = row.iter().filter_map(|id| size(id).map(|got| (*id, got))).collect();
+            if present.is_empty() {
+                continue;
+            }
+            let width: i32 = present.iter().map(|(_, (w, _))| w).sum();
+            let height = present.iter().map(|(_, (_, h))| *h).max().unwrap_or(0);
+            let mut x = match corner {
+                Corner::TopLeft | Corner::BottomLeft => left,
+                Corner::TopRight | Corner::BottomRight => right - width,
+            };
+            for (id, (w, h)) in present {
+                // Верхние строки выравниваются по верху, нижние — по низу
+                let y = match corner {
+                    Corner::TopLeft | Corner::TopRight => top + taken,
+                    Corner::BottomLeft | Corner::BottomRight => bottom - taken - h,
+                };
+                places.push((id, x, y));
+                x += w;
+            }
+            taken += height;
+        }
+    }
+    places
+}
+
+/// Расставляет окна по [`FIRST_RUN_LAYOUT`] на основном мониторе.
+///
+/// Дважды: сразу после сборки и ещё раз через пару секунд — карточки с
+/// высотой по содержимому (железо, накопители) к первому разу ещё не
+/// подогнаны, и стопка под ними легла бы с зазором или внахлёст.
+pub fn arrange_first_run(app: &AppHandle) {
+    arrange_corners(app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        on_main(&handle, |app| arrange_corners(&app));
+    });
+}
+
+fn arrange_corners(app: &AppHandle) {
+    let open: Vec<WebviewWindow> = widgets::shown().filter_map(|widget| app.get_webview_window(widget.id)).collect();
+    let Some(sample) = open.first() else { return };
+    let Ok(Some(monitor)) = sample.primary_monitor() else { return };
+    let area = monitor.work_area();
+    let bounds = (
+        area.position.x,
+        area.position.y,
+        area.position.x + area.size.width as i32,
+        area.position.y + area.size.height as i32,
+    );
+    let size = |id: &str| {
+        let window = app.get_webview_window(id)?;
+        let got = window.outer_size().ok()?;
+        Some((got.width as i32, got.height as i32))
+    };
+    for (id, x, y) in corner_places(bounds, &size) {
+        if let Some(window) = app.get_webview_window(id) {
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+        }
+    }
     save_places(app);
 }
 
@@ -1173,19 +1439,31 @@ pub fn sync_design_geometry(app: &AppHandle) {
 
 /// Замер снят другим дизайном, чем тот, которым окно рисует сейчас. Без метки
 /// (старый фронт) замер принимается, как прежде.
-fn fit_is_stale(settings: &settings::Settings, label: &str, sent: Option<settings::Design>) -> bool {
-    sent.is_some_and(|sent| sent != window_effects::effective_design(settings, label))
+///
+/// Замер прежнего вида тоже устарел: смена вида ставит окно в готовый размер
+/// сразу, а страница ещё кадр-другой рисует прежний вид и успевала подогнать
+/// под него новое окно — «Только замер» вставал 180×228 (2 ноября 2026).
+/// Квадрату 180 подгонка не положена вовсе (`Widget::square`).
+fn fit_is_stale(settings: &settings::Settings, label: &str, sent: Option<settings::Design>, view: Option<usize>) -> bool {
+    if sent.is_some_and(|sent| sent != window_effects::effective_design(settings, label)) {
+        return true;
+    }
+    let Some(widget) = widgets::find(label) else { return false };
+    let own = settings.widget(widget);
+    view.is_some_and(|view| view != own.view) || widget.square(settings.design, own.view)
 }
 
 /// Ширина, которую подгонка по содержимому держит у нерастягиваемой карточки:
 /// та же, что ставит готовый размер (`design_size`), на её масштабе.
 /// Индекс размера не меняется.
-fn hardware_width(settings: &settings::Settings, label: &str) -> Option<f64> {
+fn hardware_width(settings: &settings::Settings, label: &str, factor: f64) -> Option<f64> {
     if !matches!(label, "cpu" | "gpu" | "disks" | "network" | "speedtest" | "weather" | "media" | "downloader") { return None; }
     let widget = widgets::find(label)?;
     let own = settings.widget(widget);
+    // Растянутую мышью ширину подгонка по высоте не трогает
+    if widget.stretch(own.view, own.size).is_some() { return None; }
     let width = widget.design_size(settings.design, own.view, own.size, own.layout).0;
-    Some(width * settings.scale_of(widget))
+    Some(widget.window_width(own.view, width, settings.scale_of(widget), factor))
 }
 
 /// Просьба фронта встать ровно такой высоты — в логических точках.
@@ -1205,7 +1483,7 @@ fn hardware_width(settings: &settings::Settings, label: &str) -> Option<f64> {
 /// нет, и исправить было бы нечем. Сверка идёт здесь, в главном потоке:
 /// выбор дизайна к этому моменту уже записан.
 #[tauri::command]
-pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<settings::Design>) {
+pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<settings::Design>, view: Option<usize>) {
     // Конвертер сохраняет выбранную руками геометрию в обоих дизайнах.
     if window.label() == "converter" { return; }
     let app = window.app_handle().clone();
@@ -1215,7 +1493,7 @@ pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<sett
         let Some(window) = app.get_webview_window(&label) else {
             return;
         };
-        if fit_is_stale(&app.state::<SettingsState>().get(), &label, design) {
+        if fit_is_stale(&app.state::<SettingsState>().get(), &label, design, view) {
             return;
         }
         let (Ok(size), Ok(factor)) = (window.inner_size(), window.scale_factor()) else {
@@ -1224,7 +1502,7 @@ pub fn fit_window_height(window: WebviewWindow, height: f64, design: Option<sett
 
         // Ширина подгоняется вместе с высотой, в том числе если высота та же.
         // Чужие виджеты и выбранный индекс размера не затрагиваются.
-        if let Some(width) = hardware_width(&app.state::<SettingsState>().get(), &label) {
+        if let Some(width) = hardware_width(&app.state::<SettingsState>().get(), &label, factor) {
             let physical_width = (width * factor).round() as u32;
             if size.width.abs_diff(physical_width) >= 2 {
                 crate::snap::release_size_guard(&window);
@@ -1280,21 +1558,22 @@ fn panel_height(widget: &Widget, own: WidgetSettings, request: &PresetPanel, sca
     // (`referenceSlack` во фронте). Ужать окно больше чем вдвое она не может —
     // такое число пришло бы только по ошибке
     let base = widget.design_size(design, own.view, own.size, own.layout).1? * scale;
-    let floor = if widget.id == "spotify" { -base / 2.0 } else { 0.0 };
+    let floor = if widget.is_player() { -base / 2.0 } else { 0.0 };
     (request.extra >= floor).then_some(base + request.extra)
 }
 
 /// Тянется ли окно мышью за края.
 ///
-/// Три условия, и все три обязательны: растягивается только текстовый виджет,
-/// общий рубильник запирает всех разом, свой флаг — этого одного.
+/// Три условия, и все три обязательны: растягивается только текстовый виджет
+/// или размер, который тянется вбок ([`Widget::stretch`]), общий рубильник
+/// запирает всех разом, свой флаг — этого одного.
 ///
 /// ВАЖНО: **общий рубильник главнее своего.** Свой запирает, но отпереть
 /// запертое общим не может: иначе рубильник, ради которого лезут в трей,
 /// обходился бы галочкой в списке — и «заблокировать положение» оставляло бы
 /// половину окон на свободе.
 fn resizes(widget: &Widget, settings: &settings::Settings, own: WidgetSettings) -> bool {
-    widget.flexible && !settings.locked && !own.locked
+    (widget.flexible || widget.stretch(own.view, own.size).is_some()) && !settings.locked && !own.locked
 }
 
 pub fn apply(window: &WebviewWindow, settings: WidgetSettings, resizable: bool) {
@@ -1340,6 +1619,11 @@ fn watch_closing(app: &AppHandle, window: &WebviewWindow, id: &'static str) {
     let handle = app.clone();
 
     window.on_window_event(move |event| {
+        // Стык окон меняют сдвиг, размер и уход любого из них (`corners.rs`)
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::Destroyed) {
+            crate::corners::refresh(&handle);
+            return;
+        }
         let WindowEvent::CloseRequested { api, .. } = event else {
             return;
         };
@@ -1487,15 +1771,17 @@ mod reset_size_tests {
         let spotify = widgets::find("spotify").unwrap();
         for scale in [0.9, 1.0, 1.3] {
             for (design, view, size, width, height) in [
-                (settings::Design::Reference, 0, 0, 464.0, 152.0),
-                (settings::Design::Reference, 0, 3, 300.0, 66.0),
-                (settings::Design::Reference, 1, 1, 240.0, 454.0),
-                (settings::Design::Reference, 2, 2, 240.0, 240.0),
-                (settings::Design::App, 0, 0, 520.0, 184.0),
+                (settings::Design::Reference, 0, 0, 360.0, 152.0),
+                (settings::Design::Reference, 0, 2, 360.0, 66.0),
+                (settings::Design::Reference, 0, 3, 270.0, 66.0),
+                (settings::Design::Reference, 1, 1, 270.0, 484.0),
+                (settings::Design::Reference, 1, 0, 280.0, 494.0),
+                (settings::Design::Reference, 2, 0, 180.0, 180.0),
+                (settings::Design::App, 0, 0, 360.0, 184.0),
             ] {
                 let mut settings = settings::Settings { design, scale, ..settings::Settings::default() };
                 settings.set_widget("spotify", WidgetSettings { view, size, ..WidgetSettings::default() });
-                let actual = reset_size(spotify, &settings);
+                let actual = reset_size(spotify, &settings, 1.0);
                 assert!((actual.width - width * scale).abs() < 0.001);
                 assert!((actual.height - height * scale).abs() < 0.001);
                 assert_eq!(settings.widget(spotify).view, view);
@@ -1504,13 +1790,13 @@ mod reset_size_tests {
             let totp = widgets::find("totp").unwrap();
             let mut settings = settings::Settings { scale, ..settings::Settings::default() };
             settings.set_widget("totp", WidgetSettings { size: 2, layout: 1, ..WidgetSettings::default() });
-            let actual = reset_size(totp, &settings);
+            let actual = reset_size(totp, &settings, 1.0);
             assert!((actual.width - 220.0 * scale).abs() < 0.001);
             assert!((actual.height - 210.0 * scale).abs() < 0.001, "узкая B получает высоту B, а не A");
             for label in ["cpu", "gpu"] {
                 let widget = widgets::find(label).unwrap();
                 settings.set_widget(label, WidgetSettings { size: 1, view: 1, scale: Some(1.3), ..WidgetSettings::default() });
-                assert!((reset_size(widget, &settings).width - 180.0 * 1.3).abs() < 0.001,
+                assert!((reset_size(widget, &settings, 1.0).width - widget.window_width(1, 180.0, 1.3, 1.0)).abs() < 0.001,
                     "сброс использует плотную ширину и собственный масштаб");
             }
         }
@@ -1521,14 +1807,14 @@ mod reset_size_tests {
         let spotify = widgets::find("spotify").unwrap();
         for scale in [0.9, 1.0, 1.3] {
             let settings = settings::Settings { scale, ..settings::Settings::default() };
-            let base = reset_size(spotify, &settings).height;
+            let base = reset_size(spotify, &settings, 1.0).height;
             assert!((reset_spacing_height(spotify, base, Some(340.0 * scale)) - 340.0 * scale).abs() < 0.001,
                 "плейлисты не перекрывают следующее окно после повторного роста");
             assert_eq!(reset_spacing_height(spotify, base, Some(60.0 * scale)), base);
             assert_eq!(reset_spacing_height(spotify, base, None), base);
             for label in ["notes", "sound"] {
                 let widget = widgets::find(label).unwrap();
-                let base = reset_size(widget, &settings).height;
+                let base = reset_size(widget, &settings, 1.0).height;
                 assert_eq!(reset_spacing_height(widget, base, Some(900.0 * scale)), base,
                     "сброшенное ручное окно и закрытый микшер не оставляют прежнюю дыру");
             }
@@ -1540,7 +1826,7 @@ mod reset_size_tests {
         for design in [settings::Design::App, settings::Design::Reference] {
             let settings = settings::Settings { design, ..settings::Settings::default() };
             for widget in widgets::shown() {
-                let size = reset_size(widget, &settings);
+                let size = reset_size(widget, &settings, 1.0);
                 assert!(size.width.is_finite() && size.width > 0.0, "{}", widget.id);
                 assert!(size.height.is_finite() && size.height > 0.0, "{}", widget.id);
             }
@@ -1560,16 +1846,17 @@ mod hardware_width_tests {
                 for size in 0..3 {
                     let mut settings = settings::Settings { scale, ..settings::Settings::default() };
                     settings.set_widget(label, WidgetSettings { size, view: 1, ..WidgetSettings::default() });
-                    let expected = if size == 0 { 244.0 } else { 180.0 };
-                    assert!((hardware_width(&settings, label).unwrap() - expected * scale).abs() < 0.001);
+                    let expected = widget.window_width(1, if size == 0 { 225.0 } else { 180.0 }, scale, 1.0);
+                    assert!((hardware_width(&settings, label, 1.0).unwrap() - expected).abs() < 0.001);
                     settings.design = settings::Design::App;
-                    assert!((hardware_width(&settings, label).unwrap() - widget.preset(1, size).width * scale).abs() < 0.001);
+                    let expected = widget.window_width(1, widget.preset(1, size).width, scale, 1.0);
+                    assert!((hardware_width(&settings, label, 1.0).unwrap() - expected).abs() < 0.001);
                     assert_eq!(settings.widget(widget).size, size);
                     assert_eq!(settings.widget(widget).view, 1);
                 }
             }
         }
-        assert!(hardware_width(&settings::Settings::default(), "drives").is_none());
+        assert!(hardware_width(&settings::Settings::default(), "drives", 1.0).is_none());
     }
 
     /// Готовый размер и подгонка ставят окну одну и ту же ширину: прежде NEW
@@ -1584,7 +1871,7 @@ mod hardware_width_tests {
                         let mut settings = settings::Settings { design, ..settings::Settings::default() };
                         settings.set_widget(label, WidgetSettings { view, size, ..WidgetSettings::default() });
                         let preset = widget.design_size(design, view, size, 0).0;
-                        assert!((hardware_width(&settings, label).unwrap() - preset).abs() < 0.001, "{label} {design:?} {view}/{size}");
+                        assert!((hardware_width(&settings, label, 1.0).unwrap() - preset).abs() < 0.001, "{label} {design:?} {view}/{size}");
                         assert_eq!(widget.design_size(design, view, size, 0).1, widget.preset_size(view, size).1,
                             "высоту по-прежнему задаёт реестр, а доводит замер");
                     }
@@ -1599,15 +1886,74 @@ mod hardware_width_tests {
         for chosen in [settings::Design::Reference, settings::Design::App] {
             let settings = settings::Settings { design: chosen, ..settings::Settings::default() };
             let other = if chosen == settings::Design::App { settings::Design::Reference } else { settings::Design::App };
-            for label in ["network", "weather", "media", "cpu", "disks"] {
-                assert!(!fit_is_stale(&settings, label, Some(chosen)), "{label}: свой замер принимается");
-                assert!(fit_is_stale(&settings, label, Some(other)), "{label}: чужой замер отбрасывается");
-                assert!(!fit_is_stale(&settings, label, None), "{label}: замер без метки — как прежде");
+            // Сеть в виде 0 — квадрат без подгонки, ей ниже свой тест
+            for label in ["weather", "media", "cpu", "disks"] {
+                assert!(!fit_is_stale(&settings, label, Some(chosen), None), "{label}: свой замер принимается");
+                assert!(fit_is_stale(&settings, label, Some(other), None), "{label}: чужой замер отбрасывается");
+                assert!(!fit_is_stale(&settings, label, None, None), "{label}: замер без метки — как прежде");
             }
         }
         // Неготовое окно рисует Classic даже при выбранном NEW — с ним и сверка
         let settings = settings::Settings { design: settings::Design::Reference, ..settings::Settings::default() };
-        assert!(!fit_is_stale(&settings, "debug", Some(settings::Design::App)));
-        assert!(fit_is_stale(&settings, "debug", Some(settings::Design::Reference)));
+        assert!(!fit_is_stale(&settings, "debug", Some(settings::Design::App), None));
+        assert!(fit_is_stale(&settings, "debug", Some(settings::Design::Reference), None));
+    }
+
+    /// Стопки первого запуска растут от углов и не налезают друг на друга;
+    /// выключенный модуль места не занимает.
+    #[test]
+    fn first_run_stacks_grow_from_the_corners() {
+        let sizes = |id: &str| -> Option<(i32, i32)> {
+            Some(match id {
+                "fps" => (360, 88),
+                "cpu" | "gpu" => (180, 280),
+                "disks" => (180, 150),
+                "processes" => (360, 210),
+                "weather" => (360, 220),
+                "media" => (360, 66),
+                "battery" => (360, 60),
+                "sound" => (360, 112),
+                "network" | "speedtest" | "converter" => (180, 180),
+                "downloader" => (360, 43),
+                "password" => (360, 152),
+                _ => return None,
+            })
+        };
+        let places = super::corner_places((0, 0, 1920, 1032), &sizes);
+        let at = |id: &str| places.iter().find(|(name, _, _)| *name == id).map(|(_, x, y)| (*x, *y)).unwrap();
+        assert_eq!(at("fps"), (0, 0));
+        assert_eq!(at("cpu"), (0, 88));
+        assert_eq!(at("gpu"), (180, 88));
+        assert_eq!(at("disks"), (0, 368));
+        assert_eq!(at("processes"), (0, 518));
+        assert_eq!(at("weather"), (1560, 0));
+        assert_eq!(at("media"), (0, 966));
+        assert_eq!(at("sound"), (0, 854));
+        assert_eq!(at("battery"), (0, 794));
+        assert_eq!(at("converter"), (1740, 852));
+        assert_eq!(at("network"), (1380, 852));
+        assert_eq!(at("downloader"), (1560, 809));
+        assert_eq!(at("password"), (1560, 657));
+        // Левые стопки в Full HD не встречаются: процессы кончаются выше заряда
+        assert!(518 + 210 <= 794);
+
+        // Без загрузчика пароли ложатся прямо на квадраты
+        let without = |id: &str| if id == "downloader" { None } else { sizes(id) };
+        let places = super::corner_places((0, 0, 1920, 1032), &without);
+        assert!(places.iter().all(|(name, _, _)| *name != "downloader"));
+        assert_eq!(places.iter().find(|(name, _, _)| *name == "password").map(|(_, _, y)| *y), Some(700));
+    }
+
+    /// Замер прежнего вида и любой замер квадрата 180 не принимаются: смена
+    /// вида ставит окно в готовый размер раньше, чем страница перерисуется.
+    #[test]
+    fn a_fit_of_another_view_or_of_a_square_is_dropped() {
+        let mut settings = settings::Settings { design: settings::Design::App, ..settings::Settings::default() };
+        settings.set_widget("speedtest", WidgetSettings { view: 2, ..WidgetSettings::default() });
+        assert!(fit_is_stale(&settings, "speedtest", None, Some(0)), "замер «С графиком» после смены вида");
+        assert!(fit_is_stale(&settings, "speedtest", None, Some(2)), "квадрату подгонка не положена");
+        settings.set_widget("speedtest", WidgetSettings { view: 0, ..WidgetSettings::default() });
+        assert!(!fit_is_stale(&settings, "speedtest", None, Some(0)));
+        assert!(fit_is_stale(&settings, "network", None, None), "сеть Classic — квадрат");
     }
 }

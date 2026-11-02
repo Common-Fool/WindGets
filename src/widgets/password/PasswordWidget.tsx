@@ -13,7 +13,7 @@ import {
 import { copySecret, copySelectionAsSecret } from "../../lib/copy";
 import { useText } from "../../lib/i18n";
 import { useLook } from "../../lib/look";
-import { useWidgetLayout } from "../../lib/view";
+import { useWidgetSize } from "../../lib/view";
 import { Arc } from "../../components/Arc";
 import { GlassCard } from "../../components/GlassCard";
 import { SegmentMeter } from "../../components/SegmentMeter";
@@ -43,7 +43,7 @@ const CLASS_LABEL: Record<CharClass, string> = {
 export function PasswordWidget() {
   const t = useText();
   const reference = useLook().effectiveDesign === "reference";
-  const layout = useWidgetLayout();
+  const size = useWidgetSize();
   const referenceNow = useRef(reference);
   referenceNow.current = reference;
   const [options, setOptions] = useState<Options>(DEFAULTS);
@@ -86,10 +86,10 @@ export function PasswordWidget() {
 
   if (reference) {
     return (
-      <div className="widget widget--password-reference">
+      <div className="widget widget--neutral widget--password-reference">
         <GlassCard accent="neutral" flush>
           <PasswordReference
-            layout={layout}
+            narrow={size === 1}
             options={options}
             value={value}
             strength={strength}
@@ -110,7 +110,7 @@ export function PasswordWidget() {
   }
 
   return (
-    <div className="widget">
+    <div className="widget widget--neutral">
       <GlassCard accent="neutral" flush>
         <div className="pass">
           <div className="pass__row">

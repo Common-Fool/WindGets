@@ -1,18 +1,16 @@
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useRef, type CSSProperties, type RefObject } from "react";
 import { useTelemetry, type Reading as Sensor } from "../../lib/telemetry";
 import { usePing, type Probe } from "../../lib/ping";
 import { activeNetwork, type Network } from "../../lib/sensors";
 import { formatReading, NO_VALUE } from "../../lib/format";
 import type { Accent } from "../../lib/accent";
 import { GlassCard } from "../../components/GlassCard";
-import { BigStat } from "../../components/BigStat";
 import { StatusDot } from "../../components/StatusDot";
 import { DownArrow, UpArrow } from "../../components/Arrows";
 import { useLook } from "../../lib/look";
 import { useWidgetView, useWidgetSize } from "../../lib/view";
 import { useContentHeight } from "../../lib/grow";
 import { useText } from "../../lib/i18n";
-import "./network.css";
 import "./network-reference.css";
 
 /**
@@ -61,95 +59,29 @@ function split(reading: Sensor | undefined): { value?: string; unit?: string } {
 }
 
 /**
- * Скорость в одну строку: стрелка, число, единица. Под ней итог за сессию.
- *
- * Слова «Приём» и «Отдача» ушли вместе со своей строкой — стрелка и цвет
- * говорят то же самое, не занимая высоты.
+ * Скорость в столбце 180 — в одну строку всегда (1 ноября 2026, слово
+ * пользователя): окно там стоит 180×180 без подгонки, и перенос единицы
+ * растил бы его. От сотни десятые уходят — знаков не больше четырёх
+ * («1023», «99.9»), а длинное число CSS ужимает шрифтом (`--net-ref-digits`).
  */
-function Flow({
-  accent,
-  arrow,
-  speed,
-  total,
-}: {
-  accent: Accent;
-  arrow: ReactNode;
-  speed: Sensor | undefined;
-  total: Sensor | undefined;
-}) {
-  const { value, unit } = split(speed);
-
-  return (
-    <div className="net__cell" data-accent={accent}>
-      <div className="net__line">
-        <span className="net__arrow">{arrow}</span>
-        <BigStat size="sm" value={value} unit={unit} />
-      </div>
-      {/* Слова «всего» нет: в строке под скоростью другого числа не бывает */}
-      <span className="net__hint tabular">
-        {total ? formatReading(total.value, total.unit) : NO_VALUE}
-      </span>
-    </div>
-  );
+function narrowValue(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 100 ? number.toFixed(0) : value;
 }
-
-/**
- * Цель пинга: отклик и разброс, каждый со своей точкой состояния.
- *
- * Под ними имя оператора, а не адрес: «208.67.222.222» вдвое длиннее соседей
- * и разорвал бы колонки. Адрес остаётся подсказкой — он нужен раз в год.
- *
- * Потери вытесняют имя: обрыв каждого пятого пакета портит связь сильнее
- * лишних двадцати миллисекунд, а по одному отклику этого не видно.
- */
-function Target({ probe }: { probe: Probe }) {
-  const reading = probe.reading;
-  const lost = reading !== null && reading.loss > 0;
-
-  return (
-    <div className="net__cell" title={probe.target}>
-      <div className="net__line">
-        <span
-          className="net__half"
-          data-accent={reading === null ? "neutral" : quality(reading.latency, LATENCY)}
-        >
-          <StatusDot glow />
-          <BigStat size="sm" value={ms(reading?.latency)} />
-        </span>
-
-        {/* Разброс отвечает не «далеко ли», а «ровно ли»: рвутся разговор и
-            игра именно от него, и своя точка ему поэтому нужна */}
-        <span
-          className="net__half net__half--jitter"
-          data-accent={
-            reading?.jitter == null ? "neutral" : quality(reading.jitter, JITTER)
-          }
-        >
-          <StatusDot glow />
-          <BigStat
-            size="sm"
-            value={reading?.jitter == null ? undefined : `±${ms(reading.jitter)}`}
-          />
-        </span>
-      </div>
-
-      <span className="net__hint tabular">
-        {lost ? `loss ${Math.round(reading.loss * 100)} %` : probe.name}
-      </span>
-    </div>
-  );
-}
-
 
 /** Скорость и счётчик NEW; прежний Flow выше остаётся только у Classic. */
-function ReferenceFlow({ direction, speed, total, live }: {
+function ReferenceFlow({ direction, speed, total, live, narrow }: {
   direction: "down" | "up";
   speed: Sensor | undefined;
   total: Sensor | undefined;
   live: boolean;
+  narrow: boolean;
 }) {
   const t = useText();
-  const { value, unit } = split(speed);
+  const parts = split(speed);
+  const unit = parts.unit;
+  const value = narrow ? narrowValue(parts.value) : parts.value;
   const down = direction === "down";
   return (
     <div className="net-ref__flow" data-direction={direction}>
@@ -159,7 +91,7 @@ function ReferenceFlow({ direction, speed, total, live }: {
         </span>
         <span>{down ? "Download" : "Upload"}</span>
       </div>
-      <div className="net-ref__speed tabular">
+      <div className="net-ref__speed tabular" style={{ "--net-ref-digits": Math.max(3, value?.length ?? 1) } as CSSProperties}>
         <span className="net-ref__speed-value">{value ?? NO_VALUE}</span>
         {unit !== undefined && <span className="net-ref__unit">{unit}</span>}
       </div>
@@ -248,8 +180,8 @@ function ReferenceNetwork({ network, probes, view, size, content }: {
     <div className={"net-ref " + (matrix ? "net-ref--matrix" : "net-ref--rows") + (!matrix || size === 1 ? " net-ref--narrow" : "")}
       ref={content} role="group" aria-label={t("network.reference.summary")}>
       <div className="net-ref__flows">
-        <ReferenceFlow direction="down" speed={network?.download} total={network?.totalDownloaded} live={network !== undefined} />
-        <ReferenceFlow direction="up" speed={network?.upload} total={network?.totalUploaded} live={network !== undefined} />
+        <ReferenceFlow direction="down" speed={network?.download} total={network?.totalDownloaded} live={network !== undefined} narrow={!matrix || size === 1} />
+        <ReferenceFlow direction="up" speed={network?.upload} total={network?.totalUploaded} live={network !== undefined} narrow={!matrix || size === 1} />
       </div>
       {matrix ? <ReferenceMatrix probes={probes} /> : <ReferenceRows probes={probes} />}
     </div>
@@ -278,41 +210,21 @@ export function NetworkWidget() {
   const reference = design === "reference";
   const content = useRef<HTMLDivElement>(null);
   // Classic высоту не меняет; NEW измеряет всю новую карточку, включая поля.
-  useContentHeight(content, reference && probes.length > 0, [design, view, size].join("|"));
+  // «Потоки и строки» NEW — окно 180×180 без подгонки (1 ноября 2026, слово
+  // пользователя): скорость там в одну строку, и высота не меняется
+  useContentHeight(content, reference && view === 1 && probes.length > 0, [design, view, size].join("|"));
 
   // Адаптер выбирается по трафику: имена локализованы, виртуальных несколько
   const network = activeNetwork(telemetry);
-  const live = network !== undefined;
 
   return (
     <div className="widget">
       <GlassCard accent="neutral" flush>
-        {reference ? (
-          <ReferenceNetwork network={network} probes={probes} view={view} size={size} content={content} />
-        ) : (
-        <div className="net">
-          <div className="net__row net__row--two">
-            <Flow
-              accent={live ? "net-down" : "neutral"}
-              arrow={<DownArrow />}
-              speed={network?.download}
-              total={network?.totalDownloaded}
-            />
-            <Flow
-              accent={live ? "net-up" : "neutral"}
-              arrow={<UpArrow />}
-              speed={network?.upload}
-              total={network?.totalUploaded}
-            />
-          </div>
-
-          <div className="net__row net__row--three">
-            {probes.map((probe) => (
-              <Target key={probe.target} probe={probe} />
-            ))}
-          </div>
-        </div>
-        )}
+        {/* Classic — та же композиция «Потоков и строк» (2 ноября 2026, слово
+            пользователя): окно и там квадрат 180, а прежняя Classic-карточка
+            была снята под полосу высотой в сотню точек. Цвета и шрифты —
+            дизайна, вид у Classic один (`design_view`) */}
+        <ReferenceNetwork network={network} probes={probes} view={reference ? view : 0} size={size} content={content} />
       </GlassCard>
     </div>
   );

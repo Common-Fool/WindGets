@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLook, type Design } from "./look";
+import { useOwnRow } from "./settings";
 import { useWindowMoved, useWindowReset, useWindowResized } from "./resized";
 
 /*
@@ -171,9 +172,19 @@ export function useContentHeight(content: RefObject<HTMLElement | null>, active:
   // Замер помечен дизайном, которым его сняли: запоздалый замер прежней
   // раскладки после смены дизайна Rust отбросит (`fit_window_height`)
   const { effectiveDesign: design } = useLook();
+  /*
+   * ВАЖНО: **не мерить, пока окно не знает своих настроек.** До их прихода
+   * вид и размер читаются нулями, и карточка мерила чужую раскладку: у
+   * спидтеста «Только замер» (без подгонки) окно вставало на запуске по
+   * высоте «С графиком» — 180×228 вместо квадрата (2 ноября 2026).
+   */
+  const row = useOwnRow();
+  const known = row !== undefined;
+  // Вид, при котором снят замер: замер прежнего вида Rust отбросит
+  const view = row?.view;
   useEffect(() => {
     const element = content.current;
-    if (!active || element === null) return;
+    if (!active || !known || element === null) return;
 
     const card = element.closest<HTMLElement>(".card");
     if (card === null) return;
@@ -185,7 +196,7 @@ export function useContentHeight(content: RefObject<HTMLElement | null>, active:
       // окно качалось бы от своей же подгонки
       if (height === null || (!fitWidth && Math.abs(height - window.innerHeight) < 2)) return;
 
-      queue = queue.then(() => alive ? invoke<void>("fit_window_height", { height, design }) : undefined).catch(() => {});
+      queue = queue.then(() => alive ? invoke<void>("fit_window_height", { height, design, view }) : undefined).catch(() => {});
     };
 
     fit();
@@ -193,7 +204,25 @@ export function useContentHeight(content: RefObject<HTMLElement | null>, active:
     observer.observe(card);
     observer.observe(element);
     return () => { alive = false; observer.disconnect(); };
-  }, [content, active, key, fitWidth, design]);
+  }, [content, active, known, view, key, fitWidth, design]);
+}
+
+/**
+ * Окно готового размера, которое на время встаёт высотой по содержимому.
+ *
+ * Запрос на скачивание программы (`ToolsGate`) выше карточки FPS без графика
+ * или загрузчика Classic в две строки — урезанный, он прятал заголовок или
+ * кнопку. Пока `active`, окно подгоняется под содержимое; когда приглашение
+ * ушло, готовый размер ставится заново: подогнанная высота иначе осталась бы
+ * у карточки, которая под неё не сделана.
+ */
+export function useTemporaryContentHeight(id: string, content: RefObject<HTMLElement | null>, active: boolean, key: string, size: number): void {
+  useContentHeight(content, active, key);
+  const was = useRef(active);
+  useEffect(() => {
+    if (was.current && !active) void invoke("set_widget_size", { id, index: size });
+    was.current = active;
+  }, [id, active, size]);
 }
 
 /**

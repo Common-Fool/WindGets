@@ -7,12 +7,13 @@
 //! не догоняет мышь рывками, как было бы с `set_position` по событию, и
 //! обратной связи «подвинули → событие → подвинули» не возникает.
 //!
-//! Край ловится с восьми точек, а отпускает на десяти: чуть больше, чем
+//! Край ловится с шести точек, а отпускает на восьми: чуть больше, чем
 //! ловит, — иначе окно дрожит между двумя порогами. Клавиши-отмены нет и не
 //! нужно: прилипшее окно просто уводят дальше.
 //!
-//! То же и при растягивании за грань (`WM_SIZING`, этап 53): грань ловится
-//! гранями соседей, краем экрана и ровным размером соседа над или под окном.
+//! То же и при растягивании за грань (`WM_SIZING`, этап 53): боковая грань
+//! ловится гранями соседей, краем экрана и ровным размером соседа над или под
+//! окном. Верхняя и нижняя при растягивании не прилипают вовсе.
 //! Тянутся мышью только текстовые окна, остальные стоят готовыми размерами.
 //!
 //! Вешаемся подклассом на готовый HWND. Свой подкласс встаёт перед подклассом
@@ -105,8 +106,9 @@ pub fn end_drag(window: WebviewWindow) {
 /// Расстояние, с которого окно притягивается к чужому краю.
 ///
 /// Подобрано живой проверкой: магнит должен помогать попасть, а не решать за
-/// пользователя, куда он ведёт окно.
-const ATTRACT: i32 = 8;
+/// пользователя, куда он ведёт окно. Было 8 — держало слишком цепко (слово
+/// пользователя, 31 октября 2026).
+const ATTRACT: i32 = 6;
 
 /// Насколько надо оттянуть прилипшее окно, чтобы оно отлипло.
 ///
@@ -114,7 +116,7 @@ const ATTRACT: i32 = 8;
 /// окно каждое сообщение то отпускается (вышло за удержание), то ловится
 /// снова (ещё в притяжении), — и это видно как дрожь под мышью. Разница между
 /// числами и есть вся вязкость: чем она больше, тем сильнее окно упирается.
-const RELEASE: i32 = 10;
+const RELEASE: i32 = 8;
 
 /// Полоса у края окна, за которую его тянут.
 ///
@@ -276,6 +278,11 @@ fn stretch(rect: Rect, edges: Edges, dx: i32, dy: i32) -> Rect {
 /// сбросом, стоят с зазором в 12 точек, и тот фильтр их не видел бы, а
 /// выровнять грань с окном над собой и есть главная просьба.
 ///
+/// ВАЖНО: **высота при растягивании не прилипает** (слово пользователя):
+/// окна стоят столбиком, и нижняя грань ловила грани соседей по всей колонке —
+/// высоту нельзя было поставить, какую хочешь. Верхняя и нижняя грань идут за
+/// мышью, держится только предел.
+///
 /// `min` — нижний предел окна в физических точках. Держим его сами и с
 /// неподвижной противоположной гранью: предел, наложенный системой позже,
 /// двигал бы на левой и верхней грани правую и нижнюю.
@@ -288,14 +295,8 @@ fn resize(free: Rect, edges: Edges, work: Option<Rect>, others: &[Rect], min: (i
         min.0,
         &mut stuck.across,
     );
-    let (top, bottom) = pull_edge(
-        edges.y,
-        (free.top, free.bottom),
-        work.map(|work| (work.top, work.bottom)),
-        others.iter().map(|other| (other.top, other.bottom)),
-        min.1,
-        &mut stuck.along,
-    );
+    // Без целей: грань идёт за мышью, а предел держится тем же путём
+    let (top, bottom) = pull_edge(edges.y, (free.top, free.bottom), None, std::iter::empty(), min.1, &mut stuck.along);
 
     Rect {
         left,
@@ -407,6 +408,22 @@ mod imp {
     }
 
     static MOVED: Mutex<Option<Moved>> = Mutex::new(None);
+
+    /// Окна, которые тянутся только вбок: высоту им ставит замер содержимого
+    /// (`fit_window_height`), и верхняя с нижней гранью её только сбивали бы.
+    static WIDTH_ONLY: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+
+    pub fn set_width_only(window: &WebviewWindow, on: bool) {
+        let Ok(hwnd) = window.hwnd() else {
+            return;
+        };
+        let raw = hwnd.0 as isize;
+        let mut list = WIDTH_ONLY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        list.retain(|kept| *kept != raw);
+        if on {
+            list.push(raw);
+        }
+    }
 
     /// Снимает стражу размера с окна: его размер сейчас ставим мы сами.
     pub fn release(window: &WebviewWindow) {
@@ -779,8 +796,12 @@ mod imp {
 
         let left = x < rect.left + GRIP;
         let right = x >= rect.right - GRIP;
-        let top = y < rect.top + GRIP;
-        let bottom = y >= rect.bottom - GRIP;
+        // Тянущемуся только вбок углы отвечают боковой гранью, а верх и низ —
+        // содержимым
+        let sideways = WIDTH_ONLY.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&(window.0 as isize));
+        let top = !sideways && y < rect.top + GRIP;
+        let bottom = !sideways && y >= rect.bottom - GRIP;
 
         Some(match (left, right, top, bottom) {
             (true, _, true, _) => HTTOPLEFT,
@@ -820,6 +841,7 @@ mod imp {
     unsafe fn forget(window: HWND) {
         let raw = window.0 as isize;
         TRACKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|(kept, _)| *kept != raw);
+        WIDTH_ONLY.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|kept| *kept != raw);
         let _ = RemoveWindowSubclass(window, Some(procedure), SUBCLASS);
     }
 
@@ -854,6 +876,15 @@ pub fn release_size_guard(window: &WebviewWindow) {
 
 #[cfg(not(windows))]
 pub fn release_size_guard(_window: &WebviewWindow) {}
+
+/// Тянется ли окно только вбок — за левую и правую грань, без верха и низа.
+#[cfg(windows)]
+pub fn set_width_only(window: &WebviewWindow, on: bool) {
+    imp::set_width_only(window, on);
+}
+
+#[cfg(not(windows))]
+pub fn set_width_only(_window: &WebviewWindow, _on: bool) {}
 
 #[cfg(test)]
 mod tests {
@@ -939,17 +970,17 @@ mod tests {
         assert_eq!(dx, 0);
         assert!(stuck.across);
 
-        // Девять точек прилипшее ещё держит, хотя ловит только с восьми
-        let (dx, _) = offset(window(191, 300), None, &[neighbour], &mut stuck);
-        assert_eq!(dx, 9);
+        // Семь точек прилипшее ещё держит, хотя ловит только с шести
+        let (dx, _) = offset(window(193, 300), None, &[neighbour], &mut stuck);
+        assert_eq!(dx, 7);
 
         // А на двенадцати отпустило, и окно поехало дальше за мышью
         let (dx, _) = offset(window(188, 300), None, &[neighbour], &mut stuck);
         assert_eq!(dx, 0);
         assert!(!stuck.across);
 
-        // Обратно те же девять точек уже не притягивают: так и ставится отступ
-        let (dx, _) = offset(window(191, 300), None, &[neighbour], &mut stuck);
+        // Обратно те же семь точек уже не притягивают: так и ставится отступ
+        let (dx, _) = offset(window(193, 300), None, &[neighbour], &mut stuck);
         assert_eq!(dx, 0);
     }
 
@@ -1054,10 +1085,33 @@ mod tests {
         let mut stuck = free();
 
         assert_eq!(resize(at(398), right_edge(), None, &[above], MIN, &mut stuck).right, 400);
-        // Девять точек держит, хотя ловит только с восьми
-        assert_eq!(resize(at(391), right_edge(), None, &[above], MIN, &mut stuck).right, 400);
+        // Семь точек держит, хотя ловит только с шести
+        assert_eq!(resize(at(393), right_edge(), None, &[above], MIN, &mut stuck).right, 400);
         // На двенадцати отпустило
         assert_eq!(resize(at(388), right_edge(), None, &[above], MIN, &mut stuck).right, 388);
+    }
+
+    /// Высота при растягивании не прилипает: ни к краю экрана, ни к соседу, ни
+    /// к ровной высоте соседа сбоку. У угла ширина ловится, высота — нет.
+    #[test]
+    fn height_does_not_snap_while_stretching() {
+        let bottom = Edges::from_wmsz(6);
+        let corner = Edges::from_wmsz(8);
+        let aside = Rect { left: 400, top: 300, right: 600, bottom: 400 };
+
+        // Две точки до низа рабочей области и до низа соседа — стоит, где мышь
+        let stretched = Rect { left: 100, top: 300, right: 300, bottom: 398 };
+        assert_eq!(resize(stretched, bottom, Some(screen()), &[aside], MIN, &mut free()).bottom, 398);
+        let at_screen = Rect { left: 100, top: 900, right: 300, bottom: 1038 };
+        assert_eq!(resize(at_screen, bottom, Some(screen()), &[], MIN, &mut free()).bottom, 1038);
+
+        // Угол: правая грань ловит соседа, нижняя идёт за мышью
+        let rect = resize(Rect { left: 100, top: 300, right: 397, bottom: 398 }, corner, None, &[aside], MIN, &mut free());
+        assert_eq!((rect.right, rect.bottom), (400, 398));
+
+        // Предел по высоте держится и без прилипания
+        let squeezed = Rect { left: 100, top: 300, right: 300, bottom: 320 };
+        assert_eq!(resize(squeezed, bottom, None, &[], MIN, &mut free()).bottom, 364);
     }
 
     /// Левая грань ловится и краем экрана; правая при этом стоит на месте.

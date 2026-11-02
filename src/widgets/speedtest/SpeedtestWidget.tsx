@@ -32,8 +32,14 @@ import "./speedtest-reference.css";
  */
 const LOCKOUT = 60_000;
 
+/**
+ * Итоги на карточке. В покое — последний замер из истории (она на диске):
+ * после перезапуска статус «покой», и итоги стояли прочерками, хотя замер был
+ * (1 ноября 2026, слово пользователя).
+ */
 function report(view: Snapshot): Report {
-  return view.status === "idle" ? { download: null, upload: null, latency: null } : view.report;
+  if (view.status !== "idle") return view.report;
+  return view.history.at(-1) ?? { download: null, upload: null, latency: null };
 }
 
 /** Скорость с одним знаком: сотые в замере всё равно не воспроизводятся. */
@@ -100,7 +106,10 @@ export function SpeedtestWidget() {
   // пользователя): спидометр вместо истории другой высоты, и окно прыгало на
   // каждом замере. Пока идёт замер, подгонка выключена, а блок замера
   // заполняет карточку и ужимает дугу под её высоту (`cqh` в CSS).
-  useContentHeight(content, effectiveDesign === "app" && !running,
+  //
+  // «Только замер» — квадрат 180×180 без подгонки (1 ноября 2026, слово
+  // пользователя): рядом с сетью и конвертером того же размера.
+  useContentHeight(content, effectiveDesign === "app" && !running && !gaugeOnly,
     `app|${widgetView}|${size}|${view.status}|${reason ?? ""}|${t.language}`);
 
   // Состояние замера, отказ и lockout принадлежат этому компоненту:
@@ -212,7 +221,7 @@ function ReferenceSpeedtest({ view, t, measured, columns, separateColumns, gauge
   // Меряем весь блок, включая кнопку, город и многострочный отказ. Ширину
   // задаёт выбранный размер, высота не зависит от нынешней высоты окна. Во
   // время замера — высота покоя, как у Classic выше.
-  useContentHeight(content, !running,
+  useContentHeight(content, !running && !gaugeOnly,
     `reference|${layout}|${size}|${separateColumns ? 3 : columns ? 1 : gaugeOnly ? 2 : 0}|${view.status}|${reason ?? ""}|${t.language}`);
 
   const button = <SpeedAction t={t} locked={locked} onStart={onStart} hero={gaugeOnly} />;

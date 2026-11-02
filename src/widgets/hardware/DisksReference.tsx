@@ -15,7 +15,7 @@ function Quantity({ text, main = false }: { text: string; main?: boolean }) {
 }
 
 function ReadingPair({ label, value }: { label: string; value: string }) {
-  return <span className="disks-ref__pair" data-field={label} title={value}><span>{label}</span><strong>{value}</strong></span>;
+  return <span className="disks-ref__pair" data-field={label} title={`${label} ${value}`}><span>{label}</span><strong>{value}</strong></span>;
 }
 
 /** NEW: имя и свободно/всего в заголовке; параметры в одном ряду. */
@@ -33,12 +33,18 @@ export function DisksReference({ disks, ring, size }: { disks: Disk[]; ring: boo
         : disk.name;
       const read = showReading(disk.readRate) ?? NO_VALUE;
       const write = showReading(disk.writeRate) ?? NO_VALUE;
-      return <div className="disks-ref__disk" key={disk.name} data-accent={spaceAccent(disk.usedShare?.value)}>
+      // «Только полоса» (180): всё снятое с карточки — в подсказке строки
+      const details = size === 2 && !ring
+        ? [disk.name, `${free} / ${total}`, `R ${read}`, `W ${write}`,
+          ...(temperatures !== "" ? [`Temp ${temperatures}`] : []),
+          ...(life !== undefined ? [`life ${life}`] : [])].join("\n")
+        : undefined;
+      return <div className="disks-ref__disk" key={disk.name} data-accent={spaceAccent(disk.usedShare?.value)} title={details}>
         <div className="disks-ref__head">
-          <DriveIcon /><span className="disks-ref__name" title={disk.name}>{name}</span>
+          <DriveIcon /><span className="disks-ref__name" title={details === undefined ? disk.name : undefined}>{name}</span>
           {ring && capacity !== undefined && <span className="disks-ref__capacity">{capacity}</span>}
           {!ring && <span className="disks-ref__space tabular">
-            <Quantity text={free} main /><span className="disks-ref__total">/{total}</span>
+            <Quantity text={free} main />{size !== 2 && <span className="disks-ref__total">/{total}</span>}
           </span>}
         </div>
         {ring ? <div className="disks-ref__ring-row">

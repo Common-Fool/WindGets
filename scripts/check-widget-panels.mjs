@@ -51,6 +51,7 @@ const api = load('../src/lib/grow.ts', ['usePresetWindowGrowth', 'useWindowGrowt
   react,
   '@tauri-apps/api/core': { invoke: async (command, args) => calls.push({ command, args }) },
   './look': { useLook: () => look },
+  './settings': { useOwnRow: () => ({ id: 'test' }) },
   './resized': { useWindowResized: (handler) => { sizeHandler = handler; },
     useWindowReset: (handler) => { resetHandler = handler; } },
 });

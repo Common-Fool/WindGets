@@ -11,13 +11,14 @@ import { CopyIcon, DoneIcon, FailedIcon, RefreshIcon, ShieldIcon } from "../../c
 const CLASSES: CharClass[] = ["lower", "upper", "digit", "symbol"];
 const CLASS_LABEL: Record<CharClass, string> = { lower: "a", upper: "A", digit: "0", symbol: "#" };
 const OPTIONAL_CLASSES = [
-  { key: "upper", label: "A-Z", kind: "upper" },
-  { key: "digits", label: "0-9", kind: "digit" },
-  { key: "symbols", label: "!@#", kind: "symbol" },
+  { key: "upper", label: "A-Z" },
+  { key: "digits", label: "0-9" },
+  { key: "symbols", label: "!@#" },
 ] as const;
 
 type Props = {
-  layout: number;
+  /** Узкий размер — «кубик» 180. */
+  narrow: boolean;
   options: Options;
   value: string;
   strength: Strength;
@@ -28,11 +29,12 @@ type Props = {
   onGenerate: () => void;
 };
 
-/** NEW меняет только компоновку; параметры и пароль принадлежат PasswordWidget. */
-export function PasswordReference({ layout, options, value, strength, counts, copied, onChange, onCopy, onGenerate }: Props) {
+/** NEW: полный 360 и кубик 180; параметры и пароль принадлежат PasswordWidget. */
+export function PasswordReference({ narrow, options, value, strength, counts, copied, onChange, onCopy, onGenerate }: Props) {
   const t = useText();
-  const variant = layout === 1 ? 1 : 0;
   const strengthDetails = t(strength.label) + " · " + t("password.strengthDetails", { bits: strength.bits, level: strength.level });
+  // В кубике строки счётчиков нет: состав — в подсказке шкалы
+  const composition = CLASSES.filter((kind) => counts[kind] > 0).map((kind) => `${CLASS_LABEL[kind]} ${counts[kind]}`).join(" · ");
   const result = (
     <output className="pass-reference__value" data-no-drag onCopy={copySelectionAsSecret}>
       <span className="pass-reference__chars">
@@ -58,7 +60,8 @@ export function PasswordReference({ layout, options, value, strength, counts, co
     </span>
   );
   const meter = (
-    <div className="pass-reference__meter" role="meter" aria-label={t(strength.label)} aria-valuemin={0} aria-valuemax={STRENGTH_STEPS} aria-valuenow={strength.level} aria-valuetext={strengthDetails} title={strengthDetails}>
+    <div className="pass-reference__meter" role="meter" aria-label={t(strength.label)} aria-valuemin={0} aria-valuemax={STRENGTH_STEPS} aria-valuenow={strength.level} aria-valuetext={strengthDetails} title={narrow ? `${strengthDetails}
+${composition}` : strengthDetails}>
       <SegmentMeter level={strength.level} total={STRENGTH_STEPS} accent={strength.accent} />
     </div>
   );
@@ -71,16 +74,10 @@ export function PasswordReference({ layout, options, value, strength, counts, co
   );
   const toggles = (
     <div className="pass-reference__toggles">
-      {OPTIONAL_CLASSES.map(({ key, label: optionLabel, kind }) => (
+      {OPTIONAL_CLASSES.map(({ key, label: optionLabel }) => (
         <button type="button" key={key} className="pass-reference__option" aria-pressed={options[key]} aria-label={optionLabel} onClick={() => onChange(key, !options[key])}>
           <span className="pass-reference__tick" aria-hidden="true">{options[key] && <DoneIcon />}</span>
           <span className="pass-reference__option-label">{optionLabel}</span>
-          {variant === 1 && (
-            <span className="pass-reference__option-count" data-class={kind}>
-              <span className="pass-reference__class">{CLASS_LABEL[kind]}</span>
-              <span className="tabular">{counts[kind]}</span>
-            </span>
-          )}
         </button>
       ))}
     </div>
@@ -91,35 +88,43 @@ export function PasswordReference({ layout, options, value, strength, counts, co
     </div>
   );
 
+  /*
+   * Кубик 180 (1 ноября 2026, слово пользователя). Копия внутри поля;
+   * стойкость словом и шкалой в одну
+   * строку; длина без подписи — число рядом с ползунком само говорит, что
+   * это; три набора и обновление одним рядом. Строки с одними счётчиками
+   * разрядов нет: состав — в подсказке шкалы.
+   */
+  if (narrow) {
+    return (
+      <div className="pass-reference" data-layout="narrow">
+        <div className="pass-reference__field">{result}{copy}</div>
+        <div className="pass-reference__summary">{label}{meter}</div>
+        <div className="pass-reference__length">
+          <Slider value={options.length} min={MIN_LENGTH} max={MAX_LENGTH} ariaLabel={t("password.length")} onChange={(next) => onChange("length", next)} />
+          <span className="pass-reference__number tabular">{options.length}</span>
+        </div>
+        <div className="pass-reference__controls">{toggles}{generate}</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="pass-reference" data-layout={variant}>
-      {variant === 0 ? (
-        <>
-          <div className="pass-reference__result">{result}{copy}</div>
-          <div className="pass-reference__summary">
-            {label}{meter}
-            <span className="pass-reference__counts">
-              {CLASSES.filter((kind) => counts[kind] > 0).map((kind) => (
-                <span className="pass-reference__count" key={kind} data-class={kind}>
-                  <span className="pass-reference__class">{CLASS_LABEL[kind]}</span>
-                  <span className="tabular">{counts[kind]}</span>
-                </span>
-              ))}
+    <div className="pass-reference" data-layout="full">
+      <div className="pass-reference__result">{result}{copy}</div>
+      <div className="pass-reference__summary">
+        {label}{meter}
+        <span className="pass-reference__counts">
+          {CLASSES.filter((kind) => counts[kind] > 0).map((kind) => (
+            <span className="pass-reference__count" key={kind} data-class={kind}>
+              <span className="pass-reference__class">{CLASS_LABEL[kind]}</span>
+              <span className="tabular">{counts[kind]}</span>
             </span>
-          </div>
-          {length}
-          <div className="pass-reference__controls">{toggles}{generate}</div>
-        </>
-      ) : (
-        <>
-          <div className="pass-reference__parameters">{length}{toggles}</div>
-          <div className="pass-reference__content">
-            <div className="pass-reference__field">{result}{copy}</div>
-            {label}{meter}
-            {generate}
-          </div>
-        </>
-      )}
+          ))}
+        </span>
+      </div>
+      {length}
+      <div className="pass-reference__controls">{toggles}{generate}</div>
     </div>
   );
 }

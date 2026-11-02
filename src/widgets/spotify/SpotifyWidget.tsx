@@ -20,11 +20,12 @@ import {
   type Action,
   type Place,
 } from "../../lib/spotify";
-import { hasVolume, LAYOUT, PlayerPanel } from "./PlayerPanel";
-import { CLAUDE_SIZES, REFERENCE_SIZES, referenceSlack } from "./ReferencePlayer";
+import { columnGap, hasVolume, LAYOUT, PlayerPanel } from "./PlayerPanel";
+import { CLAUDE_SIZES, REFERENCE_SIZES, referenceSlack, sizeKind } from "./ReferencePlayer";
 import { PlaylistPanel } from "./PlaylistPanel";
 import { SetupPanel } from "./SetupPanel";
-import { GlobeIcon, PlaylistIcon, SpotifyMark } from "./icons";
+import { GlobeIcon, PlaylistIcon } from "./icons";
+import { MusicIcon } from "../../components/Icons";
 import "./spotify.css";
 import "./spotify-reference.css";
 import { useText } from "../../lib/i18n";
@@ -39,13 +40,14 @@ import { useText } from "../../lib/i18n";
 const PLAYLISTS_HEIGHT = 232;
 
 /**
- * Сколько держится строка отказа.
+ * Сколько держится строка отказа: секунда (1 ноября 2026, слово
+ * пользователя; было восемь).
  *
  * Гаснуть она обязана сама: прежде строка висела до следующего нажатия, и
  * «нет активного устройства» краснело под играющим треком часами — команда
  * не прошла минуту назад, а виджет выглядел сломанным.
  */
-const FAILURE_FOR = 8000;
+const FAILURE_FOR = 1000;
 
 
 /** Отказ, который сам исчезает. */
@@ -176,8 +178,10 @@ export function SpotifyWidget() {
 
   // Native подгоняет от основы текущего дизайна, а не от старой прибавки.
   // Дизайн/A-B сохраняют раскрытый список; вид и размер закрывают его событием.
-  const sizes = (reference ? REFERENCE_SIZES : CLAUDE_SIZES)[widgetView === 1 || widgetView === 2 ? widgetView : 0];
-  const preset = sizes[Math.min(3, Math.max(0, size))] ?? sizes[0];
+  const sizes: readonly (readonly [number, number])[] = (reference ? REFERENCE_SIZES : CLAUDE_SIZES)[widgetView === 1 || widgetView === 2 ? widgetView : 0];
+  const preset = sizes[size] ?? sizes[0]!;
+  // Композиция по номеру размера: снятые размеры убрали номера, а не раскладки
+  const kind = sizeKind(widgetView, size);
   const setup = view.status === "needsClientId" || view.status === "needsAuth";
   const setupExtra = reference && setup ? Math.max(0, (preset[0] < 280 ? 178 : 140) - preset[1]) * geometry : 0;
   // Вертикальный NEW встаёт высотой по содержимому: без громкости и без
@@ -187,10 +191,10 @@ export function SpotifyWidget() {
   const volume = shownPlayer !== null && hasVolume(shownPlayer);
   const slack = reference && shownPlayer !== null ? referenceSlack(widgetView, size, cover, volume) * geometry : 0;
   useEffect(() => {
-    const extra = setupExtra || (connected && playlistsOpen && size < 2
+    const extra = setupExtra || (connected && playlistsOpen && kind < 2
       ? panelHeight + columnGap(body.current) : 0) - slack;
     growth.open(extra);
-  }, [design, effectiveDesign, layout, widgetView, size, geometry, connected, playlistsOpen,
+  }, [design, effectiveDesign, layout, widgetView, size, kind, geometry, connected, playlistsOpen,
     setupExtra, panelHeight, slack, growth]);
 
   function togglePlaylists() {
@@ -208,7 +212,7 @@ export function SpotifyWidget() {
    */
   return (
     <div className={reference ? "spotify spotify-reference-widget" : "spotify"}
-      data-size={size} data-layout={layout === 1 ? "b" : "a"} data-format={widgetView}>
+      data-size={kind} data-layout={layout === 1 ? "b" : "a"} data-format={widgetView}>
       <GlassCard accent="media" flush={reference}>
         <div className="spotify__body" ref={body}>
           <Body
@@ -279,14 +283,6 @@ export function SpotifyWidget() {
       </GlassCard>
     </div>
   );
-}
-
-/** Зазор между блоками карточки — тот самый, что добавит собой панель. */
-function columnGap(element: HTMLElement | null): number {
-  if (element === null) return 0;
-
-  const gap = Number.parseFloat(window.getComputedStyle(element).rowGap);
-  return Number.isFinite(gap) ? gap : 0;
 }
 
 type BodyProps = {
@@ -364,7 +360,7 @@ function Launch({ text, ask, onLaunch, onDismiss }: LaunchProps) {
           aria-label={t("spotify.openApp")}
           onClick={() => onLaunch("app")}
         >
-          <SpotifyMark />
+          <MusicIcon />
         </button>
         <button
           type="button"

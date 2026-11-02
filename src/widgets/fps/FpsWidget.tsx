@@ -1,4 +1,6 @@
-import { useWidgetView } from "../../lib/view";
+import { useRef } from "react";
+import { useWidgetSize, useWidgetView } from "../../lib/view";
+import { useTemporaryContentHeight } from "../../lib/grow";
 import { useFps, type FpsView } from "../../lib/fps";
 import { missingFor, useTools } from "../../lib/tools";
 import { useText } from "../../lib/i18n";
@@ -81,12 +83,18 @@ export function FpsWidget() {
   const tools = useTools();
   const view = useFps();
   const look = useWidgetView();
+  const size = useWidgetSize();
+  const gate = useRef<HTMLDivElement>(null);
+  const missing = missingFor(tools, "fps").length > 0;
+  // Приглашение скачать PresentMon выше карточки без графика: на его время
+  // окно встаёт по содержимому
+  useTemporaryContentHeight("fps", gate, missing, `${look}|${size}`, size);
 
-  if (missingFor(tools, "fps").length > 0) {
+  if (missing) {
     return (
       <div className="widget">
         <GlassCard accent="neutral">
-          <ToolsGate module="fps" />
+          <div ref={gate}><ToolsGate module="fps" /></div>
         </GlassCard>
       </div>
     );
@@ -96,7 +104,7 @@ export function FpsWidget() {
     <div className="widget">
       <GlassCard accent="gpu" flush>
         {look === 2 ? <Square view={view} /> : (
-        <div className="fps">
+        <div className="fps" data-size={size}>
           <Head view={view} />
           <div className="fps__main">
             <BigStat size="lg" value={view.fps === null ? undefined : whole(view.fps)} unit="FPS" />

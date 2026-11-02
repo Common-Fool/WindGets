@@ -19,6 +19,8 @@
 
 /* ==================== Пусто ==================== */
 
+/* Пунктир по краю — сама зона броска; пока несут файл, он и стрелка
+   загораются, стрелка один раз съезжает к лотку (переход, не анимация) */
 .conv__empty {
   display: flex;
   flex: 1;
@@ -27,19 +29,25 @@
   justify-content: center;
   gap: var(--space-3);
   min-height: 0;
-  text-align: center;
-}
-
-.conv__lead {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-md);
-}
-
-.conv__hint {
-  margin: 0;
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-control);
   color: var(--text-muted);
-  font-size: var(--text-xs);
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.conv__empty[data-over="true"] {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.conv__drop-mark {
+  display: flex;
+  font-size: calc(var(--text-xl) * 1.6);
+  transition: transform 200ms ease;
+}
+
+.conv__empty[data-over="true"] .conv__drop-mark {
+  transform: translateY(calc(3px * var(--scale)));
 }
 
 /* ==================== Список ==================== */
@@ -339,6 +347,20 @@
 
 .conv__overall {
   flex: 1;
+}
+
+/*
+ * Столбец 180 (сетка ширин, 1 ноября 2026): три значка и «Конвертировать»
+ * в одну строку не встают — кнопка запуска уходит строкой ниже во всю ширину.
+ */
+@container card (width < 14em) {
+  .conv__foot {
+    flex-wrap: wrap;
+  }
+
+  .conv__foot > .btn:last-child {
+    flex: 1 0 100%;
+  }
 }
 
 /*

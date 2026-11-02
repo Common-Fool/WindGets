@@ -112,7 +112,7 @@ fn build(app: &AppHandle, widget: &widgets::Widget) -> tauri::Result<Menu<tauri:
     // прячет за лишним движением мыши ровно то, ради чего меню и открывают.
     // Пунктов нет вовсе у тех, у кого размер один, — у погоды и у текстовых
     // виджетов, которые тянут мышью
-    let sizes = widget.size_choices(settings.design, own.view, own.layout);
+    let sizes = widget.size_choices(settings.design, own.view, own.layout, own.cover);
     if sizes.len() > 1 {
         for (index, preset) in &sizes {
             menu.append(&CheckMenuItem::with_id(

@@ -105,8 +105,8 @@
 
 .net-ref__rows .net-ref__latency-col { width: calc(56px * var(--scale)); }
 .net-ref__rows .net-ref__jitter-col { width: calc(67px * var(--scale)); }
-.net-ref--narrow .net-ref__rows .net-ref__latency-col { width: calc(52px * var(--scale)); }
-.net-ref--narrow .net-ref__rows .net-ref__jitter-col { width: calc(65px * var(--scale)); }
+.net-ref--narrow .net-ref__rows .net-ref__latency-col { width: calc(46px * var(--scale)); }
+.net-ref--narrow .net-ref__rows .net-ref__jitter-col { width: calc(52px * var(--scale)); }
 
 .net-ref__rows thead th {
   height: calc(14px * var(--scale));
@@ -177,7 +177,7 @@
 
 .net-ref--matrix:not(.net-ref--narrow) .net-ref__flows {
   grid-template-columns: minmax(0, 1fr);
-  row-gap: calc(20px * var(--scale));
+  row-gap: calc(8px * var(--scale));
   align-content: start;
   border-right: 1px solid var(--border-hairline);
   padding-right: calc(6px * var(--scale));
@@ -196,7 +196,7 @@
 .net-ref__matrix thead th:first-child { text-align: left; font-size: var(--net-ref-label); }
 .net-ref__matrix tbody th,
 .net-ref__matrix tbody td {
-  height: calc(38px * var(--scale));
+  height: calc(30px * var(--scale));
   color: var(--text-secondary);
   font-size: var(--net-ref-hint);
   line-height: calc(13px * var(--scale));
@@ -213,15 +213,34 @@
 
 /* Выбор размера, а не случайный порог ширины: метрики не исчезают. */
 .net-ref--matrix.net-ref--narrow .net-ref__flows {
-  padding-bottom: calc(15px * var(--scale));
-  margin-bottom: calc(12px * var(--scale));
+  padding-bottom: calc(6px * var(--scale));
+  margin-bottom: calc(4px * var(--scale));
   border-bottom: 1px solid var(--border-hairline);
 }
 
-.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__metric-col { width: calc(36px * var(--scale)); }
-.net-ref--matrix.net-ref--narrow .net-ref__matrix thead th { height: calc(18px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__metric-col { width: calc(34px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix thead th { height: calc(16px * var(--scale)); font-size: calc(10px * var(--scale)); overflow: hidden; text-overflow: ellipsis; }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix thead th:first-child { font-size: var(--net-ref-hint); }
 .net-ref--matrix.net-ref--narrow .net-ref__matrix tbody th,
-.net-ref--matrix.net-ref--narrow .net-ref__matrix tbody td { height: calc(30px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix tbody td { height: calc(22px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__measurement { gap: calc(3px * var(--scale)); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__measurement--latency .net-ref__number { font-size: var(--net-ref-jitter); }
+.net-ref--matrix.net-ref--narrow .net-ref__matrix .net-ref__measurement--jitter .net-ref__number { font-size: var(--text-xs); }
+
+/* Столбец 180 (1 ноября 2026, слово пользователя): «ms» и «%» под названиями
+   рядов сняты — что это за числа, видно по ряду. Строки плотнее. */
+.net-ref--narrow :is(.net-ref__metric-unit, thead .net-ref__unit) { display: none; }
+.net-ref--narrow .net-ref__rows tbody th,
+.net-ref--narrow .net-ref__rows tbody td { height: calc(22px * var(--scale)); }
+.net-ref--narrow.net-ref--rows .net-ref__flows { padding-bottom: calc(5px * var(--scale)); }
+
+/* Столбец 180: скорость в одну строку, длинное число ужимается шрифтом —
+   0,55 em на знак, единица с зазором ~36 точек. */
+.net-ref--narrow .net-ref__flow { container-type: inline-size; }
+.net-ref--narrow .net-ref__speed { flex-wrap: nowrap; }
+.net-ref--narrow .net-ref__speed-value {
+  font-size: min(var(--net-ref-value), calc((100cqw - 36px * var(--scale)) / var(--net-ref-digits) * 1.75));
+}
 
 /* В узкой паре подпись, число, единица и итог Upload держат правый край. */
 .net-ref--narrow .net-ref__flow[data-direction="up"] { text-align: right; justify-items: end; }

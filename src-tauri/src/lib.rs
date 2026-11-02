@@ -7,6 +7,7 @@ mod battery;
 mod child;
 mod clipboard;
 mod converter;
+mod corners;
 mod disk;
 mod downloader;
 mod dpapi;
@@ -118,6 +119,7 @@ pub fn run() {
         .manage(downloader::Downloader::default())
         .manage(Shutdown::default())
         .invoke_handler(tauri::generate_handler![
+            corners::window_corners,
             poller::telemetry_state,
             ping::ping_state,
             sound::sound_state,
@@ -162,7 +164,6 @@ pub fn run() {
             settings_window::set_widget_cover,
             settings_window::set_widget_view,
             settings_window::set_widget_layout,
-            settings_window::set_sound_mixer_collapsed,
             window_effects::set_design,
             settings_window::set_widget_size,
             settings_window::set_flag,
@@ -299,9 +300,10 @@ pub fn run() {
                 eprintln!("значок в трее не создался: {error}");
             }
             // Первый запуск — файла мест ещё нет: окна без сохранённого места
-            // Tauri ставит друг на друга, поэтому расставляем их сеткой, как
-            // кнопка сброса. Смотрим до сборки окон: сборка сама его не пишет,
-            // но решать надо по тому, что было на диске до запуска
+            // Tauri ставит друг на друга, поэтому расставляем их по углам
+            // раскладкой первого запуска (`windows::arrange_first_run`).
+            // Смотрим до сборки окон: сборка сама его не пишет, но решать
+            // надо по тому, что было на диске до запуска
             let first_run = handle
                 .path()
                 .app_config_dir()
@@ -311,7 +313,7 @@ pub fn run() {
             // событийного цикла; на ходу их собирает `modules::set` из пула
             windows::prepare_all(&handle);
             if first_run {
-                windows::reset_places(&handle);
+                windows::arrange_first_run(&handle);
             }
             // Окно настроек собирается всегда: страницу виджета в нём
             // открывают изнутри webview, а оно само — не модуль

@@ -27,11 +27,6 @@
       color-mix(in srgb, var(--accent) 60%, transparent));
 }
 
-:root[data-palette^="reference-"] .net__arrow {
-  border-radius: var(--radius-pill);
-  box-shadow: 0 0 0 4px var(--surface-control);
-}
-
 :root[data-palette^="reference-"] .player__play {
   border-color: var(--ui-accent);
   background: var(--surface-control);

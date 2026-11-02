@@ -381,6 +381,10 @@ fn round_place(value: f64) -> f64 {
     (value * PLACE_PRECISION).round() / PLACE_PRECISION
 }
 
+/// Кто был включён по умолчанию до 2 ноября 2026 (`defaults_version` 1):
+/// железо. Нужен переносу, чтобы обновление не включило чужие окна.
+const OLD_DEFAULT_ON: [&str; 4] = ["cpu", "gpu", "disks", "network"];
+
 /// Настройки приложения.
 ///
 /// Позиции и размеры окон сюда не попадают: их ведёт
@@ -425,7 +429,10 @@ pub struct Settings {
     /// пара чисел с нулями: координаты 0,0 — это точка в Гвинейском заливе, и
     /// «города нет» она бы не выражала.
     pub weather: Option<Place>,
-    /// Мини-микшер звука: явное «Скрыть» переживает смену вида и перезапуск.
+    /// Мини-микшер звука: явное «Скрыть». Вид с мини-микшером снят (2 ноября
+    /// 2026), поле никто не читает — оставлено, чтобы прежние файлы
+    /// читались и переписывались без потерь, а тесты переноса держали его
+    /// как метку «соседнее поле не тронуто».
     pub sound_mixer_collapsed: bool,
     /// Единственный общий выбор дизайна. У виджетов собственных значений нет.
     #[serde(deserialize_with = "deserialize_design")]
@@ -436,6 +443,11 @@ pub struct Settings {
     /// Версия индексов размеров пары после удаления «Без истории».
     #[serde(default)]
     pub hardware_layout_version: u8,
+    /// Версия индексов размеров пультов после снятия (1 ноября 2026): у Spotify
+    /// — «Маленького» столбика и всех квадратов, кроме «Минимального»; у медиа
+    /// — «Маленького» и «Минимального».
+    #[serde(default)]
+    pub player_sizes_version: u8,
     /// Версия умолчаний `enabled` в реестре. До 15 октября включены были все
     /// виджеты, теперь только железо. Без поля файл старый: у кого записи о
     /// виджете не было, тот жил с умолчанием «включён», и обновление не должно
@@ -545,7 +557,8 @@ impl Default for Settings {
             design: Design::Reference,
             sound_layout_version: 1,
             hardware_layout_version: 1,
-            defaults_version: 1,
+            player_sizes_version: 1,
+            defaults_version: 2,
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::new(),
             language: None,
@@ -650,10 +663,10 @@ impl Settings {
                 // не закрывает собой окна программ (12 октября, слово пользователя)
                 always_on_top: false,
                 locked: false,
-                view: 0,
+                view: widget.default_choice().0,
                 layout: usize::from(widget.id == "notes"),
                 cover: 0,
-                size: 0,
+                size: widget.default_choice().1,
                 card_opacity: None,
                 scale: None,
             });
@@ -689,6 +702,9 @@ impl Settings {
         // действуют, и их единственный размер не должен обнулять выбранный
         if own.size >= widget.presets_in(self.design, own.view).len() {
             own.size = 0;
+        }
+        if let Some(only) = widget.forced_size(own.view, own.cover) {
+            own.size = only;
         }
 
         own
@@ -891,6 +907,24 @@ fn parse_settings_checked(text: &str) -> (Settings, bool) {
         }
         settings.hardware_layout_version = 1;
     }
+    if settings.player_sizes_version == 0 {
+        // Снятый размер уходит к соседнему, который остался: маленький
+        // столбик — к минимальному; у квадрата размер один; номера полосы те же
+        if let Some(own) = settings.widgets.get_mut("spotify") {
+            own.size = match (own.view, own.size) {
+                (1, 0) => 0,
+                (1, 1) => 1,
+                (1, _) => 2,
+                (2, _) => 0,
+                // Полоса снова в четыре размера с прежними именами
+                (_, size) => size.min(3),
+            };
+        }
+        if let Some(own) = settings.widgets.get_mut("media") {
+            own.size = own.size.min(1);
+        }
+        settings.player_sizes_version = 1;
+    }
     if settings.defaults_version == 0 {
         // Старый файл: закрепляем прежнее умолчание записью, а не меняем
         // смысл пустого места. Служебные окна и прежде были выключены
@@ -903,7 +937,32 @@ fn parse_settings_checked(text: &str) -> (Settings, bool) {
         }
         settings.defaults_version = 1;
     }
-    if let Some(own) = settings.widgets.get_mut("spotify") { own.layout = 0; }
+    if settings.defaults_version == 1 {
+        // Умолчания сменились второй раз (2 ноября 2026): у нового человека
+        // включён почти весь набор, с видами и размерами раскладки первого
+        // запуска. Кто жил с прежними, получает их записью — обновление не
+        // должно ни открыть ему чужих окон, ни переставить виды
+        for widget in crate::widgets::shown().filter(|widget| !widget.chrome) {
+            if !settings.widgets.contains_key(widget.id) {
+                let own = WidgetSettings {
+                    enabled: OLD_DEFAULT_ON.contains(&widget.id),
+                    always_on_top: false,
+                    locked: false,
+                    view: 0,
+                    layout: usize::from(widget.id == "notes"),
+                    cover: 0,
+                    size: 0,
+                    card_opacity: None,
+                    scale: None,
+                };
+                settings.set_widget(widget.id, own);
+            }
+        }
+        settings.defaults_version = 2;
+    }
+    for id in ["spotify", "media"] {
+        if let Some(own) = settings.widgets.get_mut(id) { own.layout = 0; }
+    }
     for id in ["notes", "clipboard", "todo", "converter"] {
         if let Some(own) = settings.widgets.get_mut(id) { own.size = 0; }
     }
@@ -1265,6 +1324,7 @@ mod tests {
             design: Design::App,
             sound_layout_version: 1,
             hardware_layout_version: 1,
+            player_sizes_version: 1,
             defaults_version: 1,
             widgets: BTreeMap::new(),
             output_dirs: BTreeMap::from([("downloader".to_owned(), "D:\\Downloads".to_owned())]),
@@ -1434,6 +1494,25 @@ mod tests {
     }
 
     #[test]
+    fn player_sizes_migrate_once_after_removal() {
+        for (view, old, current) in [
+            (0, 0, 0), (0, 1, 1), (0, 2, 2), (0, 3, 3),
+            (1, 0, 0), (1, 1, 1), (1, 2, 2), (1, 3, 2),
+            (2, 0, 0), (2, 1, 0), (2, 2, 0), (2, 3, 0),
+        ] {
+            let input = format!(r#"{{"widgets":{{"spotify":{{"size":{old},"view":{view}}},"media":{{"size":{old}}}}}}}"#);
+            let first = parse_settings(&input);
+            let again = parse_settings(&serde_json::to_string(&first).unwrap());
+            let widget = widgets::find("spotify").unwrap();
+            assert_eq!(first.player_sizes_version, 1);
+            assert_eq!(first.widget(widget).size, current, "вид {view}, размер {old}");
+            assert_eq!(again.widget(widget).size, current, "повторное чтение не сдвигает");
+            let media = widgets::find("media").unwrap();
+            assert_eq!(first.widget(media).size, old.min(1), "медиа: снятые — к «Среднему»");
+        }
+    }
+
+    #[test]
     fn hardware_sizes_migrate_once_after_no_history_removal() {
         for (old, current) in [(0, 0), (1, 0), (2, 1), (3, 2)] {
             let input = format!(r#"{{"widgets":{{"cpu":{{"size":{old},"view":1}},"gpu":{{"size":{old},"view":0}}}}}}"#);
@@ -1449,22 +1528,26 @@ mod tests {
         }
     }
 
-    /// Новый человек получает только железо, а у обновившегося окна остаются:
-    /// старый файл без записи о виджете жил с умолчанием «включён».
+    /// Новый человек получает набор раскладки первого запуска, а у
+    /// обновившегося окна остаются: старый файл без записи о виджете жил с
+    /// умолчанием «включён».
     #[test]
-    fn first_run_opens_hardware_but_an_update_keeps_every_window() {
-        let hardware = ["cpu", "gpu", "disks", "network"];
+    fn first_run_opens_the_default_set_but_an_update_keeps_every_window() {
+        let off = ["clipboard", "notes", "todo", "mail", "totp", "spotify"];
         let fresh = Settings::default();
         for widget in widgets::shown().filter(|widget| !widget.chrome) {
-            assert_eq!(fresh.widget(widget).enabled, hardware.contains(&widget.id), "{}", widget.id);
+            assert_eq!(fresh.widget(widget).enabled, !off.contains(&widget.id), "{}", widget.id);
         }
+        // Виды и размеры — тоже раскладки первого запуска
+        let cpu = widgets::find("cpu").unwrap();
+        assert_eq!((fresh.widget(cpu).view, fresh.widget(cpu).size), (1, 2));
 
         let old = parse_settings(r#"{"widgets":{"mail":{"enabled":false}}}"#);
         for widget in widgets::shown() {
             let expected = !widget.chrome && widget.id != "mail";
             assert_eq!(old.widget(widget).enabled, expected, "{}", widget.id);
         }
-        assert_eq!(old.defaults_version, 1);
+        assert_eq!(old.defaults_version, 2);
 
         // Повторное чтение уже переведённого файла ничего не включает заново
         let mut saved = old.clone();
@@ -1472,6 +1555,17 @@ mod tests {
         let again = parse_settings(&serde_json::to_string(&saved).unwrap());
         let clipboard = widgets::find("clipboard").unwrap();
         assert!(!again.widget(clipboard).enabled);
+
+        // Файл прежних умолчаний (версия 1): у кого записи не было, остаётся
+        // как было — железо включено, остальное нет, виды и размеры нулевые
+        let earlier = parse_settings(r#"{"defaults_version":1,"widgets":{"mail":{"enabled":true}}}"#);
+        assert_eq!(earlier.defaults_version, 2);
+        for widget in widgets::shown().filter(|widget| !widget.chrome) {
+            let own = earlier.widget(widget);
+            let expected = OLD_DEFAULT_ON.contains(&widget.id) || widget.id == "mail";
+            assert_eq!(own.enabled, expected, "{}", widget.id);
+            assert_eq!((own.view, own.size), (0, 0), "{}", widget.id);
+        }
     }
 
     /// Общий дизайн переносит прежний выбор звука, не трогая соседние поля.
@@ -1881,7 +1975,8 @@ mod tests {
         assert!(settings.widgets["converter"].locked);
         assert_eq!(settings.widgets["spotify"].layout, 0);
         assert_eq!(settings.widgets["spotify"].view, 2);
-        assert_eq!(settings.widgets["spotify"].size, 3);
+        // У квадрата остался один «Минимальный»: прежний номер 3 — теперь 0
+        assert_eq!(settings.widgets["spotify"].size, 0);
         assert_eq!(settings.widgets["spotify"].cover, 1);
         assert_eq!(Settings::default().widget(crate::widgets::find("notes").unwrap()).layout, 1);
     }

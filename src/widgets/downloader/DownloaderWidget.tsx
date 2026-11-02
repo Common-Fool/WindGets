@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { copyToClipboard } from "../../lib/copy";
 import { duration, fileSize, transferRate } from "../../lib/format";
-import { useContentHeight, useWindowGrowth } from "../../lib/grow";
+import { useContentHeight, useTemporaryContentHeight, useWindowGrowth } from "../../lib/grow";
 import { useLook, useScale } from "../../lib/look";
 import { openOutputDir } from "../../lib/output";
 import { useWindowResized } from "../../lib/resized";
 import { useHeight } from "../../lib/size";
 import { missingFor, useTools } from "../../lib/tools";
-import { useWidgetSize, useWidgetView } from "../../lib/view";
+import { useWidgetSize } from "../../lib/view";
 import {
   cancelDownload,
   forgetDownload,
@@ -25,7 +25,7 @@ import {
 import { Bar } from "../../components/Bar";
 import { Button } from "../../components/Button";
 import { GlassCard } from "../../components/GlassCard";
-import { CopyIcon, DoneIcon, FolderIcon, HistoryIcon } from "../../components/Icons";
+import { ChevronIcon, CloseIcon, CopyIcon, DoneIcon, DownloadIcon, FolderIcon, HistoryIcon } from "../../components/Icons";
 import { Toggle } from "../../components/Toggle";
 import { ToolsGate } from "../../components/ToolsGate";
 import "./downloader.css";
@@ -56,20 +56,22 @@ const COPIED_MS = 1200;
  * Любая ссылка, которую понимает yt-dlp, — не только YouTube. Режим и потолок
  * качества помнит Rust до выхода из приложения, в файл они не пишутся.
  *
- * Видов два, и это виды, а не размеры одного вида: «В две строки» — ссылка с
- * кнопкой скачивания сверху, выбор и кнопки папки и истории снизу, без строки
- * состояния. Раскрытая история растит окно, и порог по высоте перебрасывал бы
- * раскрытую маленькую карточку в полную раскладку — вид от высоты не зависит.
- * У Classic раскладку решает прежняя сетка (`downloader.css`), у NEW —
- * утверждённый A. Ввод и история общие, смена оформления их не сбрасывает.
- * Вид меняют пунктом меню и в настройках виджета.
+ * Вид один, размеров два (1 ноября 2026, слово пользователя): полный 360 —
+ * ссылка с кнопкой скачивания сверху, режим, потолок выпадающим списком и
+ * кнопки папки и истории снизу; узкий 180 — то же в три строки. Строки
+ * состояния нет: работа и отказ ложатся поверх поля ссылки. Раскрытая
+ * история растит окно — раскладку поэтому выбирает размер, а не порог по
+ * высоте. У Classic сетка своя (`downloader.css`), у NEW — утверждённый A.
+ * Ввод и история общие, смена оформления их не сбрасывает.
  */
 export function DownloaderWidget() {
   const tools = useTools();
   const view = useDownloader();
-  const widgetView = useWidgetView();
   const size = useWidgetSize();
-  const layout = widgetView === 1 ? "rows" : "full";
+  // Один вид, два размера (1 ноября 2026): полный 360 — две строки с
+  // выпадающим потолком, узкий 180 — три. Прежний полный со строкой
+  // состояния и вид «В две строки» сняты
+  const layout = size === 1 ? "narrow" : "rows";
   const { effectiveDesign, scale } = useLook();
   const reference = effectiveDesign === "reference";
   const t = useText();
@@ -79,22 +81,29 @@ export function DownloaderWidget() {
   // У NEW один владелец высоты: основа, согласие и раскрытый список меряются
   // вместе. Очередь прошлого дизайна отменяется существующим хуком.
   useContentHeight(content, reference,
-    [effectiveDesign, widgetView, size, ready, scale, t.language].join("|"), true);
+    [effectiveDesign, size, ready, scale, t.language].join("|"), true);
+  // Classic: приглашение скачать программы выше карточки в две строки — на
+  // его время окно встаёт по содержимому, потом возвращается готовый размер.
+  // Пока программы только проверяются, окно стоит в своём размере: строка
+  // «проверяю» сжимала его на запуске до одной строки, и карточка выглядела
+  // так, будто режима и потолка у неё нет (2 ноября 2026)
+  useTemporaryContentHeight("downloader", content, !reference && !ready && !tools.probing,
+    [size, scale, t.language].join("|"), size);
 
   return (
-    <div className={reference ? "widget downloader-reference-widget" : "widget downloader-app-widget"}>
+    <div className={reference ? "widget widget--neutral downloader-reference-widget" : "widget widget--neutral downloader-app-widget"}>
       <GlassCard accent="neutral" flush={reference}>
         <div className={reference ? "dl dl-a" : "dl"} data-layout={layout}
           data-ready={ready} ref={content}>
-          <Panel view={view} ready={ready} reference={reference} layout={layout} />
+          <Panel view={view} ready={ready} reference={reference} narrow={size === 1} />
         </div>
       </GlassCard>
     </div>
   );
 }
 
-function Panel({ view, ready, reference, layout }: {
-  view: DownloaderView; ready: boolean; reference: boolean; layout: "full" | "rows";
+function Panel({ view, ready, reference, narrow }: {
+  view: DownloaderView; ready: boolean; reference: boolean; narrow: boolean;
 }) {
   const t = useText();
   const [url, setUrl] = useState("");
@@ -121,6 +130,8 @@ function Panel({ view, ready, reference, layout }: {
   useEffect(() => setDismissed(false), [view.status, refusal]);
 
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Узкий Classic: выбор формата раскрывается стрелкой под строкой
+  const [choiceOpen, setChoiceOpen] = useState(false);
   const history = view.history;
   // Очищенная история сворачивает и панель: пустой раскрытой ей быть незачем
   const shown = historyOpen && history.length > 0;
@@ -141,6 +152,80 @@ function Panel({ view, ready, reference, layout }: {
     }
   }
 
+  /*
+   * Выбор формата и кнопки папки и истории. У полного Classic они во второй
+   * строке, у узкого — под стрелкой (2 ноября 2026, слово пользователя: узкий
+   * — одна строка «ссылка, скачать, стрелка»).
+   */
+  const options = (
+    <div className="dl__options">
+      <div className="dl__chips">
+        <Toggle
+          label={t("downloader.video")}
+          short="MP4"
+          active={view.mode === "video"}
+          onChange={() => choose("video", view.quality)}
+        />
+        <Toggle
+          label={t("downloader.audio")}
+          short="MP3"
+          active={view.mode === "audio"}
+          onChange={() => choose("audio", view.quality)}
+        />
+      </div>
+      {/* Потолок у звука не значит ничего — он и не показывается */}
+      {view.mode === "video" && (
+        <div className="dl__chips">
+          {QUALITIES.map((quality) => (
+            <Toggle
+              key={quality.id}
+              label={quality.id === "best" ? t("downloader.best") : quality.label}
+              // «best» — подпись формата, как MP4 и 1080p: английская во
+              // всех языках (слово пользователя: не звёздочка)
+              short={quality.id === "best" ? "best" : quality.label}
+              active={view.quality === quality.id}
+              onChange={() => choose("video", quality.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+  const folder = (
+    <span className="dl__folder">
+      <Button
+        variant="outline"
+        icon={<FolderIcon />}
+        label={t("downloader.openFolder")}
+        onClick={() => void openOutputDir("downloader").catch(() => {})}
+      />
+    </span>
+  );
+  // История видна всегда, пустая — погашена (2 ноября 2026, слово
+  // пользователя): пропадавшая кнопка оставляла папку висеть одну
+  const historyButton = (
+    <span className="dl__toggle">
+      <Button
+        variant="outline"
+        icon={<HistoryIcon />}
+        label={shown ? t("downloader.hideHistory") : t("downloader.showHistory")}
+        disabled={history.length === 0}
+        onClick={() => setHistoryOpen(!shown)}
+      >
+        {history.length > 0 ? history.length : undefined}
+      </Button>
+    </span>
+  );
+  const drawer: ReactNode = !reference && narrow && choiceOpen ? (
+    <div className="dl__drawer">
+      {options}
+      <div className="dl__drawer-buttons">
+        {folder}
+        {historyButton}
+      </div>
+    </div>
+  ) : null;
+
   // Panel не перемонтируется при смене оформления или готовности программ:
   // набранный URL и отказ остаются у одного владельца.
   if (!ready) return <ToolsGate module="downloader" />;
@@ -148,7 +233,7 @@ function Panel({ view, ready, reference, layout }: {
   return (
     <>
       {reference ? (
-        <DownloaderReference view={view} layout={layout} url={url}
+        <DownloaderReference view={view} url={url}
           refusal={refusal} dismissed={dismissed} shown={shown}
           busyText={busyLine(t, view)} detailText={downloadLine(t, view)}
           onUrl={(value) => { setUrl(value); setRefusal(null); }}
@@ -174,78 +259,38 @@ function Panel({ view, ready, reference, layout }: {
         }}
       />
 
-      <div className="dl__options">
-        <div className="dl__chips">
-          <Toggle
-            label={t("downloader.video")}
-            short="MP4"
-            active={view.mode === "video"}
-            onChange={() => choose("video", view.quality)}
-          />
-          <Toggle
-            label={t("downloader.audio")}
-            short="MP3"
-            active={view.mode === "audio"}
-            onChange={() => choose("audio", view.quality)}
-          />
-        </div>
-        {/* Потолок у звука не значит ничего — он и не показывается */}
-        {view.mode === "video" && (
-          <div className="dl__chips">
-            {QUALITIES.map((quality) => (
-              <Toggle
-                key={quality.id}
-                label={quality.id === "best" ? t("downloader.best") : quality.label}
-                short={quality.id === "best" ? "★" : quality.label}
-                active={view.quality === quality.id}
-                onChange={() => choose("video", quality.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {!narrow && options}
 
       <Status view={view} refusal={refusal} dismissed={dismissed} onDismiss={() => setDismissed(true)} />
 
-      {/* Кнопки — прямо в сетке, каждая в своей клетке: в двух раскладках
-          они стоят в разных местах */}
-      <span className="dl__folder">
-        <Button
-          variant="outline"
-          icon={<FolderIcon />}
-          label={t("downloader.openFolder")}
-          onClick={() => void openOutputDir("downloader").catch(() => {})}
-        />
-      </span>
-      {history.length > 0 && (
-        <span className="dl__toggle">
-          <Button
-            variant="outline"
-            icon={<HistoryIcon />}
-            label={shown ? t("downloader.hideHistory") : t("downloader.showHistory")}
-            onClick={() => setHistoryOpen(!shown)}
-          >
-            {history.length}
-          </Button>
-        </span>
-      )}
+      {/* Кнопки — прямо в сетке, каждая в своей клетке; у узкого папка и
+          история уезжают в раскрываемый выбор */}
+      {!narrow && folder}
+      {!narrow && historyButton}
       <span className="dl__go">
         {busy ? (
-          <Button variant="outline" onClick={() => void cancelDownload()}>
-            {t("common.cancel")}
-          </Button>
+          <Button variant="outline" icon={<CloseIcon />} label={t("common.cancel")}
+            onClick={() => void cancelDownload()} />
         ) : (
-          <Button onClick={() => void start()} disabled={url.trim() === ""}>
-            {t("tools.gate.download")}
-          </Button>
+          <Button icon={<DownloadIcon />} label={t("tools.gate.download")}
+            onClick={() => void start()} disabled={url.trim() === ""} />
         )}
       </span>
+      {narrow && (
+        <span className="dl__more" data-open={choiceOpen}>
+          <Button variant="outline" icon={<ChevronIcon />} label={t("downloader.choose")}
+            onClick={() => {
+              if (choiceOpen) setHistoryOpen(false);
+              setChoiceOpen(!choiceOpen);
+            }} />
+        </span>
+      )}
 
       </>
       )}
       {/* История вне веток дизайна: строки и таймер копирования сохраняются. */}
-      <History history={shown ? history : []} reference={reference}
-        onClose={() => setHistoryOpen(false)} />
+      <History history={shown ? history : []} reference={reference} before={drawer}
+        onClose={() => { setHistoryOpen(false); setChoiceOpen(false); }} />
     </>
   );
 }
@@ -259,15 +304,17 @@ function Panel({ view, ready, reference, layout }: {
  * ссылки и крестик, внизу — очистка всего списка. Сами файлы список не
  * трогает: забывается только он.
  */
-function History({ history, onClose, reference }: {
+function History({ history, onClose, reference, before }: {
   history: Saved[]; onClose: () => void; reference: boolean;
+  /** Что стоит над списком: выбор формата узкого Classic. Растит окно тем же замером. */
+  before: ReactNode;
 }) {
   const t = useText();
   const growth = useWindowGrowth();
   const geometry = useScale();
   const panel = useRef<HTMLDivElement>(null);
   const height = useHeight(panel);
-  const open = history.length > 0;
+  const open = history.length > 0 || before !== null;
 
   // Готовый размер или вид сменили — раскрытой панели в нём места нет
   useWindowResized(onClose);
@@ -292,17 +339,22 @@ function History({ history, onClose, reference }: {
 
   return (
     <div className="dl__history" ref={panel}>
-      <ul className="dl__saved">
-        {history.map((saved) => (
-          <SavedRow key={saved.id} saved={saved} />
-        ))}
-      </ul>
-      <div className="dl__history-foot">
-        {reference && <span className="dl-a__files-remain">{t("downloader.filesRemain")}</span>}
-        <button type="button" className="dl__clear" onClick={() => void forgetDownload()}>
-          {t("converter.clearList")}
-        </button>
-      </div>
+      {before}
+      {history.length > 0 && (
+        <>
+          <ul className="dl__saved">
+            {history.map((saved) => (
+              <SavedRow key={saved.id} saved={saved} />
+            ))}
+          </ul>
+          <div className="dl__history-foot">
+            {reference && <span className="dl-a__files-remain">{t("downloader.filesRemain")}</span>}
+            <button type="button" className="dl__clear" onClick={() => void forgetDownload()}>
+              {t("converter.clearList")}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

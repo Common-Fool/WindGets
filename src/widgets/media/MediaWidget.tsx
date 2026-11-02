@@ -1,389 +1,267 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GlassCard } from "../../components/GlassCard";
-import { Marquee } from "../../components/Marquee";
-import { NextIcon, PauseIcon, PlayIcon, PreviousIcon } from "../../components/Transport";
-import { useContentHeight } from "../../lib/grow";
+import { PauseIcon, PlayIcon } from "../../components/Transport";
+import { usePresetWindowGrowth } from "../../lib/grow";
 import { useText } from "../../lib/i18n";
-import { useLook } from "../../lib/look";
-import { useSeekDrag } from "../../lib/seek";
+import { useLook, useScale } from "../../lib/look";
 import {
   artOf,
-  clock,
   control,
   pickSession,
-  playedAt,
   seek,
   shown,
+  titleOf,
   useMedia,
   type Track,
 } from "../../lib/media";
-import { useWidgetLayout, useWidgetSize } from "../../lib/view";
-import { ReferenceIdle, ReferencePlayer, ReferenceSessions } from "./MediaReference";
-import "./media.css";
-import "./media-reference.css";
+import { useWindowResized } from "../../lib/resized";
+import type { Action, Player } from "../../lib/spotify";
+import { useWidgetCover, useWidgetLayout, useWidgetSize, useWidgetView } from "../../lib/view";
+import { columnGap, PlayerPanel, type Abilities } from "../spotify/PlayerPanel";
+import { referenceSlack, sizeKind } from "../spotify/ReferencePlayer";
+import "../spotify/spotify.css";
+import "../spotify/spotify-reference.css";
 
 /*
  * Медиа: что играет в Windows прямо сейчас — любой плеер, любая вкладка.
  *
- * Раскладка Classic одна: это горизонтальный пульт Спотифая с
- * обложкой обычного размера. Фоновой и крупной обложек тут нет, как и других
- * раскладок, — виджет делается для полного комплекта, а образцом того, что
- * он умеет, служит всплывающее окно медиа самой Windows: источник, название,
- * исполнитель, обложка и три кнопки.
- *
- * Кнопки гасятся по флагам, которые сессия сообщает сама (`canPlay` и
- * соседи), а не по надежде: веб-плеер на рекламе, например, «следующий» не
- * принимает, и кнопка, нажатие которой ничего не делает, читается как поломка.
+ * ВАЖНО: **по виду это пульт Спотифая целиком** (1 ноября 2026, слово
+ * пользователя): те же раскладки, обложки, размеры, разметка и CSS —
+ * `PlayerPanel` и `ReferencePlayer` общие. Своё у медиа — только данные:
+ * сессия переводится в `Player`, команды пульта — в команды сессии. Нижний ряд
+ * вместо плейлистов и устройства держит источники: кнопку списка и имя
+ * текущего. Перемешивания, повтора и громкости у медиасессии нет.
  */
-
-/** Как часто досчитываем позицию между снимками. Глазу этого достаточно. */
-const TICK_MS = 250;
 
 /** Сколько ждём, что сессия согласится с нажатием пуска или паузы. */
 const EXPECT_FOR = 2000;
 
-/** Досчёт ближе этого (в секундах) к отпущенному месту — перемотка дошла. */
-const SEEK_CLOSE = 2;
+/** Как часто сверяемся с сессией, пока ждём согласия. */
+const EXPECT_STEP = 100;
 
 /**
- * Номер самого тесного размера. На нём полосы перемотки нет вовсе — ради
- * этого окно там и стало на строку ниже; ровно как у пульта Спотифая.
+ * Строка списка источников при 100 % вместе с зазором списка — как у
+ * плейлистов (замер: NEW 36 без зазора, Classic 44 и 4).
  */
-const SMALLEST_SIZE = 3;
+const ROW = { reference: { row: 36, gap: 0 }, classic: { row: 44, gap: 4 } } as const;
+
+/** Строка громкости Classic с зазором столбца: 17 + 8 (замер при 100 %). */
+const CLASSIC_VOLUME_ROW = 25;
+
+/** Больше строк список не растит окно: остальное прокручивается. */
+const ROWS_SHOWN = 3;
+
+/** Ничего не играет: кнопкам нечего делать. */
+const NOTHING: Abilities = { modes: false, play: false, previous: false, next: false, seek: false };
 
 export function MediaWidget() {
-
-  const size = useWidgetSize();
-  const layout = useWidgetLayout() === 1 ? 1 : 0;
-  const { effectiveDesign, scale } = useLook();
-  const reference = effectiveDesign === "reference";
   const t = useText();
+  const size = useWidgetSize();
+  const widgetView = useWidgetView();
+  const layout = useWidgetLayout();
+  const cover = useWidgetCover();
+  const { design, effectiveDesign } = useLook();
+  const reference = effectiveDesign === "reference";
+  const geometry = useScale();
   const view = useMedia();
   const track = shown(view);
-  const content = useRef<HTMLDivElement>(null);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const panelOpen = reference && sourcesOpen && view.sessions.length > 1;
+  const art = useCover(track);
+  const [listOpen, setListOpen] = useState(false);
+  const blank = useMemo(() => idle(t("media.idle"), t("media.idleHint")), [t]);
+
+  // Размер поменяли — список сворачиваем вместе с ним, как плейлисты
+  useWindowResized(() => setListOpen(false));
+  const growth = usePresetWindowGrowth(widgetView, size, design, layout);
+  const kind = sizeKind(widgetView, size);
+  const open = listOpen && view.sessions.length > 0 && kind < 2;
 
   useEffect(() => {
-    if (view.sessions.length === 0) setSourcesOpen(false);
+    if (view.sessions.length === 0) setListOpen(false);
   }, [view.sessions.length]);
 
-  // Один владелец геометрии NEW: основа не зависит от высоты окна,
-  // список меряется вместе с ней. При смене дизайна отложенный fit отменяется.
-  useContentHeight(content, reference,
-    [layout, size, panelOpen, Math.min(view.sessions.length, 3), scale, t.language].join("|"), true);
+  /*
+   * Высота по содержимому: громкости у сессии нет, и место под неё окно не
+   * держит. У NEW это та же поправка, что у Спотифая без громкости
+   * (`referenceSlack`); у Classic — строка громкости с зазором столбца в
+   * столбике «Большом» и «Среднем», единственных, где она есть.
+   */
+  const slack = (reference ? referenceSlack(widgetView, size, cover, false)
+    : widgetView === 1 && kind < 2 ? CLASSIC_VOLUME_ROW : 0) * geometry;
+  const rows = Math.min(Math.max(view.sessions.length, 1), ROWS_SHOWN);
+  const row = reference ? ROW.reference : ROW.classic;
+  const panelHeight = (rows * row.row + (rows - 1) * row.gap) * geometry;
+  const body = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    growth.open((open ? panelHeight + columnGap(body.current) : 0) - slack);
+  }, [design, effectiveDesign, layout, widgetView, size, kind, geometry, open, panelHeight, slack, growth]);
+
+  // «+N» — о других ИГРАЮЩИХ: вкладка на паузе вторым источником не считается
+  const others = track === null ? 0
+    : view.sessions.filter((session) => session.playing && session.source !== track.source).length;
 
   return (
-    <div className={reference ? "widget media media-reference-widget" : "widget media"}
-      data-size={size} data-layout={reference ? layout : undefined}>
+    <div className={reference ? "spotify spotify-reference-widget media" : "spotify media"}
+      data-size={kind} data-layout="a" data-format={widgetView}>
       <GlassCard accent="media" flush={reference}>
-        {/* Постоянный узел сохраняет экземпляр Player при NEW/Classic.
-            В Classic display:contents оставляет исходную геометрию ряда. */}
-        <div className={reference ? "media-content media-reference" : "media-content"} ref={content}>
-        {track === null ? (
-          <Idle reference={reference} />
-        ) : (
-          <Player
-            // Ключом — чтобы ожидаемое состояние и обложка не переезжали
-            // с одной сессии на другую при переключении источника
-            key={track.source}
-            track={track}
-            size={size}
-            reference={reference}
-            layout={layout}
-            opened={panelOpen}
-            onOpen={() => setSourcesOpen((open) => !open)}
-            // «+N» — о других ИГРАЮЩИХ: вкладка на паузе вторым источником
-            // не считается, иначе подсказка «ещё играет» врала бы почти всегда
-            others={view.sessions.filter((session) => session.playing && session.source !== track.source).length}
-            canSwitch={view.sessions.some((session) => session.source !== track.source)}
-            onSwitch={() => {
-              const at = view.sessions.findIndex((session) => session.source === track.source);
-              const next = view.sessions[(at + 1) % view.sessions.length];
-              if (next !== undefined) void pickSession(next.source);
-            }}
-          />
-        )}
-        {panelOpen && track !== null && <ReferenceSessions sessions={view.sessions} current={track.source} />}
+        <div className="spotify__body" ref={body}>
+          {track === null ? (
+            <PlayerPanel player={blank} receivedAt={0} send={nothing} stale can={NOTHING} />
+          ) : (
+            // Ключом — чтобы ожидаемое состояние не переезжало с одной сессии
+            // на другую при переключении источника
+            <Session key={track.source} track={track} art={art} />
+          )}
+
+          <div className="spotify__actions">
+            <button
+              type="button"
+              className={open ? "spotify__link spotify__link--active" : "spotify__link"}
+              disabled={view.sessions.length === 0}
+              onClick={() => setListOpen((was) => !was)}
+            >
+              {/* Без значка: знак плейлистов тут чужой, а своего у
+                  источников нет */}
+              {t("media.settings.sources")}
+            </button>
+            {track !== null && (
+              <span className="spotify__device"
+                title={others > 0 ? t.count("media.moreSources", others) : undefined}>
+                {nameOf(track)}{others > 0 && ` +${others}`}
+              </span>
+            )}
+          </div>
+
+          {open && track !== null && (
+            <Sessions sessions={view.sessions} current={track.source} height={panelHeight} />
+          )}
         </div>
       </GlassCard>
     </div>
   );
 }
 
-/**
- * Ничего не играет.
- *
- * Карточка при этом не пропадает и не схлопывается: окно висит на обоях, и
- * исчезающая карточка двигала бы взгляд. Раскладка та же, что у плеера, —
- * блёклая и без кнопок, которым нечего делать.
- */
-function Idle({ reference }: { reference: boolean }) {
+/** Одна сессия на пульте: перевод данных и команд в язык пульта. */
+function Session({ track, art }: { track: Track; art: string | null }) {
   const t = useText();
-  if (reference) return <ReferenceIdle />;
-  return (
-    <div className="media__row media__row--idle">
-      <Cover url={null} />
-      <div className="media__lane">
-        <div className="media__meta">
-          <span className="media__song">{t("media.idle")}</span>
-          <span className="media__artist">{t("media.idleHint")}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+  // Согласие сессии ждётся по свежему снимку, а не по тому, что был при нажатии
+  const latest = useRef(track);
+  latest.current = track;
 
-function Player({
-  track,
-  size,
-  reference,
-  layout,
-  opened,
-  onOpen,
-  others,
-  canSwitch,
-  onSwitch,
-}: {
-  track: Track;
-  size: number;
-  reference: boolean;
-  layout: number;
-  opened: boolean;
-  onOpen: () => void;
-  others: number;
-  canSwitch: boolean;
-  onSwitch: () => void;
-}) {
-  const t = useText();
   /*
-   * Нажатие должно отзываться мгновенно, а новый снимок придёт через сотни
-   * миллисекунд. До него показываем ожидаемое.
-   *
-   * ВАЖНО: **ожидание снимает согласие сессии, а не любой снимок.** Плеер
-   * сообщает о паузе с опозданием, и снимок, пришедший сразу после нажатия,
-   * ещё говорит «играет» — сброс по нему вернул бы кнопку назад на полсекунды.
-   * Не согласилась за две секунды — значит, нажатие не прошло, и карточка
-   * возвращается к тому, что говорит сессия.
+   * ВАЖНО: **ожидание пуска/паузы снимает согласие сессии, а не ответ
+   * команды.** Команда только кладёт заказ в очередь потока и возвращается
+   * сразу, а плеер сообщает о паузе с опозданием — пульт снимает ожидаемое
+   * состояние, когда `send` вернулся, и кнопка прыгала бы назад. Поэтому
+   * `send` у медиа ждёт, пока сессия согласится, но не дольше двух секунд:
+   * не согласилась — нажатие не прошло.
    */
-  const [expected, setExpected] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (expected === null) return;
-    if (track.playing === expected) {
-      setExpected(null);
-      return;
+  const send = useCallback(async (action: Action) => {
+    const source = latest.current.source;
+    try {
+      switch (action.kind) {
+        case "play":
+        case "pause": {
+          await control(source, action.kind);
+          const wanted = action.kind === "play";
+          const until = Date.now() + EXPECT_FOR;
+          while (latest.current.playing !== wanted && Date.now() < until) {
+            await new Promise((resolve) => window.setTimeout(resolve, EXPECT_STEP));
+          }
+          return;
+        }
+        case "next":
+        case "previous":
+          return await control(source, action.kind);
+        case "seek":
+          return await seek(source, action.positionMs / 1000);
+        default:
+          // Перемешивания, повтора, громкости и плейлистов у сессии нет
+          return;
+      }
+    } catch {
+      // Отказ сессии виден и так: кнопка возвращается к тому, что она говорит
     }
-    const timer = window.setTimeout(() => setExpected(null), EXPECT_FOR);
-    return () => window.clearTimeout(timer);
-  }, [expected, track.playing]);
-  const playing = expected ?? track.playing;
+  }, []);
 
-  const position = useTicking(track);
-  const cover = useCover(track);
+  const player = useMemo(() => asPlayer(track, art, t("media.unknownTrack")), [track, art, t]);
+  const can: Abilities = {
+    modes: false,
+    play: track.canPlay,
+    previous: track.canPrevious,
+    next: track.canNext,
+    seek: track.canSeek,
+  };
 
-  const known = track.duration > 0;
-  const ratio = known ? Math.min(position / track.duration, 1) : 0;
+  return <PlayerPanel player={player} receivedAt={measuredAt(track)} send={send} can={can} />;
+}
 
-  function toggle() {
-    const action = playing ? "pause" : "play";
-    setExpected(!playing);
-    control(track.source, action).catch(() => setExpected(null));
-  }
+/** Сессия в форме пульта Спотифая. */
+function asPlayer(track: Track, art: string | null, unknown: string): Player {
+  return {
+    track: track.song === "" ? unknown : track.song,
+    artists: track.artist,
+    album: "",
+    coverUrl: art,
+    link: null,
+    isPlaying: track.playing,
+    progressMs: Math.round(track.position * 1000),
+    durationMs: Math.max(0, Math.round(track.duration * 1000)),
+    shuffle: false,
+    repeat: "off",
+    volume: null,
+    device: null,
+    supportsVolume: false,
+  };
+}
 
-  // Полосу тянут мышью, отпущенное место держится до ответа (`lib/seek.ts`):
-  // перемотку виджет переносит сам (`moved` в Rust), но досчёт до свежего
-  // снимка шёл от старого места, и полоса скакала
-  const drag = useSeekDrag(ratio, track.duration, SEEK_CLOSE, track.canSeek && known,
-    (share) => void seek(track.source, share * track.duration), `${track.song}
-${track.artist}`);
-  const shownPosition = drag.chosen === null ? position : drag.chosen * track.duration;
+async function nothing() {}
 
-  const meta = (
-    <div className="media__meta">
-      <Source track={track} others={others} canSwitch={canSwitch} onSwitch={onSwitch} />
-      <Marquee className="media__song" text={track.song === "" ? t("media.unknownTrack") : track.song} />
-      {track.artist !== "" && <Marquee className="media__artist" text={track.artist} />}
-    </div>
-  );
+/** Пустой пульт: подписи вместо трека, блёклый, без кнопок. */
+function idle(title: string, hint: string): Player {
+  return {
+    track: title, artists: hint, album: "", coverUrl: null, link: null, isPlaying: false,
+    progressMs: 0, durationMs: 0, shuffle: false, repeat: "off", volume: null, device: null,
+    supportsVolume: false,
+  };
+}
 
-  const bar = (
-    <div className="media__progress">
-      <div
-        className="media__bar"
-        data-seek={track.canSeek && known}
-        data-no-drag
-        {...drag.handlers}
-        role="presentation"
-        title={track.canSeek && known ? t("media.seek") : undefined}
-      >
-        <div className="media__fill" style={{ width: `${(drag.shown * 100).toFixed(2)}%` }} />
-      </div>
-      {/* Длины нет — нет и чисел. Ряд при этом остаётся на месте, иначе
-          карточка прыгала бы на каждом ролике: подробности в media.css */}
-      <div className="media__times tabular" data-known={known}>
-        <span>{clock(shownPosition)}</span>
-        <span>{clock(track.duration)}</span>
-      </div>
-    </div>
-  );
+/** ВАЖНО: **нулевая метка или из будущего значит «сейчас»**, иначе полоса упёрлась бы в конец. */
+function measuredAt(track: Track): number {
+  const now = Date.now();
+  return track.measuredAt > 0 && track.measuredAt <= now ? track.measuredAt : now;
+}
 
-  const buttons = (
-    <div className="media__controls">
-      <button
-        type="button"
-        className="media__button"
-        title={t("transport.previous")}
-        disabled={!track.canPrevious}
-        onClick={() => void control(track.source, "previous")}
-      >
-        <PreviousIcon />
-      </button>
-      <button
-        type="button"
-        className="media__play"
-        title={playing ? t("transport.pause") : t("transport.play")}
-        disabled={!track.canPlay}
-        onClick={toggle}
-      >
-        {playing ? <PauseIcon /> : <PlayIcon />}
-      </button>
-      <button
-        type="button"
-        className="media__button"
-        title={t("transport.next")}
-        disabled={!track.canNext}
-        onClick={() => void control(track.source, "next")}
-      >
-        <NextIcon />
-      </button>
-    </div>
-  );
-
-  /*
-   * На самом просторном размере кнопки стоят в середине, под подписями и над
-   * полосой: справа они уводили бы взгляд от названия. На остальных они
-   * справа — иначе два верхних размера отличались бы одной шириной, и выбор
-   * между ними ничего бы не значил. Решение взято у пульта Спотифая целиком.
-   */
-  // Данные, обложка, досчёт и expected остаются в этом же Player:
-  // смена дизайна/A/B не начинает медиасессию заново.
-  if (reference) {
-    return <ReferencePlayer track={track} size={size} layout={layout} cover={cover}
-      playing={playing} position={position} others={others} canSwitch={canSwitch}
-      opened={opened} onSwitch={onSwitch} onOpen={onOpen} onToggle={toggle} seek={drag} />;
-  }
-
-  if (size === 0) {
-    return (
-      <div className="media__row">
-        <Cover url={cover} />
-        <div className="media__lane">
-          {meta}
-          {buttons}
-          {bar}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="media__row">
-      <Cover url={cover} />
-      <div className="media__lane">
-        {meta}
-        {size !== SMALLEST_SIZE && bar}
-      </div>
-      {buttons}
-    </div>
-  );
+function nameOf(track: Track): string {
+  return track.title === "" ? track.source : track.title;
 }
 
 /**
- * Имя источника — строкой над названием, как во всплывающем окне Windows.
- *
- * Другую сессию можно выбрать и на паузе: «+N» считает лишь играющие,
- * а кнопка листает все доступные. Она маленькая намеренно: удерживает мышь
- * и во всю ширину отняла бы у карточки перетаскивание окна.
+ * Список источников на месте плейлистов: строка выбирает сессию
+ * (`pickSession`), своих команд у неё нет. Высота — то же число, на которое
+ * выросло окно (см. `PlaylistPanel`).
  */
-function Source({
-  track,
-  others,
-  canSwitch,
-  onSwitch,
-}: {
-  track: Track;
-  others: number;
-  canSwitch: boolean;
-  onSwitch: () => void;
-}) {
-  const t = useText();
-  const name = track.title === "" ? track.source : track.title;
-
-  if (!canSwitch) {
-    return <span className="media__source">{name}</span>;
-  }
-
+function Sessions({ sessions, current, height }: { sessions: Track[]; current: string; height: number }) {
   return (
-    <button
-      type="button"
-      className="media__source media__source--switch"
-      title={others > 0 ? t.count("media.moreSources", others) : t("media.settings.sources")}
-      onClick={onSwitch}
-    >
-      {name}
-      {others > 0 && <span className="media__more">+{others}</span>}
-    </button>
+    <ul className="playlists" style={{ height }}>
+      {sessions.map((session) => (
+        <li key={session.source}>
+          <button
+            type="button"
+            className="playlists__item"
+            aria-pressed={session.source === current}
+            title={titleOf(session)}
+            onClick={() => void pickSession(session.source)}
+          >
+            <span className="playlists__cover playlists__cover--empty">
+              {session.playing ? <PlayIcon /> : <PauseIcon />}
+            </span>
+            <span className="playlists__name">{nameOf(session)}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
-}
-
-/**
- * Обложка слева квадратом во всю высоту ряда.
- *
- * Своей высоты не назначает: её задаёт ряд, а ширину — соотношение сторон.
- * Нет картинки — на её месте та же плашка со значком ноты, чтобы подписи не
- * прыгали влево, когда обложка приходит на полсекунды позже трека.
- */
-function Cover({ url }: { url: string | null }) {
-  return (
-    <div className="media__art">
-      {url === null ? (
-        <div className="media__cover media__cover--empty">
-          <NoteIcon />
-        </div>
-      ) : (
-        <img className="media__cover" src={url} alt="" draggable={false} />
-      )}
-    </div>
-  );
-}
-
-/** Нота на пустой обложке. Своя: второго хозяина у неё нет. */
-function NoteIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" fill="currentColor">
-      <path d="M17 3.5v11.2a3.3 3.3 0 1 1-2-3V7.4L9.5 8.6v8.1a3.3 3.3 0 1 1-2-3V6.8a1 1 0 0 1 .78-.98l7.5-1.66A1 1 0 0 1 17 5.14Z" />
-    </svg>
-  );
-}
-
-/**
- * Позиция, досчитанная между снимками.
- *
- * Rust присылает её только при изменениях, а полоса обязана ехать плавно.
- * Тикает только играющая сессия: у стоящей позиция и так та, что прислали.
- */
-function useTicking(track: Track): number {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    setNow(Date.now());
-    if (!track.playing) return;
-
-    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => window.clearInterval(timer);
-  }, [track.playing, track.measuredAt]);
-
-  return playedAt(track, now);
 }
 
 /**
@@ -393,17 +271,19 @@ function useTicking(track: Track): number {
  * на каждом снимке незачем. Запоздавший ответ о прошлом треке не должен
  * подменить обложку нынешнего — отсюда флаг `alive`.
  */
-function useCover(track: Track): string | null {
+function useCover(track: Track | null): string | null {
   const [url, setUrl] = useState<string | null>(null);
+  const source = track?.source ?? null;
+  const key = track?.art ?? null;
 
   useEffect(() => {
-    if (track.art === null) {
+    if (source === null || key === null) {
       setUrl(null);
       return;
     }
 
     let alive = true;
-    artOf(track.source)
+    artOf(source)
       .then((next) => {
         if (alive) setUrl(next);
       })
@@ -414,7 +294,7 @@ function useCover(track: Track): string | null {
     return () => {
       alive = false;
     };
-  }, [track.source, track.art]);
+  }, [source, key]);
 
   return url;
 }

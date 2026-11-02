@@ -52,20 +52,15 @@
   scrollbar-gutter: stable; overflow-x: hidden;
 }
 .conv--reference .conv__list,
-.conv--reference .conv__options,
-.conv--reference .conv__empty { scrollbar-width: auto; scrollbar-color: auto; }
+.conv--reference .conv__options { scrollbar-width: auto; scrollbar-color: auto; }
 .conv--reference .conv__list::-webkit-scrollbar,
-.conv--reference .conv__options::-webkit-scrollbar,
-.conv--reference .conv__empty::-webkit-scrollbar { width: calc(4px * var(--scale)); }
+.conv--reference .conv__options::-webkit-scrollbar { width: calc(4px * var(--scale)); }
 .conv--reference .conv__list::-webkit-scrollbar-button,
-.conv--reference .conv__options::-webkit-scrollbar-button,
-.conv--reference .conv__empty::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.conv--reference .conv__options::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .conv--reference .conv__list::-webkit-scrollbar-track,
-.conv--reference .conv__options::-webkit-scrollbar-track,
-.conv--reference .conv__empty::-webkit-scrollbar-track { background: transparent; }
+.conv--reference .conv__options::-webkit-scrollbar-track { background: transparent; }
 .conv--reference .conv__list::-webkit-scrollbar-thumb,
-.conv--reference .conv__options::-webkit-scrollbar-thumb,
-.conv--reference .conv__empty::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: calc(8px * var(--scale)); }
+.conv--reference .conv__options::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: calc(8px * var(--scale)); }
 .conv--reference .conv__item {
   grid-template-columns: minmax(0, 1fr) auto calc(20px * var(--scale));
   padding: calc(5px * var(--scale)) 0; column-gap: calc(5px * var(--scale)); row-gap: calc(3px * var(--scale));
@@ -108,10 +103,8 @@
 }
 .conv--reference .conv-ref__path { flex: 1; min-width: 0; color: var(--text-muted); font-size: calc(10px * var(--scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv--reference .conv-ref__percent { flex: none; color: var(--text-secondary); font-size: calc(11px * var(--scale)); }
-.conv--reference .conv__empty { align-items: flex-start; text-align: left; gap: calc(9px * var(--scale)); overflow-y: auto; scrollbar-gutter: stable; padding-right: calc(8px * var(--scale)); }
-.conv--reference .conv__lead { color: var(--text-primary); font-size: calc(15px * var(--scale)); font-weight: 600; }
-.conv--reference .conv-ref__formats { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: calc(5px * var(--scale)) calc(10px * var(--scale)); color: var(--text-secondary); font-size: calc(12px * var(--scale)); }
-.conv--reference .conv-ref__formats > span:nth-child(odd) { color: var(--text-muted); }
+.conv--reference .conv__empty { gap: calc(10px * var(--scale)); border-radius: calc(8px * var(--scale)); }
+.conv--reference .conv__drop-mark { font-size: calc(30px * var(--scale)); }
 .conv--reference .conv__drop { inset: calc(5px * var(--scale)); border-radius: calc(8px * var(--scale)); }
 
 @container converter-size (width < 26em) {

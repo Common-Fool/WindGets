@@ -4,24 +4,45 @@ import { nextRepeat } from "../../lib/spotify";
 import { useText } from "../../lib/i18n";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon } from "../../components/Transport";
 import { RepeatIcon, RepeatOneIcon, ShuffleIcon } from "./icons";
+import type { Abilities } from "./PlayerPanel";
 
-/** Числа утверждённого R08 при 100%; native таблицу ведёт widgets.rs. */
+/**
+ * Размеры по номеру при 100 %; native таблицу ведёт widgets.rs.
+ *
+ * 1 ноября 2026 (слово пользователя) часть размеров снята: у полосы
+ * «Средний», у столбика «Маленький», у квадрата оба средних. Номер размера
+ * теперь не совпадает с раскладкой — её даёт [`sizeKind`].
+ */
 export const REFERENCE_SIZES = [
-  [[464, 152], [420, 140], [320, 88], [300, 66]],
-  [[280, 494], [240, 454], [204, 342], [180, 318]],
-  [[320, 320], [280, 280], [240, 240], [210, 210]],
+  [[360, 152], [360, 88], [360, 66], [270, 66]],
+  [[280, 494], [270, 484], [180, 318]],
+  [[180, 180]],
 ] as const;
 
 export const CLAUDE_SIZES = [
-  [[520, 184], [430, 140], [340, 96], [300, 66]],
-  [[300, 526], [260, 486], [220, 385], [180, 345]],
-  [[360, 360], [310, 310], [260, 260], [210, 210]],
+  [[360, 184], [360, 120], [360, 66], [270, 66]],
+  [[280, 506], [270, 496], [180, 345]],
+  [[180, 180]],
 ] as const;
+
+/** Номер размера каждой раскладки → прежняя композиция: 0 большой, 1 средний, 2 маленький, 3 минимальный. */
+const SIZE_KINDS = [[0, 2, 3, 3], [0, 1, 3], [3]] as const;
+
+/**
+ * Какую композицию рисовать при этом номере размера.
+ *
+ * Композиции и CSS (`data-size`) остались прежними, четырьмя: снятые размеры
+ * убрали номера, а не раскладки. Незнакомый номер — большой.
+ */
+export function sizeKind(format: number, size: number): number {
+  const kinds: readonly number[] = SIZE_KINDS[format === 1 || format === 2 ? format : 0];
+  return kinds[size] ?? 0;
+}
 
 type Bounds = { x: number; y: number; w: number; h: number };
 type Props = {
   format: number; size: number; cover: number;
-  shown: Player; stale: boolean;
+  shown: Player; stale: boolean; can: Abilities;
   issue: (action: Action, patch?: Partial<Player>) => void;
   art: ReactNode; backdrop: ReactNode; meta: ReactNode;
   progress: ReactNode; edgeProgress: ReactNode; sound: ReactNode;
@@ -65,9 +86,9 @@ type Layout = {
 /** Места частей пульта в точках таблицы при 100 %. */
 function layoutOf(format: number, size: number, cover: number): Layout {
   const safeFormat = format === 1 || format === 2 ? format : 0;
-  const safeSize = Math.min(3, Math.max(0, size));
-  const sizes = REFERENCE_SIZES[safeFormat];
-  const [nativeW, nativeH] = sizes[safeSize] ?? sizes[0];
+  const safeSize = sizeKind(safeFormat, size);
+  const sizes: readonly (readonly [number, number])[] = REFERENCE_SIZES[safeFormat];
+  const [nativeW, nativeH] = sizes[size] ?? sizes[0]!;
   // Поле сцены внутри тонкой рамки. Готовые размеры не растягиваются мышью.
   const w = nativeW - 2, h = nativeH - 2, extra = safeSize < 2;
   const footer = extra ? 28 : 0;
@@ -105,6 +126,14 @@ function layoutOf(format: number, size: number, cover: number): Layout {
     metaBox = bounds(12, my, w - 24, 38);
     progressBox = bounds(12, my + (extra ? 46 : 44), w - 24, 26);
     controlsBox = bounds((w - (extra ? 186 : 108)) / 2, my + (extra ? 80 : 76), extra ? 186 : 108, extra ? 42 : 36);
+    // Обложка фоном (только «Минимальный»): подписи в самом верху, полоса с
+    // кнопками у нижнего края, картинка между (1 ноября 2026, слово
+    // пользователя)
+    if (!picture && !extra) {
+      metaBox = bounds(12, 12, w - 24, 38);
+      controlsBox = bounds((w - 108) / 2, h - 12 - 36, 108, 36);
+      progressBox = bounds(12, h - 12 - 36 - 8 - 26, w - 24, 26);
+    }
     if (extra) soundBox = bounds(12, my + 132, w - 24, 24);
 
 
@@ -122,7 +151,7 @@ function layoutOf(format: number, size: number, cover: number): Layout {
 }
 
 /** Только расстановка готовых частей. Данные и эффекты остаются у PlayerPanel. */
-export function ReferencePlayer({ format, size, cover, shown, issue,
+export function ReferencePlayer({ format, size, cover, shown, issue, can,
   stale, art, backdrop, meta, progress, edgeProgress, sound }: Props) {
   const layout = layoutOf(format, size, cover);
   const { format: safeFormat, size: safeSize, nativeH, footer, extra } = layout;
@@ -137,12 +166,14 @@ export function ReferencePlayer({ format, size, cover, shown, issue,
     <div className="spotify-reference__slot spotify-reference__meta" style={slotStyle(layout.meta)}>{meta}</div>
     <div className="spotify-reference__slot spotify-reference__transport"
       data-extra={extra || undefined} style={slotStyle(layout.controls)}>
-      <ReferenceTransport shown={shown} issue={issue} modes={extra}
+      <ReferenceTransport shown={shown} issue={issue} can={can} modes={extra && can.modes}
         playSize={extra ? 42 : safeFormat === 0 ? 32 : 36} />
     </div>
     {layout.progress && <div className="spotify-reference__slot spotify-reference__progress"
       data-time={layout.progress.h > 14 || undefined} style={slotStyle(layout.progress)}>{progress}</div>}
-    {safeFormat === 0 && safeSize === 3 && cover === 1 &&
+    {/* Нитка по нижнему краю — у минимальной полосы с любой обложкой
+        (1 ноября 2026, слово пользователя) */}
+    {safeFormat === 0 && safeSize === 3 &&
       <div className="spotify-reference__edge">{edgeProgress}</div>}
     {layout.sound && sound && <div className="spotify-reference__slot spotify-reference__volume" style={slotStyle(layout.sound)}>{sound}</div>}
   </div>;
@@ -160,22 +191,22 @@ function ModeButton({ kind, shown, issue }: CommandProps & { kind: "shuffle" | "
     {shuffle ? <ShuffleIcon /> : shown.repeat === "track" ? <RepeatOneIcon /> : <RepeatIcon />}
   </button>;
 }
-function ReferenceTransport({ shown, issue, modes, playSize }: CommandProps & {
-  modes: boolean; playSize: number;
+function ReferenceTransport({ shown, issue, can, modes, playSize }: CommandProps & {
+  can: Abilities; modes: boolean; playSize: number;
 }) {
   const t = useText();
   return <div className="spotify-reference__commands"
     style={{ "--spotify-play-size": `${playSize}px` } as CSSProperties}>
     {modes && <ModeButton shown={shown} issue={issue} kind="shuffle" />}
     <button type="button" className="player__button spotify-reference__previous" title={t("transport.previous")}
-      aria-label={t("transport.previous")} onClick={() => issue({ kind: "previous" })}><PreviousIcon /></button>
+      aria-label={t("transport.previous")} disabled={!can.previous} onClick={() => issue({ kind: "previous" })}><PreviousIcon /></button>
     <button type="button" className="player__play" title={t(shown.isPlaying ? "transport.pause" : "transport.play")}
-      aria-label={t(shown.isPlaying ? "transport.pause" : "transport.play")}
+      aria-label={t(shown.isPlaying ? "transport.pause" : "transport.play")} disabled={!can.play}
       onClick={() => issue({ kind: shown.isPlaying ? "pause" : "play" }, { isPlaying: !shown.isPlaying })}>
       {shown.isPlaying ? <PauseIcon /> : <PlayIcon />}
     </button>
     <button type="button" className="player__button spotify-reference__next" title={t("transport.next")}
-      aria-label={t("transport.next")} onClick={() => issue({ kind: "next" })}><NextIcon /></button>
+      aria-label={t("transport.next")} disabled={!can.next} onClick={() => issue({ kind: "next" })}><NextIcon /></button>
     {modes && <ModeButton shown={shown} issue={issue} kind="repeat" />}
   </div>;
 }

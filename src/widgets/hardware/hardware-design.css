@@ -33,8 +33,11 @@
 :root[data-design="reference"] .hardware-load .arc__value { filter: none; }
 /* Компоновку NEW определяет выбранный размер: узкий полный не становится
  * компактным из-за прежнего порога, а компактный сохраняет подписи. */
+/* Полный — столбец сетки 225 (1 ноября 2026): колонки значений делят остаток
+ * поровну, а не стоят по 80 и 76 — те просили окна в 244. */
 .hardware-body:has(.hardware-loads) .pair {
-  grid-template-columns: calc(50px * var(--scale)) calc(80px * var(--scale)) calc(76px * var(--scale));
+  grid-template-columns: calc(50px * var(--scale)) minmax(0, 1fr) minmax(0, 1fr);
+  gap: calc(5px * var(--scale));
 }
 .hardware-body[data-size="0"]:has(.hardware-loads) .pair__label { grid-column: auto; }
 .hardware-body:has(.hardware-loads) .pair__hint { display: block; }
@@ -50,7 +53,9 @@
 .hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .columns { --columns-height: calc(26px * var(--scale)); }
 .hardware-body:not([data-size="0"]) .hardware-loads[data-view="rings"] .hardware-load__head { justify-content: center; min-height: 0; }
 .hardware-body:not([data-size="0"]):has(.hardware-loads) .pair {
-  grid-template-columns: calc(80px * var(--scale)) calc(70px * var(--scale));
+  /* Минимумы прежние, остаток узкой карточки делится поровну, а не стоит
+     полоской справа (подсмотрено у версии Codex) */
+  grid-template-columns: minmax(calc(80px * var(--scale)), 1fr) minmax(calc(70px * var(--scale)), 1fr);
   justify-content: start; row-gap: calc(2px * var(--scale)); padding: 0; min-height: calc(48px * var(--scale));
 }
 .hardware-body:not([data-size="0"]):has(.hardware-loads) .pair__label { grid-column: 1 / -1; }
@@ -61,7 +66,7 @@
 
 /* Полный размер: одна ступень крупнее, без возврата жирного начертания. */
 .hardware-body[data-size="0"]:has(.hardware-loads) {
-  --hardware-value: calc(15px * var(--scale));
+  --hardware-value: calc(14px * var(--scale));
   --hardware-hint: calc(12px * var(--scale));
   --hardware-label: calc(12px * var(--scale));
   --hardware-main: calc(22px * var(--scale));

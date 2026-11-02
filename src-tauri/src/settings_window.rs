@@ -174,8 +174,6 @@ pub struct SettingsView {
     pub poll_seconds: u64,
     /// Город виджета погоды. `None` — не выбран.
     pub weather_place: Option<settings::Place>,
-    /// Явное сворачивание приложений в мини-микшере звука.
-    pub sound_mixer_collapsed: bool,
     pub design: settings::Design,
     /// Выбранный язык. `None` — «как в Windows».
     pub language: Option<String>,
@@ -239,9 +237,9 @@ fn view(app: &AppHandle) -> SettingsView {
                 layout: own.layout,
                 layouts: names(widget.layout_choices(settings.design, own.view)),
                 size: own.size,
-                size_indices: widget.size_choices(settings.design, own.view, own.layout).iter().map(|(index, _)| *index).collect(),
+                size_indices: widget.size_choices(settings.design, own.view, own.layout, own.cover).iter().map(|(index, _)| *index).collect(),
                 sizes: widget
-                    .size_choices(settings.design, own.view, own.layout)
+                    .size_choices(settings.design, own.view, own.layout, own.cover)
                     .iter()
                     .map(|(_, preset)| crate::i18n::text(widget.size_name(settings.design, preset)))
                     .collect(),
@@ -273,7 +271,6 @@ fn view(app: &AppHandle) -> SettingsView {
         snapping: settings.snapping,
         poll_seconds: settings.poll_seconds,
         weather_place: settings.weather,
-        sound_mixer_collapsed: settings.sound_mixer_collapsed,
         design: settings.design,
         language: settings.language.clone(),
         languages: crate::i18n::LANGUAGES
@@ -618,6 +615,9 @@ pub fn set_widget_view(app: AppHandle, id: String, index: usize) {
         if sizes > 0 && own.size >= sizes {
             own.size = 0;
         }
+        if let Some(only) = widget.forced_size(index, own.cover) {
+            own.size = only;
+        }
         true
     }) else {
         return;
@@ -634,16 +634,6 @@ pub fn set_widget_view(app: AppHandle, id: String, index: usize) {
     emit(&app);
 }
 
-/// Запоминает только явное «Показать / Скрыть» у мини-микшера.
-#[tauri::command]
-pub fn set_sound_mixer_collapsed(app: AppHandle, collapsed: bool) {
-    let state = app.state::<SettingsState>();
-    if state.get().sound_mixer_collapsed == collapsed {
-        return;
-    }
-    settings::update(&app, &state, |settings| settings.sound_mixer_collapsed = collapsed);
-    emit(&app);
-}
 
 /// Компоновка не трогает тип графика, размер, данные и текущий замер.
 #[tauri::command]
@@ -675,15 +665,25 @@ pub fn set_widget_cover(app: AppHandle, id: String, index: usize) {
     }
 
     let state = app.state::<SettingsState>();
+    let before = state.get().widget(widget).size;
     let changed = settings::update_widget(&app, &state, widget, |_, own| {
         if own.cover == index {
             return false;
         }
         own.cover = index;
+        // Обложка фоном у столбика пульта допускает один размер
+        if let Some(only) = widget.forced_size(own.view, index) {
+            own.size = only;
+        }
         true
     });
-    if changed.is_none() {
+    let Some(own) = changed else {
         return;
+    };
+    if own.size != before && !widget.flexible {
+        let id = widget.id;
+        let size = own.size;
+        windows::on_main(&app, move |app| windows::set_size(&app, id, size));
     }
     emit(&app);
 }
@@ -697,7 +697,7 @@ pub fn set_widget_size(app: AppHandle, id: String, index: usize) {
     let state = app.state::<SettingsState>();
     let settings = state.get();
     let own = settings.widget(widget);
-    if !widget.size_choices(settings.design, own.view, own.layout).iter().any(|(available, _)| *available == index) {
+    if !widget.size_choices(settings.design, own.view, own.layout, own.cover).iter().any(|(available, _)| *available == index) {
         return;
     }
     if own.size == index && widget.id != "disks" {

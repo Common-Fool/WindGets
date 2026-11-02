@@ -164,6 +164,10 @@
   min-width: 0;
 }
 
+/* «Только замер» в покое — квадрат 180: дуга меньше, чтобы три итога
+   поместились под ней без подгонки окна */
+.speed[data-gauge="true"]:not([data-running="true"]) .speed-gauge { --arc-size: calc(104px * var(--scale)); }
+
 /* Подбираем пустую нижнюю часть открытой дуги, сохраняя место под число. */
 .speed-gauge .arc { margin-bottom: calc(var(--arc-size) * -0.08); }
 .speed-gauge .arc__track { stroke: var(--accent); }
@@ -266,7 +270,9 @@
 
 .speed .duo--three { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); }
 .speed .duo__side + .duo__side { padding-left: 0; }
-.speed .duo__label { gap: var(--space-1); margin-bottom: var(--space-1); }
+/* Высота подписи — по стрелке: точка пинга ниже её, и без этого значение и
+   «ms» третьей колонки поднимались над соседними (2 ноября 2026) */
+.speed .duo__label { gap: var(--space-1); min-height: var(--text-md); margin-bottom: var(--space-1); }
 /* Сжимается только слово: центрирование длинной подписи обрезало стрелку слева. */
 .speed .duo__label svg { display: block; flex: none; width: var(--text-md); height: var(--text-md); color: var(--accent); }
 .speed .duo__label .dot { flex: none; }
@@ -276,6 +282,9 @@
 
 @container card (width < 20em) {
   .speed .trend__legend { display: none; }
+  /* Столбец 225: «Download» резался в «Downl…» — остаются стрелки и точка,
+     полное слово в подсказке */
+  .speed .duo__label-text { display: none; }
 }
 
 /*

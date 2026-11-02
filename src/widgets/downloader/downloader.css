@@ -38,6 +38,12 @@
   grid-column: 1 / -1;
 }
 
+/* Без программ карточка меряется по содержимому (`useTemporaryContentHeight`):
+   высота окна её бы замкнула на себя */
+.dl[data-ready="false"] {
+  height: auto;
+}
+
 .dl__url {
   grid-area: url;
   min-width: 0;
@@ -151,8 +157,9 @@
 
 /*
  * Вид «В две строки»: ссылка с кнопкой скачивания сверху, выбор с кнопками
- * папки и истории снизу. Кнопка скачивания занимает над ними обе их клетки —
- * так выбору остаётся вся ширина до них.
+ * папки и истории снизу. Поле ссылки доходит до кнопки скачивания, она стоит
+ * над историей (2 ноября 2026: над обеими клетками между полем и кнопкой
+ * оставалась пустота).
  *
  * Своей строки состояния тут нет: работа и отказ ложатся поверх поля ссылки
  * (поле при работе всё равно заперто), а готовое и тишина не показываются —
@@ -161,11 +168,16 @@
 .dl[data-layout="rows"] {
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
-    "url go go"
+    "url url go"
     "opts folder toggle"
     "list list list";
   grid-template-rows: auto auto max-content;
   row-gap: var(--space-2);
+}
+
+/* Папка — к правому краю своей клетки, вплотную к истории */
+.dl[data-layout="rows"] .dl__folder {
+  justify-self: end;
 }
 
 .dl[data-layout="rows"] .dl__options {
@@ -205,6 +217,77 @@
 
 /* Полоса хода — по нижнему краю поля, внутри его рамки */
 .dl[data-layout="rows"] .dl__status-bar {
+  bottom: 0;
+}
+
+/*
+ * Узкий 180 (2 ноября 2026, слово пользователя): одна строка — ссылка,
+ * значок скачивания и стрелка. Стрелка раскрывает под строкой выбор режима и
+ * потолка с кнопками папки и истории (`dl__drawer` в панели истории — окно
+ * растёт тем же замером). Работа и отказ — поверх поля ссылки, как у полного.
+ */
+.dl[data-layout="narrow"] {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "url go more"
+    "list list list";
+  grid-template-rows: auto max-content;
+  row-gap: var(--space-2);
+}
+
+.dl__more {
+  grid-area: more;
+}
+
+.dl__more .btn__icon svg {
+  transition: transform var(--duration-fast) var(--ease);
+}
+
+.dl__more[data-open="true"] .btn__icon svg {
+  transform: rotate(180deg);
+}
+
+/* Выбор слева, папка и история справа — одной строкой, как у полного */
+.dl__drawer {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.dl__drawer .dl__options {
+  justify-content: flex-start;
+}
+
+.dl__drawer .toggle__dot {
+  display: none;
+}
+
+.dl__drawer-buttons {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+.dl[data-layout="narrow"] .dl__status {
+  grid-area: url;
+  z-index: 1;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: rgb(var(--surface-base));
+  overflow: hidden;
+}
+
+.dl[data-layout="narrow"] .dl__status[data-phase="idle"],
+.dl[data-layout="narrow"] .dl__status[data-phase="done"],
+.dl[data-layout="narrow"] .dl__status[data-phase="cancelled"] {
+  display: none;
+}
+
+.dl[data-layout="narrow"] .dl__status-bar {
   bottom: 0;
 }
 
@@ -342,4 +425,31 @@
 
 .dl__clear:hover {
   color: var(--text-primary);
+}
+
+/*
+ * Значковые кнопки Classic — квадраты в высоту поля ссылки, значок 16 точек:
+ * у общих кнопок значок стоял в кегле подписи и выглядел мелким и случайным
+ * рядом с полем (2 ноября 2026, слово пользователя). Скачивание — сплошное,
+ * остальные — контуром. Весомость выше узкого правила из
+ * `downloader-reference.css`, который ужимал поля кнопок.
+ */
+.downloader-app-widget .dl .btn.btn--icon {
+  width: calc(29px * var(--scale));
+  height: calc(29px * var(--scale));
+  padding: 0;
+}
+
+.downloader-app-widget .dl .dl__toggle .btn.btn {
+  height: calc(29px * var(--scale));
+  padding: 0 var(--space-2);
+}
+
+.downloader-app-widget .dl .btn .btn__icon {
+  display: inline-flex;
+  font-size: calc(16px * var(--scale));
+}
+
+.downloader-app-widget .dl .btn .btn__icon svg {
+  stroke-width: 1.8;
 }

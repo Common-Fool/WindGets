@@ -9,15 +9,15 @@ import {
 import { useWidgetCover, useWidgetSize, useWidgetView } from "../../lib/view";
 import { useLook } from "../../lib/look";
 import { useSeekDrag } from "../../lib/seek";
-import { ReferencePlayer } from "./ReferencePlayer";
+import { ReferencePlayer, sizeKind } from "./ReferencePlayer";
 import { Marquee } from "../../components/Marquee";
 import { Slider } from "../../components/Slider";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon } from "../../components/Transport";
+import { MusicIcon } from "../../components/Icons";
 import {
   RepeatIcon,
   RepeatOneIcon,
   ShuffleIcon,
-  SpotifyMark,
   VolumeIcon,
 } from "./icons";
 import { useText, type Key } from "../../lib/i18n";
@@ -57,12 +57,29 @@ const LAYOUT_CLASS: Record<number, string> = {
   [LAYOUT.square]: "player--square",
 };
 
+/**
+ * Что пульт умеет. Пульт общий у Спотифая и медиа (1 ноября 2026, слово
+ * пользователя: медиа — копия пульта по виду, раскладкам и размерам); у
+ * медиасессии Windows перемешивания с повтором нет, а кнопки она гасит сама
+ * флагами — нажатие, которое ничего не делает, читается как поломка.
+ */
+export type Abilities = {
+  modes: boolean;
+  play: boolean;
+  previous: boolean;
+  next: boolean;
+  seek: boolean;
+};
+
+const EVERYTHING: Abilities = { modes: true, play: true, previous: true, next: true, seek: true };
+
 type Props = {
   player: Player;
   receivedAt: number;
   send: (action: Action) => Promise<void>;
   /** Трек не играет, а вспомнен: показываем блёкло и без громкости. */
   stale?: boolean;
+  can?: Abilities;
 };
 
 /**
@@ -97,9 +114,11 @@ export function hasVolume(player: Player): boolean {
   return player.supportsVolume && player.volume !== null;
 }
 
-export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) {
+export function PlayerPanel({ player, receivedAt, send, stale = false, can = EVERYTHING }: Props) {
   const layout = useWidgetView();
-  const size = useWidgetSize();
+  // Номер размера — для NEW (он сам сверяет таблицу), композиция — для Classic
+  const index = useWidgetSize();
+  const size = sizeKind(layout, index);
   const { effectiveDesign } = useLook();
 
   /*
@@ -150,7 +169,7 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
   const ratio = player.durationMs > 0 ? elapsed / player.durationMs : 0;
 
   function seek(share: number) {
-    if (player.durationMs <= 0) return;
+    if (player.durationMs <= 0 || !can.seek) return;
 
     const clamped = Math.min(Math.max(share, 0), 1);
     void issue({ kind: "seek", positionMs: Math.round(clamped * player.durationMs) });
@@ -169,7 +188,7 @@ export function PlayerPanel({ player, receivedAt, send, stale = false }: Props) 
   const backdrop = cover === COVER.back ? <Backdrop url={player.coverUrl} /> : null;
 
   const bar = (
-    <Progress elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} subject={`${player.track}
+    <Progress elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} seekable={can.seek} subject={`${player.track}
 ${player.artists}`} />
   );
 
@@ -184,7 +203,7 @@ ${player.artists}`} />
    * а не дорожки.
    */
   const edgeBar = (
-    <Progress edge elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} subject={`${player.track}
+    <Progress edge elapsed={elapsed} total={player.durationMs} ratio={ratio} onSeek={seek} seekable={can.seek} subject={`${player.track}
 ${player.artists}`} />
   );
 
@@ -195,7 +214,7 @@ ${player.artists}`} />
    * пропадали в полосе и квадрате навсегда — на любом размере. Сколько кнопок
    * влезло, знает не раскладка, а размер окна, и решать это его дело.
    */
-  const buttons = <Transport shown={shown} issue={issue} />;
+  const buttons = <Transport shown={shown} issue={issue} can={can} />;
 
   /*
    * Громкость стоит и у вспомненного трека.
@@ -238,8 +257,8 @@ ${player.artists}`} />
   // Один PlayerPanel владеет ожидаемым состоянием, досчётом и громкостью.
   // A/B и дизайн меняют только содержимое: таймеры и защита от отката живут дальше.
   if (effectiveDesign === "reference") {
-    return <ReferencePlayer format={layout} size={size} cover={cover}
-      shown={shown} issue={issue} stale={stale} art={art} backdrop={backdrop}
+    return <ReferencePlayer format={layout} size={index} cover={cover}
+      shown={shown} issue={issue} can={can} stale={stale} art={art} backdrop={backdrop}
       meta={<Meta player={player} />} progress={bar} edgeProgress={edgeBar} sound={sound} />;
   }
 
@@ -327,8 +346,12 @@ ${player.artists}`} />
    * На остальных размерах они возвращаются вправо, и это не только теснота: со
    * средним в той же раскладке два верхних размера отличались одной шириной,
    * то есть выбор между ними ничего не значил.
+   *
+   * «Маленький» на 270 (1 ноября 2026) — тоже кнопками под подписями: справа
+   * они оставляли подписям три десятка точек. Перемешивание и повтор на нём
+   * гасит CSS по `data-size`.
    */
-  if (size === 0) {
+  if (size === 0 || size === 2) {
     return (
       <div className={root}>
         {backdrop}
@@ -347,7 +370,9 @@ ${player.artists}`} />
    * строку ниже. Исключение одно, обложка фоном: у неё полоса ложится ниткой
    * по нижнему краю поверх картинки и высоты не занимает.
    */
-  const thread = size === SMALLEST_SIZE && cover === COVER.back;
+  // Нитка по нижнему краю — у минимальной полосы с любой обложкой (1 ноября
+  // 2026, слово пользователя): полосы там нет, а положение трека видно
+  const thread = size === SMALLEST_SIZE;
   const showBar = size !== SMALLEST_SIZE;
 
   return (
@@ -388,7 +413,7 @@ function Cover({ url, big, link }: { url: string | null; big: boolean; link: str
     return (
       <div className={classes.join(" ")}>
         <div className="player__cover player__cover--empty">
-          <SpotifyMark />
+          <MusicIcon />
         </div>
       </div>
     );
@@ -441,38 +466,15 @@ function Backdrop({ url }: { url: string | null }) {
  * нигде, кроме самого большого столбика, а её появление и исчезновение
  * двигало всё, что ниже.
  */
-/**
- * Знак Spotify перед названием — и ссылка на трек.
- *
- * Политика разработчика Spotify (раздел II) требует у показанных обложки и
- * метаданных знака по их брендбуку и ссылки обратно (`licenses.md`). Знак
- * стоит у названия, а не на обложке: обложки нет в раскладке «фоном» и в
- * квадрате NEW, а название есть всегда. Ссылки нет (трек вспомнен из старого
- * файла) — знак остаётся подписью, не кнопкой.
- */
-function TrackLink({ link }: { link: string | null }) {
-  const t = useText();
-  if (link === null) {
-    return <span className="player__brand" aria-hidden="true"><SpotifyMark /></span>;
-  }
-  return (
-    <button type="button" className="player__brand" data-drags title={t("spotify.openTrack")}
-      aria-label={t("spotify.openTrack")} onClick={() => openLink(link)}>
-      <SpotifyMark />
-    </button>
-  );
-}
-
 function Meta({ player, centered = false }: { player: Player; centered?: boolean }) {
   const classes = ["player__meta"];
   if (centered) classes.push("player__meta--centered");
 
   return (
     <div className={classes.join(" ")}>
-      <div className="player__title">
-        <TrackLink link={player.link} />
-        <Marquee className="player__track" text={player.track} />
-      </div>
+      {/* Знака Spotify перед названием нет (1 ноября 2026, слово
+          пользователя): ссылка на трек — нажатием по обложке */}
+      <Marquee className="player__track" text={player.track} />
       <Marquee className="player__artists" text={player.artists} />
     </div>
   );
@@ -494,6 +496,7 @@ function Progress({
   total,
   ratio,
   onSeek,
+  seekable,
   subject,
 }: {
   edge?: boolean;
@@ -501,11 +504,13 @@ function Progress({
   total: number;
   ratio: number;
   onSeek: (share: number) => void;
+  seekable: boolean;
   /** Чей это трек: удержание отпущенного места к другому не переходит. */
   subject: string;
 }) {
   const t = useText();
-  const drag = useSeekDrag(ratio, total, SEEK_CLOSE_MS, total > 0, onSeek, subject);
+  const known = total > 0;
+  const drag = useSeekDrag(ratio, total, SEEK_CLOSE_MS, known && seekable, onSeek, subject);
   const shownElapsed = drag.chosen === null ? elapsed : Math.round(drag.chosen * total);
 
   return (
@@ -515,11 +520,14 @@ function Progress({
         data-no-drag
         {...drag.handlers}
         role="presentation"
-        title={t("media.seek")}
+        data-seek={(known && seekable) || undefined}
+        title={known && seekable ? t("media.seek") : undefined}
       >
         <div className="player__track-fill" style={{ width: `${(drag.shown * 100).toFixed(2)}%` }} />
       </div>
-      <div className="player__times tabular">
+      {/* Длины нет (радио, часть роликов) — нет и чисел. Ряд остаётся на
+          месте: длина мигает на смене роликов, и карточка прыгала бы */}
+      <div className="player__times tabular" data-known={known}>
         <span>{formatTime(shownElapsed)}</span>
         <span>{formatTime(total)}</span>
       </div>
@@ -534,23 +542,25 @@ function Progress({
 function Transport({
   shown,
   issue,
+  can,
 }: {
   shown: Player;
   issue: (action: Action, patch?: Partial<Player>) => void;
+  can: Abilities;
 }) {
   const t = useText();
   return (
     <div className="player__controls">
-      <IconButton
+      {can.modes && <IconButton
         label={t("spotify.shuffle")}
         active={shown.shuffle}
         extra
         onClick={() => issue({ kind: "shuffle", on: !shown.shuffle }, { shuffle: !shown.shuffle })}
       >
         <ShuffleIcon />
-      </IconButton>
+      </IconButton>}
 
-      <IconButton label={t("transport.previous")} onClick={() => issue({ kind: "previous" })}>
+      <IconButton label={t("transport.previous")} disabled={!can.previous} onClick={() => issue({ kind: "previous" })}>
         <PreviousIcon />
       </IconButton>
 
@@ -558,16 +568,17 @@ function Transport({
         type="button"
         className="player__play"
         title={shown.isPlaying ? t("transport.pause") : t("transport.play")}
+        disabled={!can.play}
         onClick={() => issue({ kind: shown.isPlaying ? "pause" : "play" }, { isPlaying: !shown.isPlaying })}
       >
         {shown.isPlaying ? <PauseIcon /> : <PlayIcon />}
       </button>
 
-      <IconButton label={t("transport.next")} onClick={() => issue({ kind: "next" })}>
+      <IconButton label={t("transport.next")} disabled={!can.next} onClick={() => issue({ kind: "next" })}>
         <NextIcon />
       </IconButton>
 
-      <IconButton
+      {can.modes && <IconButton
         label={t(repeatLabel(shown.repeat))}
         active={shown.repeat !== "off"}
         extra
@@ -579,7 +590,7 @@ function Transport({
         }
       >
         {shown.repeat === "track" ? <RepeatOneIcon /> : <RepeatIcon />}
-      </IconButton>
+      </IconButton>}
     </div>
   );
 }
@@ -602,18 +613,19 @@ type IconButtonProps = {
   active?: boolean;
   /** Кнопка не из основных: в узкой карточке уходит. */
   extra?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 };
 
-function IconButton({ label, active = false, extra = false, onClick, children }: IconButtonProps) {
+function IconButton({ label, active = false, extra = false, disabled = false, onClick, children }: IconButtonProps) {
   const classes = ["player__button"];
   if (active) classes.push("player__button--active");
   // Перемешивание и повтор: в узкой карточке ими жертвуют первыми
   if (extra) classes.push("player__button--extra");
 
   return (
-    <button type="button" className={classes.join(" ")} title={label} onClick={onClick}>
+    <button type="button" className={classes.join(" ")} title={label} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   );
@@ -623,6 +635,14 @@ function repeatLabel(mode: Player["repeat"]): Key {
   if (mode === "track") return "spotify.repeatTrack";
   if (mode === "context") return "spotify.repeatList";
   return "spotify.repeatOff";
+}
+
+/** Зазор между блоками карточки — тот, что добавит собой раскрытая панель. */
+export function columnGap(element: HTMLElement | null): number {
+  if (element === null) return 0;
+
+  const gap = Number.parseFloat(window.getComputedStyle(element).rowGap);
+  return Number.isFinite(gap) ? gap : 0;
 }
 
 /** Позиция, досчитанная между опросами. */

@@ -27,8 +27,9 @@ use windows::Win32::Foundation::{
     GetLastError, SetLastError, HWND, LPARAM, LRESULT, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
-    DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWMWINDOWATTRIBUTE,
+    DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+    DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
+    DWMWINDOWATTRIBUTE,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -68,16 +69,25 @@ fn without_edges(style: u32) -> u32 {
 ///
 /// Только из главного потока: `SetWindowSubclass` не вешается на окно чужого
 /// потока.
-pub fn install(window: &WebviewWindow) -> Result<(), String> {
+/// Что делать с рамкой DWM.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Dwm {
+    /// Включена и скругляет окно: окно настроек и напоминание — одиночки.
+    Round,
+    /// Выключена: виджеты стоят стык в стык, и тень DWM ложилась на соседа.
+    Off,
+}
+
+pub fn install(window: &WebviewWindow, dwm: Dwm) -> Result<(), String> {
     let handle = window.hwnd().map_err(|error| error.to_string())?;
     // Окно только что собрано этим же потоком и живо
-    unsafe { install_on(handle) }
+    unsafe { install_on(handle, dwm) }
 }
 
 /// # Safety
 ///
 /// `handle` — живое окно, созданное вызывающим потоком.
-unsafe fn install_on(handle: HWND) -> Result<(), String> {
+unsafe fn install_on(handle: HWND, dwm: Dwm) -> Result<(), String> {
     if !SetWindowSubclass(handle, Some(procedure), SUBCLASS, 0).as_bool() {
         return Err("подкласс не поставился".into());
     }
@@ -89,15 +99,28 @@ unsafe fn install_on(handle: HWND) -> Result<(), String> {
     let extended = GetWindowLongPtrW(handle, GWL_EXSTYLE) as u32;
     set_style(handle, GWL_EXSTYLE, without_edges(extended))?;
 
-    // ВАЖНО: **DWM не выключаем.** Выключенный отдаёт неклиентскую часть
-    // `DefWindowProc` — отсюда и был классический заголовок. Включённому
-    // рисовать нечего: клиентская часть занимает окно целиком
-    set_attribute(handle, DWMWA_NCRENDERING_POLICY, DWMNCRP_ENABLED);
+    if dwm == Dwm::Round {
+        // ВАЖНО: **у одиночек DWM не выключаем.** Выключенный отдавал
+        // неклиентскую часть `DefWindowProc` — отсюда был классический
+        // заголовок, пока подкласс не перехватывал `WM_NCPAINT`. Включённому
+        // рисовать нечего: клиентская часть занимает окно целиком
+        set_attribute(handle, DWMWA_NCRENDERING_POLICY, DWMNCRP_ENABLED);
+        // У окна без рамки углы прямые, и они торчали бы из-под скруглённой
+        // карточки
+        set_attribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND);
+    } else {
+        // Виджеты: рамку DWM выключаем (1 ноября 2026, слово пользователя).
+        // Включённый рисовал окну тень — сильную у активного, слабее у
+        // остальных, — и она ложилась на соседний виджет, хотя они стоят
+        // стык в стык. Он же скруглял все четыре угла разом, а углы теперь
+        // скругляет карточка по соседям (`corners.rs`). Классический
+        // заголовок сюда не вернётся: неклиентскую часть подкласс ниже не даёт
+        // рисовать ни при активации, ни при захвате
+        set_attribute(handle, DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED);
+        set_attribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND);
+    }
     // Включённый DWM обводит окно Windows 11 линией в точку по краю
     set_attribute(handle, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE);
-    // У окна без рамки углы прямые, и они торчали бы из-под скруглённой
-    // карточки
-    set_attribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND);
 
     // Иначе Windows пересчитает рамку только к следующему изменению окна
     SetWindowPos(
@@ -268,7 +291,7 @@ mod tests {
                 .expect("тестовое окно не создалось"),
             );
             let handle = fixture.0;
-            install_on(handle).unwrap();
+            install_on(handle, Dwm::Off).unwrap();
 
             // Так пишет стиль tao: заголовок в каждой сборке, растягиваемость
             // по замку

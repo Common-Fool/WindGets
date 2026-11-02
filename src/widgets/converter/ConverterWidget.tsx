@@ -31,13 +31,13 @@ import {
 import { Bar } from "../../components/Bar";
 import { Button } from "../../components/Button";
 import { GlassCard } from "../../components/GlassCard";
-import { FolderIcon, PlusIcon } from "../../components/Icons";
+import { DropIcon, FolderIcon, PlusIcon } from "../../components/Icons";
 import { PlayIcon, StopIcon } from "../../components/Transport";
 import { Toggle } from "../../components/Toggle";
 import { ToolsGate } from "../../components/ToolsGate";
 import "./converter.css";
 import "./converter-reference.css";
-import { ConverterReferenceEmpty, ConverterReferenceFooter, ConverterReferenceHeader, ConverterReferenceRow } from "./ConverterReference";
+import { ConverterReferenceFooter, ConverterReferenceHeader, ConverterReferenceRow } from "./ConverterReference";
 import { useText, type Text } from "../../lib/i18n";
 
 /**
@@ -60,19 +60,19 @@ export function ConverterWidget() {
   const ready = missingFor(tools, "converter").length === 0 && !tools.probing;
 
   return (
-    <div className={reference ? "widget widget--converter-reference" : "widget"}>
+    <div className={reference ? "widget widget--neutral widget--converter-reference" : "widget widget--neutral"}>
       <GlassCard accent="neutral">
         <div className={reference ? "conv conv--reference" : "conv"}>
           {!ready ? (
             <ToolsGate module="converter" />
           ) : view.items.length === 0 ? (
-            <Empty reference={reference} />
+            <Empty over={dragging} />
           ) : (
             <Batch view={view} reference={reference} />
           )}
           {/* Поверх карточки, а не строкой: место под ней не нужно, пока
               файл не несут */}
-          {dragging && ready && !view.running && <div className="conv__drop">{t("converter.dropToAdd")}</div>}
+          {dragging && ready && !view.running && view.items.length > 0 && <div className="conv__drop">{t("converter.dropToAdd")}</div>}
         </div>
       </GlassCard>
     </div>
@@ -108,18 +108,20 @@ function useDropHover(): boolean {
   return over;
 }
 
-function Empty({ reference }: { reference: boolean }) {
+/**
+ * Пустой список — зона броска без подписи (1 ноября 2026, слово
+ * пользователя): пунктир по краю и стрелка в лоток говорят «бросай сюда»
+ * сами, текст остался подсказкой. Одна на оба дизайна.
+ *
+ * Пока несут файл, зона загорается сама, а не плашкой поверх: плашка
+ * закрыла бы ту же рамку.
+ */
+function Empty({ over }: { over: boolean }) {
   const t = useText();
-  if (reference) return <ConverterReferenceEmpty />;
   return (
-    <div className="conv__empty">
-      <p className="conv__lead">{t("converter.dropHere")}</p>
-      <Button onClick={() => void pickFiles()}>{t("converter.choose")}</Button>
-      {/* Названия видов — из каталога, как у NEW: это не подписи показаний,
-          и английскими на любом языке им стоять незачем. Форматы — имена */}
-      <p className="conv__hint">
-        {t("converter.state.video")} → MP4, GIF, MP3 · {t("converter.state.audio")} → MP3 · {t("converter.state.image")} → PNG, JPG
-      </p>
+    <div className="conv__empty" data-over={over} title={t("converter.dropHere")}>
+      <span className="conv__drop-mark"><DropIcon /></span>
+      <Button variant="outline" icon={<PlusIcon />} label={t("converter.choose")} onClick={() => void pickFiles()} />
     </div>
   );
 }

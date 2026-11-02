@@ -15,7 +15,9 @@
   min-width: 0;
   color: var(--text-primary);
 }
-.speed-reference[data-size="1"] { --speed-reference-chart-height: calc(123px * var(--scale)); }
+/* Узкий 270: график той же высоты, что у полного — выше он оставлял пустоту
+   (1 ноября 2026, слово пользователя) */
+.speed-reference[data-size="1"] { --speed-reference-chart-height: calc(95px * var(--scale)); }
 
 .speed-reference__results {
   grid-area: results;
@@ -82,6 +84,10 @@
   white-space: nowrap;
 }
 .speed-reference__metric-label > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* «Только замер» 180 и узкий B: «Download» резался в «Downl…» — остаются
+   стрелки и точка, полное слово в подсказке подписи. На 270 у A слова на месте */
+/* Точка Ping — тоже span, она остаётся */
+.speed-reference[data-size="1"]:is([data-gauge="true"], [data-layout="b"]) .speed-reference__metric-label > span:not(.dot) { display: none; }
 .speed-reference__metric-label > svg {
   flex: none;
   width: calc(14px * var(--scale));
@@ -190,7 +196,7 @@
 }
 .speed-reference[data-layout="b"][data-size="1"] {
   --speed-reference-number: calc(22px * var(--scale));
-  --speed-reference-chart-height: calc(160px * var(--scale));
+  --speed-reference-chart-height: calc(140px * var(--scale));
   grid-template-columns: calc(84px * var(--scale)) minmax(0, 1fr);
   column-gap: var(--space-2);
 }
@@ -309,17 +315,29 @@
 .speed-reference[data-layout="a"][data-size="1"] .speed-reference__run {
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas: "phases" "server" "gauge" "context";
-  grid-template-rows: auto auto minmax(calc(126px * var(--scale)), 1fr) auto;
+  /* Без минимума под дугу: окно при замере держит высоту покоя (188 у узкого
+     270), и 126 точек дуги выталкивали Ping за низ карточки. Дуга и так не
+     выше 52cqh — берёт, сколько осталось */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
 }
 
 .speed-reference[data-layout="a"][data-size="1"] .speed-reference__run > .speed-gauge {
   --arc-size: min(calc(144px * var(--scale)), var(--speed-run-cap, 100vh));
-  --speed-gauge-number: calc(34px * var(--scale));
+  --speed-gauge-number: calc(26px * var(--scale));
 }
 
+/* Этап и Ping одной строкой: двумя они выталкивали Ping за низ */
 .speed-reference[data-layout="a"][data-size="1"] .speed-reference__current-context {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
-  gap: var(--space-3);
+  gap: 0 var(--space-3);
+}
+
+.speed-reference[data-layout="a"][data-size="1"][data-running="true"] {
+  --speed-run-cap: 44cqh;
 }
 
 .speed-reference[data-layout="b"] .speed-reference__run {
@@ -385,8 +403,12 @@
 }
 .speed-reference__dial { grid-area: dial; display: flex; flex-direction: column; align-items: center; gap: calc(6px * var(--scale)); }
 .speed-reference__dial > .speed-reference__current-phase { margin: 0; text-align: center; }
-.speed-reference__dial .speed-gauge { --arc-size: min(calc(120px * var(--scale)), var(--speed-run-cap, 100vh)); --speed-gauge-number: calc(28px * var(--scale)); }
+.speed-reference__dial .speed-gauge { --arc-size: min(calc(108px * var(--scale)), var(--speed-run-cap, 100vh)); --speed-gauge-number: calc(28px * var(--scale)); }
 .speed-reference[data-gauge="true"] .speed-reference__results { padding: 0; border: 0; }
+/* Три итога под дугой — по центру своих колонок, как сама дуга (1 ноября 2026) */
+.speed-reference[data-gauge="true"] .speed-reference__metric { align-items: center; text-align: center; }
+.speed-reference[data-gauge="true"] .speed-reference__metric-label { justify-content: center; }
+.speed-reference[data-gauge="true"] .speed-reference__metric .stat__main { align-items: center; }
 
 /*
  * Идёт замер: высота окна — покоя (SpeedtestWidget), блок заполняет

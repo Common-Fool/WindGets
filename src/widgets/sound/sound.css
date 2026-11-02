@@ -64,18 +64,14 @@
 .sound__output-name .sound__glyph { width: var(--sound-control); justify-content: center; font-size: calc(24px * var(--scale)); }
 .sound__microphone { gap: calc(6px * var(--scale)); }
 .sound__mic-toggle { justify-content: flex-start; }
-.sound__mic-copy { display: grid; gap: calc(3px * var(--scale)); text-align: left; min-width: 0; }
-.sound__mic-label { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
-.sound__mic-status { font-size: var(--text-xs); color: var(--text-muted); }
-.sound__mic-toggle[data-quiet="true"] .sound__mic-status { color: var(--status-danger); }
 .sound__input-picker, .sound__mixer-toggle, .sound__panel-close { flex-direction: row-reverse; font-size: var(--text-sm); }
 .sound__input-picker .sound__glyph, .sound__mixer-toggle .sound__glyph { font-size: calc(18px * var(--scale)); }
-/* A: две полосы и разделитель перед микшером. */
-.sound[data-view="compact"] .sound__controls { gap: 0; }
+/* Компактный и горизонтальный: две полосы, разделитель перед микшером. */
+.sound:is([data-view="compact"], [data-view="horizontal"]) .sound__controls { gap: 0; }
 .sound__compact-top { height: calc(32px * var(--scale)); }
-.sound__compact-top .sound__mic-toggle { color: var(--sound-fill); }
-.sound__compact-top .sound__mic-toggle[data-quiet="true"] { color: var(--status-danger); }
-.sound__compact-top .sound__input-picker { min-width: calc(28px * var(--scale)); width: calc(28px * var(--scale)); padding: 0; }
+:is(.sound__compact-top, .sound__row) .sound__mic-toggle { color: var(--sound-fill); }
+:is(.sound__compact-top, .sound__row) .sound__mic-toggle[data-quiet="true"] { color: var(--status-danger); }
+:is(.sound__compact-top, .sound__row) .sound__input-picker { min-width: calc(28px * var(--scale)); width: calc(28px * var(--scale)); padding: 0; }
 .sound__compact-bottom {
   margin-top: calc(10px * var(--scale)); padding-top: calc(10px * var(--scale));
   border-top: 1px solid var(--border-hairline);
@@ -84,18 +80,37 @@
 .sound__compact-bottom .sound__mixer-toggle::before {
   content: ""; position: absolute; height: 70%; width: 1px; background: var(--border-hairline); left: calc(-7px * var(--scale));
 }
-/* C: устройство, громкость, отдельный микрофон, приложения. */
-.sound[data-view="mixer"] .sound__output-name { font-weight: 600; }
-.sound[data-view="mixer"] .sound__microphone { min-height: calc(44px * var(--scale)); }
-.sound[data-view="mixer"] .sound__mic-toggle {
-  flex: 1; min-width: 0; height: calc(44px * var(--scale)); padding: 0; border-color: transparent; background: transparent;
+/* Горизонтальный: три равные клетки — выход, микрофон, микшер, — у каждой
+   значок и стрелка списка, между клетками черта, как перед микшером у
+   компактного. Имя выхода — в подсказке: в трети ширины ему места нет */
+/* Микрофон по содержимому — его подпись длиннее всех; выход и микшер делят остаток */
+.sound__row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0; }
+.sound__cell {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  gap: calc(6px * var(--scale)); min-width: 0;
 }
-.sound[data-view="mixer"] .sound__mic-toggle .sound__glyph {
-  width: var(--sound-control); justify-content: center; font-size: calc(26px * var(--scale)); margin-right: calc(3px * var(--scale));
+.sound__cell + .sound__cell::before {
+  content: ""; position: absolute; left: 0; height: 70%; width: 1px; background: var(--border-hairline);
 }
-.sound__apps-heading {
-  border-top: 1px solid var(--border-hairline); margin-top: calc(12px * var(--scale)); padding-top: calc(12px * var(--scale));
+.sound__row .sound__speaker { color: var(--text-primary); }
+/* Подпись со стрелкой: занимает остаток клетки, длинное имя — эллипсисом */
+.sound__cell { justify-content: flex-start; gap: calc(2px * var(--scale)); padding: 0 calc(4px * var(--scale)); }
+/* Значок клетки — без рамки и уже обычного: подписи нужна каждая точка */
+.sound__row .sound__button { min-width: calc(28px * var(--scale)); width: calc(28px * var(--scale)); padding: 0; border-color: transparent; }
+.sound__row .sound__button:not(:hover):not([aria-expanded="true"]) { background: transparent; }
+.sound__cell:first-child { padding-left: 0; }
+.sound__cell:last-child { padding-right: 0; }
+.sound__cell-link {
+  display: inline-flex; flex: 1; align-items: center; justify-content: space-between;
+  gap: 0; min-width: 0; height: var(--sound-control);
+  padding: 0 calc(2px * var(--scale)) 0 calc(4px * var(--scale)); border: 0; border-radius: var(--radius-control);
+  background: transparent; color: var(--text-primary); font: inherit; font-size: var(--text-xs); cursor: pointer;
 }
+.sound__cell-link:hover:not(:disabled) { background: var(--surface-control-hover); }
+.sound__cell-link[aria-expanded="true"] { background: var(--surface-control-selected); }
+.sound__cell-link:disabled { opacity: 0.45; cursor: default; }
+.sound__cell-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.sound__cell-chevron { display: flex; flex: none; color: var(--text-secondary); font-size: calc(14px * var(--scale)); }
 .sound__panel-head { justify-content: space-between; height: calc(26px * var(--scale)); }
 .sound__panel-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; }
 .sound__panel-close { height: calc(26px * var(--scale)); min-width: calc(26px * var(--scale)); padding: 0 calc(8px * var(--scale)); font-size: var(--text-xs); }
@@ -103,9 +118,9 @@
 /* Измеряемый контейнер без своих полей: поля внутреннего блока входят в мерку. */
 .sound__panel { display: grid; min-width: 0; }
 .sound__panel-body { padding: 0 var(--sound-padding) var(--sound-padding); min-width: 0; }
-.sound[data-view="compact"] .sound__panel-body { border-top: 1px solid var(--border-hairline); padding-top: var(--sound-padding); }
+.sound:is([data-view="compact"], [data-view="horizontal"]) .sound__panel-body { border-top: 1px solid var(--border-hairline); padding-top: var(--sound-padding); }
 .sound__list { display: grid; gap: calc(8px * var(--scale)); list-style: none; padding: 0; margin: 0; }
-.sound[data-view="compact"] .sound__list { margin-top: var(--sound-gap); }
+.sound:is([data-view="compact"], [data-view="horizontal"]) .sound__list { margin-top: var(--sound-gap); }
 .sound__empty { padding: calc(12px * var(--scale)) 0; color: var(--text-muted); font-size: var(--text-sm); }
 .sound__device {
   display: flex; align-items: center; gap: var(--sound-gap); width: 100%;

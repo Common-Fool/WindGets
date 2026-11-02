@@ -6,14 +6,9 @@
   padding: calc(10px * var(--scale));
   display: grid;
   grid-template-columns: minmax(0, 1fr) calc(92px * var(--scale));
-  grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale)) minmax(calc(38px * var(--scale)), auto);
-  grid-template-areas: "url go" "options options" "status status";
-  gap: calc(7px * var(--scale)) calc(6px * var(--scale));
-}
-/* В простое нет ни подсказки, ни пустого ряда под неё. */
-.dl-a[data-layout="full"][data-ready="true"]:not(:has(> .dl-a__status)) {
   grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale));
   grid-template-areas: "url go" "options options";
+  gap: calc(7px * var(--scale)) calc(6px * var(--scale));
 }
 .dl-a__url { grid-area: url; min-width: 0; height: calc(32px * var(--scale)); }
 .dl-a .input {
@@ -95,56 +90,6 @@
 .dl-a__history-toggle .btn { padding-inline: calc(2px * var(--scale)); gap: calc(3px * var(--scale)); }
 .dl-a__history-toggle[data-open="true"] .btn { border-color: var(--ui-accent); color: var(--ui-accent); }
 
-/* Значения остаются целыми фрагментами. Если они необычно длинные, строка
-   переносится и существующий замер высоты даёт ей место. */
-.dl-a__status {
-  grid-area: status;
-  position: relative;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: calc(4px * var(--scale));
-  padding-bottom: calc(4px * var(--scale));
-}
-.dl-a__status-title {
-  min-width: 0;
-  height: calc(16px * var(--scale));
-  flex: none;
-  font-size: var(--text-xs);
-  line-height: calc(16px * var(--scale));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dl-a__status-meta {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  column-gap: calc(8px * var(--scale));
-  font-size: calc(11px * var(--scale));
-  line-height: calc(14px * var(--scale));
-  color: var(--text-secondary);
-}
-.dl-a__metric-group { display: flex; flex-wrap: wrap; gap: 0 calc(5px * var(--scale)); }
-.dl-a__metric-group > span { white-space: nowrap; }
-.dl-a__metric-group > span + span::before { content: "·"; margin-right: calc(5px * var(--scale)); }
-.dl-a__metric-group--extent { color: var(--text-muted); }
-.dl-a__status-hint {
-  display: block;
-  min-width: 0;
-  height: calc(14px * var(--scale));
-  color: var(--text-muted);
-  font-size: calc(11px * var(--scale));
-  line-height: calc(14px * var(--scale));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dl-a__status[data-phase="done"] .dl-a__status-title { color: var(--status-ok); }
-.dl-a__status[data-phase="cancelled"] .dl-a__status-title { color: var(--status-warn); }
-.dl-a__status-bar { position: absolute; inset: auto 0 0; }
-.dl-a__show,
-.dl-a__full-dismiss,
 .dl-a__dismiss {
   padding: 0;
   border: 0;
@@ -154,11 +99,6 @@
   text-align: left;
   cursor: pointer;
 }
-.dl-a__show { align-self: flex-start; color: var(--ui-accent); font-size: calc(11px * var(--scale)); line-height: calc(14px * var(--scale)); }
-.dl-a__show:hover { text-decoration: underline; }
-.dl-a__full-dismiss { min-width: 0; display: flex; flex-direction: column; gap: calc(4px * var(--scale)); }
-.dl-a__full-dismiss .dl-a__status-title { width: 100%; color: var(--status-danger); }
-.dl-a__full-dismiss .dl-a__status-hint { width: 100%; }
 
 /* Вид остаётся независим от высоты и раскрытой истории. */
 .dl-a[data-layout="rows"] {
@@ -261,21 +201,40 @@
 
   /* Новый узкий пресет Classic сохраняет прежние Toggle и все обработчики.
      Полное название остаётся в aria-label, короткое видно только здесь. */
-  .downloader-app-widget .dl__options { flex-wrap: nowrap; gap: calc(4px * var(--scale)); }
-  .downloader-app-widget .dl__chips { flex-wrap: nowrap; gap: calc(2px * var(--scale)); }
+  /* Чипы Classic — в высоту кнопок рядом, с полями по 8 точек: впритык к
+     рамке подпись читалась поломкой (2 ноября 2026, слово пользователя).
+     Режим от потолка отделяет зазор шире, чем чипы друг от друга */
+  .downloader-app-widget .dl__options { flex-wrap: nowrap; gap: calc(8px * var(--scale)); }
+  .downloader-app-widget .dl__chips { flex-wrap: nowrap; gap: calc(4px * var(--scale)); }
   .downloader-app-widget .dl .toggle {
-    min-height: calc(26px * var(--scale));
-    padding: calc(2px * var(--scale)) calc(4px * var(--scale));
+    height: calc(29px * var(--scale));
+    min-height: 0;
+    padding: 0 calc(8px * var(--scale));
     gap: 0;
-    font-size: var(--text-2xs);
+    font-size: var(--text-xs);
   }
   .downloader-app-widget .toggle__dot, .downloader-app-widget .toggle__long { display: none; }
   .downloader-app-widget .toggle__short { display: inline; }
-  .downloader-app-widget .dl__folder .btn { padding-inline: calc(4px * var(--scale)); }
-  .downloader-app-widget .dl__toggle .btn { padding-inline: calc(4px * var(--scale)); gap: calc(4px * var(--scale)); }
 }
 
 /* Запуск и отмена не тянутся вслед за сообщением или панелью программ. */
 .dl-a__go { align-items: flex-start; }
 .dl-a__go .btn { flex: none; width: calc(92px * var(--scale)); height: calc(32px * var(--scale)); }
 .dl-a .gate .btn { flex: none; width: auto; height: calc(32px * var(--scale)); min-height: 0; padding-inline: calc(10px * var(--scale)); }
+
+/* Узкий 180 (1 ноября 2026): три строки — ссылка; режим и потолок; скачать,
+   папка и история. Ряд выбора раскрывается в ячейки сетки. */
+.dl-a[data-layout="narrow"] {
+  padding-block: calc(9px * var(--scale));
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(calc(32px * var(--scale)), auto) calc(26px * var(--scale)) calc(26px * var(--scale));
+  grid-template-areas: "url url" "mode quality" "go utilities";
+  row-gap: calc(6px * var(--scale));
+}
+.dl-a[data-layout="narrow"] .dl-a__options { display: contents; }
+.dl-a[data-layout="narrow"] .dl-a__mode { grid-area: mode; }
+.dl-a[data-layout="narrow"] .dl-a__quality { grid-area: quality; width: calc(74px * var(--scale)); }
+.dl-a[data-layout="narrow"] .dl-a__utilities { grid-area: utilities; justify-content: flex-end; }
+.dl-a[data-layout="narrow"] .dl-a__go { grid-area: go; }
+.dl-a[data-layout="narrow"] .dl-a__go .btn { width: 100%; height: calc(26px * var(--scale)); }
+.dl-a[data-layout="narrow"] .dl-a__overlay { grid-area: url; }

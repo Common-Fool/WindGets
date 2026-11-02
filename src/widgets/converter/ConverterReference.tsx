@@ -82,18 +82,3 @@ export function ConverterReferenceRow({ item, running, state }: { item: Item; ru
     </li>
   );
 }
-
-export function ConverterReferenceEmpty() {
-  const t = useText();
-  return (
-    <div className="conv__empty">
-      <p className="conv__lead">{t("converter.dropHere")}</p>
-      <Button icon={<PlusIcon />} onClick={() => void pickFiles()}>{t("converter.choose")}</Button>
-      <div className="conv-ref__formats">
-        <span>{t("converter.state.video")}</span><span>→ MP4 · GIF · MP3</span>
-        <span>{t("converter.state.audio")}</span><span>→ MP3</span>
-        <span>{t("converter.state.image")}</span><span>→ PNG · JPG</span>
-      </div>
-    </div>
-  );
-}
