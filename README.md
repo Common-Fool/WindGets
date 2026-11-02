@@ -1,5 +1,7 @@
 # Windgets
 
+📢 Updates and new projects: [Telegram channel](https://t.me/common_fool)
+
 Desktop widgets for Windows 11: hardware telemetry and small everyday tools,
 each in its own frameless window that you can place anywhere — on a second
 monitor, for instance — and leave there.
